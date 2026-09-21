@@ -7,6 +7,7 @@ import type { BotMessage, MentionEntity } from './octo/types.js';
 import { ChannelType, MessageType } from './octo/types.js';
 import { sendMessage } from './octo/api.js';
 import { isAuthenticCronFire } from './cron-fire-marker.js';
+import { MentionPreferences } from './mention-prefs.js';
 
 export interface RouteResult {
   sessionKey: string;
@@ -63,12 +64,14 @@ export class SessionRouter {
    * extended via registerKnownBot() for future multi-bot deployments.
    */
   private readonly knownBotUids = new Set<string>();
+  private readonly mentionPreferences: MentionPreferences;
 
   constructor(config: Config, robotId: string, ownerUid = '') {
     this.config = config;
     this.robotId = robotId;
     this.ownerUid = ownerUid;
     this.knownBotUids.add(robotId);
+    this.mentionPreferences = new MentionPreferences(config);
   }
 
   /** G14: register another known bot uid (future multi-bot support). */
@@ -336,9 +339,6 @@ export class SessionRouter {
   }
 
   private async processMessage(msg: BotMessage, key: string): Promise<RouteResult | null> {
-    // Skip messages from self.
-    if (msg.from_uid === this.robotId) return null;
-
     // Drop anything that isn't a real conversation channel (DM / group /
     // community topic). Octo emits system/command channels (e.g. channel_type 8
     // "systemcmdonline" on connect) that otherwise slip past the DM/group gates
@@ -349,6 +349,22 @@ export class SessionRouter {
     // When streamOn is true, this is a partial update of an ongoing stream; the final
     // message arrives with streamOn=false and contains the complete content.
     if (msg.streamOn) return null;
+
+    // The server sends preference notifications as the bot itself. Handle
+    // these before the self-message guard, without invoking the agent. Other
+    // members can forge event payloads, so only this bot's notifications may
+    // invalidate. Key by the actual channel's parent, never payload.group_no.
+    if (msg.payload.event) {
+      if (this.isGroupLike(msg.channel_type)
+        && msg.from_uid === this.robotId
+        && msg.payload.event.type === 'mention_pref_updated') {
+        this.mentionPreferences.invalidate(msg.channel_id!);
+      }
+      return null;
+    }
+
+    // Ordinary self messages must still be dropped to prevent reply loops.
+    if (msg.from_uid === this.robotId) return null;
 
     // DM blocklist filter.
     if (msg.channel_type === ChannelType.DM && this.isBlockedBot(msg.from_uid)) {
@@ -379,11 +395,6 @@ export class SessionRouter {
     // were created (owner-gated) and bound to this session; there's no human to
     // @-mention the bot at fire time. Rate limiting below still applies.
     if (this.isGroupLike(msg.channel_type) && !this.isMentioned(msg) && !this.isCronFire(msg)) {
-      // G12: Check if this group is in the mention-free list
-      const isMentionFree = this.config.mentionFreeGroups?.includes(msg.channel_id ?? '') ?? false;
-      if (!isMentionFree) {
-        return null;
-      }
       // Multi-bot loop guard: in a mention-free group there is no @-mention gate
       // to stop one bot from replying to another bot's plain-text message. Drop
       // messages from known/bot-looking uids (unless explicitly whitelisted) so
@@ -392,10 +403,14 @@ export class SessionRouter {
       if (this.looksLikeBot(msg.from_uid) && !this.isAllowedBot(msg.from_uid)) {
         return null;
       }
+      // Explicit operator allowlists keep their existing exact-channel semantics.
+      // Otherwise consult the server's parent-group policy, including AI sessions,
+      // and only admit confirmed humans (or explicitly allowed member bots).
+      const isMentionFree = this.config.mentionFreeGroups?.includes(msg.channel_id!) ?? false;
+      if (!isMentionFree && !await this.mentionPreferences.allows(
+        msg.channel_id!, msg.from_uid, this.isAllowedBot(msg.from_uid),
+      )) return null;
     }
-
-    // Skip system events (group join/leave, etc.) — no user-facing reply needed.
-    if (msg.payload.event) return null;
 
     // Rate limit check BEFORE non-text check — prevents DM spam of non-text
     // messages from bypassing rate limiting entirely.

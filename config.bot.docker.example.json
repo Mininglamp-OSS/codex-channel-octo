@@ -1,0 +1,8 @@
+{
+  "_comment": "PER-BOT config for a dedicated Docker container. Install as ~/.codex-channel-octo/<id>/config.json alongside the normal global config. This template explicitly disables the Codex sandbox; isolation and filesystem/network permissions are enforced by the container and its running user. Use a separate container for each trust boundary and keep host credentials and the Docker socket unmounted. Docker detection never changes permissions automatically.",
+  "botToken": "bf_YOUR_BOT_TOKEN",
+  "sdk": {
+    "sandboxMode": "danger-full-access",
+    "approvalPolicy": "never"
+  }
+}

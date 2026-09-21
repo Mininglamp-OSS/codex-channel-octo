@@ -58,6 +58,22 @@ npm install -g @mininglamp-oss/codex-channel-octo
 
 > 未鉴权的独立 home 会回退到 `api.openai.com` 并 401。
 
+### 群和话题的免 @ 回复
+
+支持前端「免@回答」页面中的逐群开关，无需手动修改 Channel 配置。
+群内开启后普通消息可触发回复；关闭后恢复为需要 @（本地显式覆盖除外）。
+
+收到未 @ Bot 的群或话题消息时，Channel 会查询
+`GET /v1/bot/groups/{父群ID}/mention_pref`，按服务端的 `effective` 判定是否免 @，
+包括 AI 私人会话。话题继承父群设置，聊天历史仍按话题分别保存。
+
+自动免 @ 只放行服务端明确标记为真人的群成员；其他 Bot 仍需 @，除非已列入
+`allowedBotUids`。接口失败或成员身份不明时，继续要求 @。设置及成员身份按 Bot、
+父群缓存 30 秒，收到 `mention_pref_updated` 事件后清除对应父群缓存。
+
+已有 `mentionFreeGroups` 仍是按完整频道 ID 精确匹配的本地显式覆盖。
+服务端已允许免 @ 的 AI 会话不需要逐个填写话题 ID。
+
 ## 运行
 
 ```bash
@@ -73,10 +89,22 @@ IM 输入是**不可信**的,权限边界是 **sandbox**,不是 prompt:
 
 - **`sandboxMode` 默认 `read-only`** —— 首版定位安全问答 / 代码审阅。要让 bot 改文件,须**同时**设 `allowWorkspaceWrite: true` 和 `sandboxMode: "workspace-write"`(双开关防误配)。
 - **`sdk.additionalDirectories`** —— 每会话 cwd 之外的额外**可写**根(如共享 work bus)。仅在 `workspace-write` 下附加(`read-only` 下无意义故省略;AGENTS.md 写失败强制降级时一并清除)。条目必须是**绝对路径**(不含 `~`/相对路径/`..`),且启动时会拒绝任何**包含、等于或位于**受信任 / 敏感目录之内的条目 —— 会话 cwd、config/SOUL 树、`groupConfigDir`、memory 目录、`codexHome` —— 使可写根永远不会与"确立 agent 信任边界的文件"重叠。
-- `danger-full-access` 一律拒绝。
-- `networkAccessEnabled` / `webSearchEnabled` 默认关。
+- 显式设置 `sdk.sandboxMode: "danger-full-access"` 可关闭 Codex 沙箱，由容器或宿主环境承担隔离。命令按运行用户权限访问容器文件及挂载目录，工作区和敏感子目录的写保护不再生效。
+- `networkAccessEnabled` / `webSearchEnabled` 默认关。`danger-full-access` 下网络不受 Codex 限制，`networkAccessEnabled: false` 无法阻断网络；`/config` 会显示这一实际状态。
 - 安全前缀(防注入)写入每会话沙箱的 `AGENTS.md` 并在 prompt 顶部重申(纵深防御,但仅软约束)。
 - 每 bot 独立 `CODEX_HOME`,IM 内容默认不落入个人 `~/.codex`。
+
+### Docker 专用配置
+
+在专用 Docker 容器中，可使用 [`config.bot.docker.example.json`](./config.bot.docker.example.json) 作为该 bot 的配置，默认选择 `danger-full-access`。已有配置只需在 `sdk` 内设置：
+
+```json
+{ "sdk": { "sandboxMode": "danger-full-access" } }
+```
+
+此模式不需要 `allowWorkspaceWrite` 或额外的网络开关。修改后重启 Channel，发送 `/config` 确认模式。预计 Docker 默认 seccomp 即可运行，无需添加 `privileged`、`SYS_ADMIN` 或自定义 seccomp；这一点尚未在真实容器中验证。宿主机与容器自身的访问限制仍然适用。
+
+程序默认仍是 `read-only`，不会根据 Docker 检测结果自动变更权限。每个信任边界使用独立容器，避免挂载宿主凭据或 Docker socket。关闭 Codex 沙箱后，同一容器中的不同 bot 不再由 Codex 提供文件访问隔离。若本轮 `AGENTS.md` 无法更新，会停止该轮并报告错误。
 
 ## IM ↔ 终端互通(opt-in)
 

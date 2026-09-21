@@ -5,6 +5,7 @@
 import type { DbAdapter, PreparedStatement } from './db-adapter.js';
 import { getGroupMembers, fetchUserInfo } from './octo/api.js';
 import { sanitizeDisplayName } from './prompt-safety.js';
+import { parentGroupNo } from './channel-id.js';
 
 interface GroupMessage {
   fromUid: string;
@@ -202,7 +203,9 @@ export class GroupContext {
     // Don't set lastRefresh here — only on success
 
     try {
-      const members = await getGroupMembers({ apiUrl, botToken, groupNo: channelId });
+      // Topics inherit group membership. Fetch the parent roster, while keeping
+      // this topic's context and mention maps keyed by its full channel ID.
+      const members = await getGroupMembers({ apiUrl, botToken, groupNo: parentGroupNo(channelId) });
       this.lastRefresh.set(channelId, now); // Record only on success
       const memberMap = this.getMemberMap(channelId);
       const nameMap = this.getNameToUid(channelId);

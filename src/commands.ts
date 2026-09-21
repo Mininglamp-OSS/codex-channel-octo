@@ -81,7 +81,9 @@ function renderConfig(config: Config): string {
     `• sandboxMode: ${config.sdk.sandboxMode ?? 'read-only'}`,
     `• approvalPolicy: ${config.sdk.approvalPolicy ?? 'never'}`,
     `• reasoningEffort: ${config.sdk.modelReasoningEffort ?? 'medium'}`,
-    `• network: ${config.sdk.networkAccessEnabled ? 'on' : 'off'}`,
+    `• network: ${config.sdk.sandboxMode === 'danger-full-access'
+      ? 'on (Codex sandbox disabled)'
+      : config.sdk.networkAccessEnabled ? 'on' : 'off'}`,
     `• webSearch: ${config.sdk.webSearchEnabled ? 'on' : 'off'}`,
     `• toolProgress: ${config.sdk.toolProgress ? 'on' : 'off'}`,
     `• rateLimit: ${config.rateLimit.maxPerMinute} req/min`,

@@ -3,6 +3,10 @@
 
 /** Octo Bot API types. */
 
+// Octo thread.BuildChannelID uses <group_no>____<short_id>.
+// Protocol source: Mininglamp-OSS/octo-server@589cdf7, modules/thread/{const,service}.go.
+export const TOPIC_CHANNEL_SEPARATOR = '____';
+
 export interface BotRegisterResp {
   robot_id: string;
   im_token: string;
@@ -142,4 +146,3 @@ export interface ForwardMessage {
     msgs?: ForwardMessage[];
   };
 }
-

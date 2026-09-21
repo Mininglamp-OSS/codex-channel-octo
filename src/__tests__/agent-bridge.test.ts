@@ -76,6 +76,7 @@ async function collect(it: AsyncIterable<string>): Promise<string[]> {
 const started = (id: string): Ev => ({ type: 'thread.started', thread_id: id });
 const turnDone: Ev = { type: 'turn.completed', usage: {} };
 const metadataNotice = 'Model metadata for `gpt-5.6-terra` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.';
+const modelChangeNotice = 'This session was recorded with model `gpt-5.5` but is resuming with `gpt-6-astra`. Consider switching back to `gpt-5.5` as it may affect Codex performance.';
 const missingRolloutError = 'Codex Exec exited with code 1: Reading prompt from stdin...\nError: thread/resume: thread/resume failed: no rollout found for thread id 00000000-0000-4000-8000-000000000001 (code -32600)';
 const msg = (id: string, text: string): Ev => ({
   type: 'item.completed',
@@ -119,8 +120,8 @@ describe('resolveSandbox', () => {
   it('defaults to read-only', () => {
     expect(resolveSandbox({})).toBe('read-only');
   });
-  it('rejects danger-full-access', () => {
-    expect(() => resolveSandbox({ sandboxMode: 'danger-full-access' })).toThrow();
+  it('honors an explicit danger-full-access opt-out without the workspace-write gate', () => {
+    expect(resolveSandbox({ sandboxMode: 'danger-full-access' })).toBe('danger-full-access');
   });
   it('downgrades workspace-write without allowWorkspaceWrite', () => {
     expect(resolveSandbox({ sandboxMode: 'workspace-write' })).toBe('read-only');
@@ -146,6 +147,17 @@ describe('buildThreadOptions', () => {
     const o = buildThreadOptions(cfg({ webSearchEnabled: true }), '/tmp/x');
     expect(o.webSearchEnabled).toBe(true);
     expect(o.webSearchMode).toBe('live');
+  });
+  it('reports unrestricted network and omits writable roots when sandboxing is disabled', () => {
+    const o = buildThreadOptions(cfg({
+      sandboxMode: 'danger-full-access',
+      networkAccessEnabled: false,
+      additionalDirectories: ['/srv/shared'],
+    }), '/tmp/x');
+    expect(o.sandboxMode).toBe('danger-full-access');
+    expect(o.networkAccessEnabled).toBe(true);
+    expect(o.additionalDirectories).toBeUndefined();
+    expect(o.approvalPolicy).toBe('never');
   });
   it('rejects invalid approvalPolicy', () => {
     expect(() => buildThreadOptions(cfg({ approvalPolicy: 'bogus' }), '/tmp/x')).toThrow();
@@ -286,14 +298,14 @@ describe('queryAgent event mapping', () => {
     await expect(collect(queryAgent('hi', cfg()))).rejects.toThrow('tool blew up');
   });
 
-  it('drains a metadata fallback notice before turn.started and returns the real reply', async () => {
+  it.each([metadataNotice, modelChangeNotice])('drains a non-fatal notice before turn.started and returns the real reply: %s', async (notice) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const onResumeFailed = vi.fn();
     const onSessionId = vi.fn();
     let drained = false;
     scriptedRuns = [async function* () {
       yield started('valid-tid');
-      yield { type: 'item.completed', item: { id: 'e1', type: 'error', message: metadataNotice } };
+      yield { type: 'item.completed', item: { id: 'e1', type: 'error', message: notice } };
       yield { type: 'turn.started' };
       yield msg('m1', '收到');
       yield turnDone;
@@ -305,7 +317,7 @@ describe('queryAgent event mapping', () => {
       }));
       expect(out).toEqual(['收到']);
       expect(drained).toBe(true);
-      expect(warn).toHaveBeenCalledWith(`[codex-channel-octo] non-fatal codex notice: ${metadataNotice}`);
+      expect(warn).toHaveBeenCalledWith(`[codex-channel-octo] non-fatal codex notice: ${notice}`);
       expect(onSessionId).toHaveBeenCalledWith('valid-tid');
       expect(onResumeFailed).not.toHaveBeenCalled();
       expect(calls).toHaveLength(1);
@@ -318,6 +330,10 @@ describe('queryAgent event mapping', () => {
     'Defaulting to fallback provider failed: authentication required',
     'Model metadata for `custom-model` not found. Unable to continue.',
     'Request failed: Model metadata for `custom-model` not found. Defaulting to fallback metadata;',
+    'This session was recorded with model `gpt-5.5` but is resuming with `gpt-6-astra`. Authentication failed.',
+    `Request failed: ${modelChangeNotice}`,
+    `${modelChangeNotice} Authentication failed.`,
+    modelChangeNotice.replace('switching back to `gpt-5.5`', 'switching back to `other-model`'),
   ])('still throws for a genuine error resembling a fallback notice: %s', async (message) => {
     scriptedRuns = [async function* () {
       yield started('tid');
@@ -329,10 +345,12 @@ describe('queryAgent event mapping', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it.each(['turn.failed', 'error'])('still throws on %s after a benign metadata notice', async (type) => {
+  it.each([metadataNotice, modelChangeNotice].flatMap((notice) =>
+    ['turn.failed', 'error'].map((type) => ({ notice, type })),
+  ))('still throws on $type after a benign notice: $notice', async ({ notice, type }) => {
     scriptedRuns = [async function* () {
       yield started('tid');
-      yield { type: 'item.completed', item: { id: 'e1', type: 'error', message: metadataNotice } };
+      yield { type: 'item.completed', item: { id: 'e1', type: 'error', message: notice } };
       yield { type: 'turn.started' };
       yield { type, message: 'authentication failed', error: { message: 'authentication failed' } };
     }];
@@ -409,6 +427,26 @@ describe('queryAgent event mapping', () => {
     // AGENTS.md must never run with write access, including via lingering roots.
     expect(calls[0].opts?.sandboxMode).toBe('read-only');
     expect(calls[0].opts?.additionalDirectories).toBeUndefined();
+  });
+
+  it('stops before starting an unsandboxed turn if AGENTS.md cannot be refreshed', async () => {
+    const c = cfg({ sandboxMode: 'danger-full-access' });
+    c.cwd = '/dev/null/ws';
+    c.cwdBase = '/dev/null/ws';
+    await expect(collect(queryAgent('hi', c))).rejects.toThrow(/AGENTS.md refresh failed/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([undefined, 'tid-existing'])('forwards danger-full-access on fresh/resumed turns (%s)', async (resume) => {
+    scriptedRuns = [async function* () {
+      yield started('tid');
+      yield msg('m', 'ok');
+      yield turnDone;
+    }];
+    await collect(queryAgent('hi', cfg({ sandboxMode: 'danger-full-access' }), undefined, undefined, { resume }));
+    expect(calls[0].opts?.sandboxMode).toBe('danger-full-access');
+    expect(calls[0].opts?.networkAccessEnabled).toBe(true);
+    expect(calls[0].kind).toBe(resume ? 'resume' : 'start');
   });
 
   it('forwards additionalDirectories on the resume path too (shared threadOpts)', async () => {

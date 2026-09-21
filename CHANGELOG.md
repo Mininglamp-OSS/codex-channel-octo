@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Explicit `sdk.sandboxMode: "danger-full-access"` support for externally
+  isolated deployments, with a dedicated Docker configuration template.
+  General defaults remain read-only; `/config` reports unrestricted Codex
+  network access in this mode, and AGENTS.md refresh failures stop the turn.
 - **`sdk.additionalDirectories`** — optional list of extra **writable** sandbox
   roots outside the per-session cwd (e.g. a shared work bus), forwarded to the
   Codex SDK. Only attached under `workspace-write`; omitted under `read-only`

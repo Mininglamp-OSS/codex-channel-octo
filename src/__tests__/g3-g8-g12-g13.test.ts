@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 // Mock API
 vi.mock('../octo/api.js', () => ({
   sendMessage: vi.fn().mockResolvedValue(undefined),
+  getMentionPreference: vi.fn().mockResolvedValue(false),
   sendReadReceipt: vi.fn().mockResolvedValue(undefined),
 }));
 

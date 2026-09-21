@@ -15,7 +15,8 @@
     "CHANGELOG.md",
     "LICENSE",
     "config.example.json",
-    "config.bot.example.json"
+    "config.bot.example.json",
+    "config.bot.docker.example.json"
   ],
   "repository": {
     "type": "git",

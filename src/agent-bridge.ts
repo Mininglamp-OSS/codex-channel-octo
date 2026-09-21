@@ -154,13 +154,10 @@ function validateOrDefault(
 /**
  * Resolve the effective sandbox mode. workspace-write only takes effect when
  * `allowWorkspaceWrite` is true; otherwise it is downgraded to read-only.
- * danger-full-access is rejected (also blocked in loadConfig — defense in depth).
+ * danger-full-access is an explicit opt-out; isolation belongs to the host/container.
  */
 export function resolveSandbox(sdk: Config['sdk']): NonNullable<ThreadOptions['sandboxMode']> {
   const mode = validateOrDefault(sdk.sandboxMode, VALID_SANDBOX_MODES, 'read-only');
-  if (mode === 'danger-full-access') {
-    throw new Error("sandboxMode 'danger-full-access' is not allowed (untrusted IM input)");
-  }
   if (mode === 'workspace-write' && !sdk.allowWorkspaceWrite) {
     console.warn(
       '[codex-channel-octo] sandboxMode=workspace-write requested but allowWorkspaceWrite=false; downgrading to read-only',
@@ -182,7 +179,7 @@ export function buildThreadOptions(config: Config, cwd: string): ThreadOptions {
   ) as NonNullable<ThreadOptions['modelReasoningEffort']>;
   // network/web-search parse from config (default off) — not hardcoded, so the
   // config fields are real switches.
-  const networkAccessEnabled = sdk.networkAccessEnabled ?? false;
+  const networkAccessEnabled = sandboxMode === 'danger-full-access' || (sdk.networkAccessEnabled ?? false);
   const webSearchEnabled = sdk.webSearchEnabled ?? false;
   const webSearchMode = (webSearchEnabled
     ? validateOrDefault(sdk.webSearchMode, VALID_WEB_SEARCH_MODES, 'live')
@@ -342,6 +339,11 @@ export async function* queryAgent(
     ...(env ? { env } : {}),
   });
   const threadOpts = buildThreadOptions(config, cwd);
+  // Do not execute with stale instructions or silently re-enable a sandbox
+  // the operator explicitly disabled (which may be unavailable in a container).
+  if (!agentsMdOk && threadOpts.sandboxMode === 'danger-full-access') {
+    throw new Error('AGENTS.md refresh failed; cannot start a danger-full-access turn');
+  }
   // If we could not refresh AGENTS.md this turn, force read-only: a stale file
   // (possibly agent-written under a prior workspace-write turn) must not run
   // with write access still granted.
@@ -444,11 +446,11 @@ export async function* queryAgent(
             messages.set(item.id, item.text);
           } else if (item.type === 'error') {
             const itemMsg = item.message ?? 'codex item error';
-            // Codex reports unknown-model metadata as an error item before
-            // turn.started, then continues using fallback metadata. Drain this
-            // known notice so the real reply is reached. Require both phrases
-            // at the start; unrelated fallback failures must still throw.
-            if (/^Model metadata for `[^`\r\n]+` not found\. Defaulting to fallback metadata(?:[.;]|$)/i.test(itemMsg)) {
+            // Codex reports metadata fallback and a resumed session's model
+            // change as error items, then continues the turn. Drain only these
+            // known notices; genuine tool/model failures must still throw.
+            const modelChanged = /^This session was recorded with model `([^`\r\n]+)` but is resuming with `[^`\r\n]+`\. Consider switching back to `\1` as it may affect Codex performance\.$/.test(itemMsg);
+            if (modelChanged || /^Model metadata for `[^`\r\n]+` not found\. Defaulting to fallback metadata(?:[.;]|$)/i.test(itemMsg)) {
               console.warn(`[codex-channel-octo] non-fatal codex notice: ${itemMsg}`);
             } else {
               // A genuine failed tool/model step reported AS an item (distinct

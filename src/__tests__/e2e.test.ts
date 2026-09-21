@@ -15,6 +15,7 @@ vi.mock('../octo/api.js', () => ({
   sendTyping: vi.fn().mockResolvedValue(undefined),
   sendReadReceipt: vi.fn().mockResolvedValue(undefined),
   getGroupMembers: vi.fn().mockResolvedValue([]),
+  getMentionPreference: vi.fn().mockResolvedValue(false),
   // G4 backfill path in the real handleMessage — default to no history.
   getChannelMessages: vi.fn().mockResolvedValue([]),
   getUploadCredentials: vi.fn().mockResolvedValue({
@@ -73,6 +74,8 @@ import {
   sendMessage,
   sendReadReceipt,
   getChannelMessages,
+  getMentionPreference,
+  getGroupMembers,
 } from '../octo/api.js';
 import { ChannelType, MessageType } from '../octo/types.js';
 import type { BotMessage } from '../octo/types.js';
@@ -204,6 +207,24 @@ describe('E2E smoke tests', () => {
 
   afterEach(() => {
     store.close();
+  });
+
+  it('dispatches an unmentioned AI topic to the agent and replies to that exact topic', async () => {
+    vi.mocked(getMentionPreference).mockResolvedValueOnce(true);
+    vi.mocked(getGroupMembers).mockResolvedValueOnce([{ uid: USER_UID, name: 'TestUser', role: 0, robot: 0 }]);
+    const topic = GROUP_CHANNEL + '____ai-topic';
+    await simulateMessage(makeGroupMsg('hello without @', false, {
+      channel_id: topic, channel_type: ChannelType.CommunityTopic,
+    }), config, store, router, groupContext, streamRelay);
+    expect(getMentionPreference).toHaveBeenCalledWith(expect.objectContaining({ groupNo: GROUP_CHANNEL }));
+    expect(queryAgent).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ channelId: topic, channelType: ChannelType.CommunityTopic }));
+  });
+
+  it('does not invoke the agent for an unmentioned group whose server preference is off', async () => {
+    await simulateMessage(makeGroupMsg('ordinary chatter'), config, store, router, groupContext, streamRelay);
+    expect(queryAgent).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   // --- 1. DM text message happy path ---

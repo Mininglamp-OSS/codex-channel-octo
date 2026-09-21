@@ -319,7 +319,9 @@ export class OctoGateway {
 
   private handleMessage(msg: BotMessage): void {
     if (this._draining) return; // Q6: reject new messages during shutdown
-    if (msg.from_uid === this.robotId) return;
+    // The server authors preference notifications as this bot. Let the router
+    // invalidate its cache; ordinary self echoes must still be filtered.
+    if (msg.from_uid === this.robotId && msg.payload.event?.type !== 'mention_pref_updated') return;
     this.onMessage?.(msg);
   }
 

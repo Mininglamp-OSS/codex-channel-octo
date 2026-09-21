@@ -257,6 +257,17 @@ describe('Bot registration and socket', () => {
     onMessage({ message_id: '2', message_seq: 2, from_uid: 'user-1', timestamp: 0, payload: { type: 1 } });
     expect(messages).toHaveLength(1);
 
+    // The frontend toggle causes a server notification authored as the bot.
+    const preferenceUpdate = {
+      message_id: '3', message_seq: 3, from_uid: 'bot-123', timestamp: 0,
+      channel_id: 'group-1', channel_type: 2,
+      payload: { type: 1, event: { type: 'mention_pref_updated', group_no: 'group-1', no_mention: 1 } },
+    };
+    onMessage(preferenceUpdate);
+    expect(messages).toEqual([expect.objectContaining({ from_uid: 'user-1' }), preferenceUpdate]);
+    onMessage({ ...preferenceUpdate, payload: { type: 1, event: { type: 'group_join' } } });
+    expect(messages).toHaveLength(2);
+
     await gw.stop();
   });
 });

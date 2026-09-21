@@ -112,7 +112,7 @@
 | `anthropicBaseUrl` | `codexBaseUrl` | → `new Codex({baseUrl})` 或 env |
 | `apiKey` | `codexApiKey` | → `new Codex({apiKey})` 或 env |
 | `env` | `env` | 透传给 codex 进程(自建 provider 需要) |
-| (新增) | `sandboxMode` | `read-only`/`workspace-write`/`danger-full-access`,**默认 `read-only`**(见下 C5 决策);`danger-full-access` 一律拒绝(代码层 reject) |
+| (新增) | `sandboxMode` | `read-only`/`workspace-write`/`danger-full-access`,**默认 `read-only`**(见下 C5 决策);显式 `danger-full-access` 关闭 Codex 沙箱,由容器/宿主承担隔离 |
 | (新增) | `codexHome` | 每 bot 独立 CODEX_HOME(见 §9 R6),默认 `<baseDir>/<botId>/codex-home`;不与个人 `~/.codex` 共享 |
 | (新增) | `allowWorkspaceWrite` | bool,默认 false。为 true 才允许 `sandboxMode:workspace-write` 生效;否则即使配了也降级 read-only |
 | (新增) | `modelReasoningEffort` | `minimal`..`xhigh`,默认 `medium` |
@@ -120,11 +120,12 @@
 | (新增) | `webSearchEnabled`/`webSearchMode` | 默认 false/disabled(避免与 minimal effort 冲突) |
 | `cron`/`skills` | (删,v2) | — |
 
-> **C5 安全决策(plan review 采纳)**:IM 是不可信输入,安全 prompt 前缀**不是**可靠权限边界(模型可能被绕过)。真正边界是 sandbox。因此:
+> **C5 安全决策(2026-09-21 更新)**:IM 是不可信输入,安全 prompt 前缀**不是**可靠权限边界(模型可能被绕过)。默认边界是 Codex sandbox;显式关闭后由容器/宿主承担隔离。因此:
 > - **默认 `sandboxMode: read-only`** —— 首版定位是"安全问答 / 代码审阅 / 解释"为主,默认不让任意 IM 用户驱动 bot 写本地文件。
 > - 想让 bot 能改代码 → 运维显式配 `allowWorkspaceWrite: true` + `sandboxMode: workspace-write`,**二者同时满足**才放行(双开关,防误配)。建议同时配 owner/channel 白名单(v2 强化)。
-> - `danger-full-access` 在代码层硬拒绝(校验 throw),配了就报错。
-> - sandbox 始终锚在每会话 cwd 沙箱(cwd-resolver),写也只能写沙箱内。
+> - 运维可显式设置 `danger-full-access`,不需要 `allowWorkspaceWrite`。此模式按运行用户权限访问文件和网络,Codex 不限制工作区、敏感子目录或不同 bot 之间的文件访问;每个信任边界须有独立容器/宿主隔离。
+> - `workspace-write` 锚在每会话 cwd 及显式额外可写目录;`danger-full-access` 没有此写保护,`networkAccessEnabled:false` 也不能阻断网络。
+> - 若本轮 `AGENTS.md` 刷新失败,`danger-full-access` 在执行前终止该轮;其他模式降级 `read-only` 并清除额外可写目录。指令刷新不是隔离边界。
 
 ## 6. agent-bridge 详细设计(TDD 核心)
 
@@ -135,10 +136,10 @@
 ```
 const codex = new Codex({ ...(codexApiKey?{apiKey}:{}) , ...(codexBaseUrl?{baseUrl}:{}),
   env: buildCodexEnv(config.sdk, process.env) });   // env 含 CODEX_HOME=codexHome(每 bot 独立, R6)
-// sandbox 收敛:allowWorkspaceWrite 为 false 时强制 read-only;danger-full-access 一律 reject
+// workspace-write 需 allowWorkspaceWrite;显式 danger-full-access 由容器/宿主隔离
 const effectiveSandbox = resolveSandbox(config.sdk);  // 见 §5 C5 决策
 // network/webSearch 从 config 解析(默认 false/disabled),不硬编码——否则 config 字段变无效字段(C8)
-const effNetwork = config.sdk.networkAccessEnabled ?? false;
+const effNetwork = effectiveSandbox === 'danger-full-access' || (config.sdk.networkAccessEnabled ?? false);
 const effWebSearch = config.sdk.webSearchEnabled ?? false;
 const effWebSearchMode = effWebSearch ? (config.sdk.webSearchMode ?? 'live') : 'disabled';
 const threadOpts = { workingDirectory: cwd, skipGitRepoCheck: true,
@@ -236,7 +237,7 @@ side-effect 标记用 `sideEffectSeen`(替代 cc 的 `emitted.any` 仅文本语�
 |---|---|---|
 | R1 | codex 无 system/user role 分离,安全前缀注入方式待定(baseInstructions? 还是 prompt 内嵌) | Step 3a spike:查 d.ts + 实测 `base-instructions`/ThreadOptions;确定后定 §6.4 |
 | R2 | stale-resume 的错误文本格式未知,正则没法预写 | Step 3a spike:删一个 threadId 的 session 文件后 resumeThread,抓真实报错 |
-| R3 | IM 不可信输入 → 默认 sandbox 让任意用户驱动 bot 改文件(C5) | **默认 `read-only`**;workspace-write 需 `allowWorkspaceWrite:true`+显式配双开关;danger-full-access 代码层 reject;安全前缀仅软约束、sandbox 才是硬边界;sandbox 锚每会话 cwd 沙箱。见 §5 |
+| R3 | IM 不可信输入 → 任意用户驱动 bot 改文件(C5) | **默认 `read-only`**;workspace-write 需双开关;显式 danger-full-access 将文件/网络隔离交给容器或宿主,不再提供 bot 间文件隔离。AGENTS.md 刷新失败时终止无沙箱轮次;安全前缀仅软约束。见 §5 |
 | R4 | codex 一次性投递 → 长任务期间用户只看到 typing,体验不如打字机 | toolProgress 推中间 item(命令/计划)作进度(脱敏 §6.6);可接受,记入 README |
 | R5 | 共享 codex home 不止 threadId 串台,还有历史/auth/config/memory/终端会话互相可见(C6) | 见 R6:每 bot 独立 CODEX_HOME → 根上隔离;threadId 仍 UUID + sdk_sessions 按 sessionKey 映射,双层隔离 |
 | R6 | 每 bot 独立 codex home + 互通改 opt-in(C6) | 默认 `codexHome=<baseDir>/<botId>/codex-home`,经 env `CODEX_HOME` 注入子进程(**已实测:session 确落到该目录**)。auth 需每 bot 各自登录/配 key。**互通卖点(IM↔终端同 session)= 显式 opt-in**:配 `codexHome:"~/.codex"` 才共享,README 明确警示"IM 内容会进入可被你个人终端 resume 的本地会话" |

@@ -84,7 +84,8 @@ export interface Config {
      * arbitrary user drive Codex into writing local files by default. To allow
      * the bot to edit code, the operator must BOTH set `allowWorkspaceWrite:true`
      * AND `sandboxMode:'workspace-write'` (double switch, guards against misconfig).
-     * 'danger-full-access' is rejected outright (see loadConfig validation).
+     * 'danger-full-access' explicitly disables Codex sandboxing. Use it only
+     * when an external boundary, such as a dedicated container, isolates the bot.
      */
     sandboxMode?: string;
     /**
@@ -100,7 +101,7 @@ export interface Config {
      * webSearchEnabled is true, do not pair it with 'minimal'.
      */
     modelReasoningEffort?: string;
-    /** Allow the agent network access. Default false (untrusted IM input). */
+    /** Allow sandboxed network access. Default false; ineffective in danger-full-access. */
     networkAccessEnabled?: boolean;
     /** Enable web search tool. Default false. */
     webSearchEnabled?: boolean;
@@ -177,7 +178,7 @@ export interface Config {
    * the `_bot` heuristic. Use this to whitelist trusted bots.
    */
   allowedBotUids?: string[];
-  /** Group IDs where the bot responds without being @mentioned (G12). */
+  /** Explicit exact-channel no-@ overrides; server group preferences are also consulted. */
   mentionFreeGroups?: string[];
   /**
    * v0.3 multi-bot: optional per-bot overrides. When present and non-empty, the
@@ -404,14 +405,6 @@ export function loadConfig(configPath?: string): Config {
       `or http://localhost/http://127.0.0.1 (SSRF protection)`,
     );
   }
-  // danger-full-access lets the model touch any file under $HOME (~/.ssh,
-  // keychain). IM input is untrusted — never allow it.
-  if (final.sdk.sandboxMode === 'danger-full-access') {
-    throw new Error(
-      `Unsafe sdk.sandboxMode: 'danger-full-access' is not allowed (untrusted IM input). ` +
-      `Use 'read-only' (default) or 'workspace-write' with allowWorkspaceWrite:true.`,
-    );
-  }
   // additionalDirectories extend the writable sandbox — validate the global
   // layer here. Per-bot overrides are re-validated in resolveBotConfigs().
   assertAdditionalDirectories('config', final.sdk.additionalDirectories, [
@@ -599,9 +592,6 @@ export function resolveBotConfigs(config: Config): Config[] {
     if (resolved.sdk.codexBaseUrl && !isAllowedApiUrl(resolved.sdk.codexBaseUrl)) {
       throw new Error(`Bot "${id}": unsafe sdk.codexBaseUrl ${resolved.sdk.codexBaseUrl} (SSRF protection)`);
     }
-    if (resolved.sdk.sandboxMode === 'danger-full-access') {
-      throw new Error(`Bot "${id}": sdk.sandboxMode 'danger-full-access' is not allowed (untrusted IM input)`);
-    }
     // per-bot sdk can also override additionalDirectories — re-validate so a
     // per-bot relative / '~' entry can't slip past the global-only check, and
     // reject any entry that overlaps this bot's trust anchors: its writable cwd
@@ -653,9 +643,8 @@ export function expandHome(p: string | undefined): string | undefined {
  * dir (injected UNSANITIZED as trusted). The sandboxed agent is driven by
  * untrusted IM input, so a writable root that overlaps any anchor would let the
  * agent overwrite the very files that govern its own trust boundary — a
- * trust-escape, the same class of risk the code already hard-rejects for
- * `danger-full-access`. Reject overlap in EITHER direction (entry contains an
- * anchor, or sits inside one).
+ * trust-escape. Reject overlap in EITHER direction (entry contains an anchor,
+ * or sits inside one). These roots do not constrain danger-full-access.
  */
 function assertAdditionalDirectories(
   id: string,

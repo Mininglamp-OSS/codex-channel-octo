@@ -12,14 +12,14 @@
   "sdk": {
     "_comment_codex_base_url": "Optional self-hosted Codex provider base URL (e.g. a private gateway). Passed to new Codex({ baseUrl }). Must be https:// (or http://localhost for dev) — SSRF-validated at boot. Omit to use codex's configured default.",
     "_comment_codex_api_key": "Optional API key for the Codex provider, passed to new Codex({ apiKey }). Alternatively authenticate per-bot via `codex login` against the bot's codex-home.",
-    "_comment_sandbox": "SECURITY: IM input is untrusted. sandboxMode defaults to 'read-only' (safe Q&A / code review). To let the bot edit files you must set BOTH allowWorkspaceWrite=true AND sandboxMode='workspace-write'. 'danger-full-access' is rejected outright.",
+    "_comment_sandbox": "sandboxMode defaults to 'read-only'. For sandboxed editing set BOTH allowWorkspaceWrite=true AND sandboxMode='workspace-write'. For a dedicated externally isolated container, explicitly set sandboxMode='danger-full-access' to disable Codex sandboxing (see config.bot.docker.example.json).",
     "sandboxMode": "read-only",
     "allowWorkspaceWrite": false,
     "_comment_approval": "approvalPolicy: never | on-request | on-failure | untrusted. Default 'never' (headless — no human to answer). The real boundary is sandboxMode, not this.",
     "approvalPolicy": "never",
     "_comment_effort": "modelReasoningEffort: minimal | low | medium | high | xhigh. Default 'medium'. NOTE: 'minimal' conflicts with web search.",
     "modelReasoningEffort": "medium",
-    "_comment_network": "networkAccessEnabled / webSearchEnabled default false (untrusted IM input). Enable deliberately.",
+    "_comment_network": "networkAccessEnabled / webSearchEnabled default false. danger-full-access has unrestricted Codex network access regardless of networkAccessEnabled; use container/network policy to restrict it.",
     "networkAccessEnabled": false,
     "webSearchEnabled": false,
     "_comment_tool_progress": "Set toolProgress=true to post redacted '🔧 <action>…' progress notices as codex works (command/file/tool — never stdout, diff, or full args). Off by default."

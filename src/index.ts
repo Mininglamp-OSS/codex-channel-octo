@@ -146,7 +146,7 @@ export type BotStack = ManagedBot;
  * (the gateway registers its own SIGINT/SIGTERM handlers); false in multi-bot
  * mode where main() owns a single combined shutdown.
  */
-async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean): Promise<BotStack> {
+export async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean): Promise<BotStack> {
   const label = multi ? `[${config.botId}] ` : '';
   const cwdBase = config.cwdBase ?? config.cwd;
   console.log(
@@ -243,10 +243,9 @@ async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean): 
     // where a sibling bot's message slips through unrecognized.
     const onInbound = (msg: BotMessage): void => {
       if (gateway.draining) return;
-      // Drop self-authored messages. OctoGateway.handleMessage() already filters
-      // these on the WS path; guard here too for safety (otherwise a bot's own
-      // group message could be cached into group context as un-processed chatter).
-      if (msg.from_uid === gateway.botId) return;
+      // Match the gateway's self-echo guard: server preference notifications
+      // authored as this bot must reach the router to invalidate its cache.
+      if (msg.from_uid === gateway.botId && msg.payload.event?.type !== 'mention_pref_updated') return;
       const p = handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId)
         .catch((err) => {
           console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, err instanceof Error ? err.message : err);
@@ -826,14 +825,13 @@ export async function handleMessage(
   // rejected (rate-limited, oversized). Without this guard a flooder who
   // tripped the rate limit could still inject text the LLM would see on the
   // next legitimate turn — the rate limit reply went out but the content
-  // still landed in [Group context]. Silently-dropped messages (not_mentioned,
-  // system_event, bot loop) still cache because they are legitimate group
-  // chatter the agent should be aware of when next addressed.
+  // still landed in [Group context]. Ordinary unmentioned chatter still
+  // caches, but control events must never become conversation context.
   const SUPPRESS_GROUP_CACHE = new Set(['rate_limited', 'oversized']);
   const suppressGroupCache =
     !!routeResult?.rejectionReason && SUPPRESS_GROUP_CACHE.has(routeResult.rejectionReason);
 
-  if (!wasProcessed && isGroup && !msg.streamOn && !suppressGroupCache) {
+  if (!wasProcessed && isGroup && !msg.streamOn && !msg.payload.event && !suppressGroupCache) {
     const summary = renderMessageForContext(msg, config.apiUrl);
     if (summary) {
       groupContext.pushMessage(

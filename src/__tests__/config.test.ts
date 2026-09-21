@@ -309,13 +309,28 @@ describe('sandboxMode', () => {
     expect(loadConfig(path).sdk.sandboxMode).toBe('workspace-write');
   });
 
-  it('rejects danger-full-access outright (untrusted IM input)', () => {
+  it('accepts an explicit danger-full-access setting', () => {
     const path = writeConfig({
       botToken: 'bf_t',
       apiUrl: 'https://a',
       sdk: { sandboxMode: 'danger-full-access' },
     });
-    expect(() => loadConfig(path)).toThrow(/danger-full-access/);
+    expect(loadConfig(path).sdk.sandboxMode).toBe('danger-full-access');
+    expect(resolveBotConfigs(loadConfig(path))[0].sdk.sandboxMode).toBe('danger-full-access');
+  });
+
+  it('allows a per-bot opt-out without changing other bots', () => {
+    const path = writeConfig({ apiUrl: 'https://a', bots: [{ id: 'container' }, { id: 'default' }] });
+    writeBotConfig('container', { botToken: 'bf_container', sdk: { sandboxMode: 'danger-full-access' } });
+    writeBotConfig('default', { botToken: 'bf_default' });
+    expect(resolveBotConfigs(loadConfig(path)).map(bot => bot.sdk.sandboxMode))
+      .toEqual(['danger-full-access', 'read-only']);
+  });
+
+  it('allows a per-bot sandbox to override an unrestricted shared default', () => {
+    const path = writeConfig({ apiUrl: 'https://a', bots: [{ id: 'safe' }], sdk: { sandboxMode: 'danger-full-access' } });
+    writeBotConfig('safe', { botToken: 'bf_safe', sdk: { sandboxMode: 'read-only' } });
+    expect(resolveBotConfigs(loadConfig(path))[0].sdk.sandboxMode).toBe('read-only');
   });
 });
 

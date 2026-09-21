@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mock the Octo API before importing SessionRouter
 vi.mock('../octo/api.js', () => ({
   sendMessage: vi.fn().mockResolvedValue(undefined),
+  getMentionPreference: vi.fn().mockResolvedValue(false),
 }));
 
 import { SessionRouter } from '../session-router.js';

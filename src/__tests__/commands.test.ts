@@ -166,6 +166,13 @@ describe('handleCommand', () => {
     expect(r.reply).toContain('historyLimit: 40 messages');
   });
 
+  it('/config does not claim network is blocked when the Codex sandbox is disabled', () => {
+    const r = handleCommand('/config', KEY, store, makeConfig({ sandboxMode: 'danger-full-access', networkAccessEnabled: false }));
+    expect(r.reply).toContain('sandboxMode: danger-full-access');
+    expect(r.reply).toContain('network: on (Codex sandbox disabled)');
+    expect(r.reply).not.toContain('network: off');
+  });
+
   it('/help lists the commands', () => {
     const r = handleCommand('/help', KEY, store, config);
     expect(r.handled).toBe(true);

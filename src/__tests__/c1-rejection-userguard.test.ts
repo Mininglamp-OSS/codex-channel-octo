@@ -19,6 +19,7 @@ vi.mock('../octo/api.js', async () => {
   return {
     ...actual,
     sendMessage: vi.fn().mockResolvedValue(undefined),
+    getMentionPreference: vi.fn().mockResolvedValue(false),
   };
 });
 
