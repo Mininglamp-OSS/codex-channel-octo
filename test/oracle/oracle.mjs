@@ -28,7 +28,20 @@ export function parseMarker(text) {
 }
 
 export const sha256 = (s) => createHash('sha256').update(String(s), 'utf8').digest('hex');
-const identityKey = (i) => [i.fixture, i.occurrence, i.run, i.kind, i.ordinal, i.index].join('|');
+// Identity fields in marker order. A key is the JSON serialization of the
+// ordered, validated field array, so distinct identity tuples never share a key
+// whatever delimiters their string fields contain. Malformed identities have none.
+const IDENTITY_FIELDS = ['fixture', 'occurrence', 'run', 'kind', 'ordinal', 'index', 'count'];
+const identityKey = (i) => {
+  if (i === null || typeof i !== 'object') return undefined;
+  const fields = IDENTITY_FIELDS.map((f) => i[f]);
+  const [fixture, occurrence, run, kind, ordinal, index, count] = fields;
+  const text = (x) => typeof x === 'string' && x.length > 0;
+  const integer = (x) => Number.isSafeInteger(x) && x >= 0;
+  if (![fixture, occurrence, run, kind].every(text) || ![ordinal, index, count].every(integer) || index < 1 || index > count) return undefined;
+  return JSON.stringify(fields);
+};
+const sameIdentity = (a, b) => IDENTITY_FIELDS.every((f) => a[f] === b[f]);
 const sameTarget = (a, b) => a && b && a.channelId === b.channelId && a.channelType === b.channelType;
 
 export function evaluateDelivery(trace, captureInventory) {
@@ -38,15 +51,20 @@ export function evaluateDelivery(trace, captureInventory) {
     unexpectedTargetOrBody: 0, missingConfirmedSegments: 0, unresolvedUnknowns: 0,
   };
   const v = (code, detail) => violations.push({ code, ...detail });
-  const expected = new Map(trace.expected.map((e) => [identityKey({ fixture: trace.fixture, ...e.identity }), e]));
+  const identityOf = (e) => ({ fixture: trace.fixture, ...e.identity });
+  const expected = new Map();
+  for (const e of trace.expected) {
+    const key = identityKey(identityOf(e));
+    if (key === undefined) v('malformed-expected-identity', { identity: e.identity });
+    else expected.set(key, e);
+  }
   // A stored marker names a permitted identity only when its full parsed
-  // identity, including the segment count, is in bounds and equals it.
+  // identity, including the segment count, is in bounds and equals it field by field.
   const expectedFor = (r) => {
     const m = parseMarker(r.fixtureMarker);
-    if (!m || m.fixture !== trace.fixture || m.index < 1 || m.count < 1 || m.index > m.count) return {};
-    const key = identityKey(m);
-    const e = expected.get(key);
-    return e && e.identity.count === m.count ? { key, e } : {};
+    const key = m && m.fixture === trace.fixture ? identityKey(m) : undefined;
+    const e = key === undefined ? undefined : expected.get(key);
+    return e && sameIdentity(m, identityOf(e)) ? { key, e } : {};
   };
   const captureCompleteness = reconcileCaptureInventory(trace, captureInventory);
 
@@ -84,8 +102,8 @@ export function evaluateDelivery(trace, captureInventory) {
   // 4. Every captured attempt: permitted retries only, never after ambiguity or restart.
   const attempts = new Map();
   for (const c of trace.captures) {
-    const k = identityKey({ fixture: c.fixture, occurrence: c.occurrence, run: c.run, kind: c.kind, ordinal: c.ordinal, index: c.index });
-    if (!expected.has(k)) { v('unexpected-attempt', { requestOrdinal: c.requestOrdinal }); continue; }
+    const k = identityKey(c);
+    if (k === undefined || !expected.has(k) || !sameIdentity(c, identityOf(expected.get(k)))) { v('unexpected-attempt', { requestOrdinal: c?.requestOrdinal }); continue; }
     if (!attempts.has(k)) attempts.set(k, []);
     attempts.get(k).push(c);
   }
