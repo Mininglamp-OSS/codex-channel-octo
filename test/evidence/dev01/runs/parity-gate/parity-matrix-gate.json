@@ -1,0 +1,20 @@
+{
+  "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+  "junit": "artifacts/runs/parity-matrix.junit.xml",
+  "unitRun": {
+    "exitStatus": 1,
+    "failedCases": [
+      "test/parity/parity-matrix.test.ts#parity matrix: complete R8 accounting &gt; PM-05: R8 requires 27 octo_management actions in the pinned B source (BLOCKED: source has 24)"
+    ]
+  },
+  "structural": {
+    "exitStatus": 0,
+    "rows": 355,
+    "issues": []
+  },
+  "passedClaimsAgainstFreshJUnit": {
+    "exitStatus": 0,
+    "junitCasesObserved": 1628,
+    "issues": []
+  }
+}

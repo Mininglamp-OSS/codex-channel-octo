@@ -1,0 +1,10 @@
+Negative control for CI-09 (candidate checkout provenance).
+Procedure: .github/workflows/ci.yml copied to /tmp/ci.yml.bak; every candidate checkout
+`ref: ${{ github.event.pull_request.head.sha || github.sha }}` replaced by
+`ref: refs/pull/1/merge`; `npx vitest run test/ci/ci-workflow.test.ts -t CI-09`; file
+restored from the backup and verified with cmp.
+Observed (mutated workflow):
+   × CI provenance > CI-09: every candidate-repo checkout uses the actual PR head SHA (never the synthesized merge ref); B/OC stay pinned
+     → type-check: expected 'refs/pull/1/merge' to be '${{ github.event.pull_request.head.sh…' // Object.is equality
+      Tests  1 failed | 10 skipped (11)
+Observed (restored workflow): test/ci — Tests 15 passed (15)

@@ -1,15 +1,245 @@
 name: CI
 
+# R8 §10.2: every branch, every PR, and manual dispatch.
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
-    branches: [main]
+    branches: ['**']
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# Candidate checkouts use the actual PR head commit (never the synthesized
+# refs/pull/N/merge), so every runner record describes the reviewed head.
+
 jobs:
+  type-check:
+    name: TypeScript type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run type-check
+      - run: npm run type-check:mention-tests
+      - run: npm run type-check:recovery-tests
+      - run: npm run type-check:continuity-tests
+      - run: npm run type-check:test
+
+  lint:
+    name: ESLint (zero warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run lint
+
+  unit:
+    name: Unit (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm test
+      - name: Runner records (JSON + JUnit)
+        if: always()
+        run: npm run test:unit-records
+        env:
+          DEV01_REPORT_DIR: artifacts/runs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: unit-records-node${{ matrix.node }}
+          path: artifacts/runs/
+
+  real-binary:
+    name: Real binary (codex 0.142.3, mock Responses)
+    runs-on: ubuntu-latest
+    env:
+      NO_PROXY: 127.0.0.1,localhost
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Install Linux sandbox prerequisite
+        # Ubuntu 24.04 needs the narrowly scoped bwrap user-namespace profile.
+        # https://learn.chatgpt.com/docs/sandboxing#prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap apparmor-profiles apparmor-utils
+          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          bwrap --unshare-user --ro-bind / / /bin/true
+      - run: npm run test:real-binary
+        env:
+          DEV01_REPORT_DIR: artifacts/runs
+          DEV01_EVIDENCE_DIR: artifacts/evidence
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: real-binary-evidence
+          path: |
+            artifacts/runs/
+            artifacts/evidence/
+
+  pack-smoke:
+    name: Pack smoke (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run pack:smoke
+        env:
+          DEV01_REPORT_DIR: artifacts/runs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: pack-smoke-node${{ matrix.node }}
+          path: artifacts/runs/
+
+  parity-matrix:
+    name: Parity matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:parity-matrix
+        env:
+          DEV01_REPORT_DIR: artifacts/runs
+      - run: npm run test:manifest
+        if: always()
+        env:
+          DEV01_REPORT_DIR: artifacts/runs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: parity-matrix-records
+          path: artifacts/runs/
+
+  egress-bypass-scan:
+    name: Egress bypass scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:egress
+
+  downgrade-open:
+    name: Downgrade-open (dd12980 build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:downgrade
+
+  goldens:
+    name: Goldens (pinned B / OC sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          path: codex-channel-octo
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: Mininglamp-OSS/openclaw-channel-octo
+          ref: 2e710e903fa43ac9440723746f7395d2f7b4347e
+          path: openclaw-channel-octo
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: openclaw/openclaw
+          ref: f6065d67762f2c87fbdeff119f34f54266a95b87
+          path: openclaw
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: codex-channel-octo/package-lock.json
+      - run: npm ci
+        working-directory: codex-channel-octo
+      - run: npm run goldens:verify
+        working-directory: codex-channel-octo
+      - run: npm run test:goldens
+        working-directory: codex-channel-octo
+
+  src-scope:
+    name: DEV-01 src scope (interface seams only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - run: node scripts/ci/check-src-diff.mjs
+
   build:
     name: Build and package proxy
     runs-on: ubuntu-latest
@@ -25,47 +255,6 @@ jobs:
       - run: test -f dist/codex-jsonl-proxy.mjs && test -x dist/codex-jsonl-proxy.mjs
       - run: npm pack --json > package-info.json
       - run: node -e "const fs=require('fs');const info=JSON.parse(fs.readFileSync('package-info.json'))[0];if(!info.files.some(file=>file.path==='dist/codex-jsonl-proxy.mjs'&&(file.mode&73)))process.exit(1)"
-  type-check:
-    name: TypeScript type-check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run type-check
-      - run: npm run type-check:mention-tests
-      - run: npm run type-check:recovery-tests
-      - run: npm run type-check:continuity-tests
-
-  lint:
-    name: ESLint (zero warnings)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run lint
-
-  test:
-    name: Vitest
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: ['22', '24.10.0']
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: ${{ matrix.node }}
-          cache: 'npm'
-      - run: npm ci
-      - run: npm test
 
   latest-sdk:
     name: Latest stable SDK (Node ${{ matrix.node }})

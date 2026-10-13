@@ -1,0 +1,362 @@
+{
+  "runner": "egress",
+  "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+  "environment": {
+    "node": "v26.5.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "ci": false,
+    "runner": "egress"
+  },
+  "generatedAt": "2026-10-13T14:10:34.970Z",
+  "records": [
+    {
+      "caseId": "EG-01",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: repository at DEV-01 > EG-01: every boundary export is classified; message/control writes are guarded primitives",
+      "actual": null,
+      "start": "2026-10-13T14:10:33.199Z",
+      "end": "2026-10-13T14:10:33.200Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: repository at DEV-01 > EG-01: every boundary export is classified; message/control writes are guarded primitives"
+    },
+    {
+      "caseId": "EG-02",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: repository at DEV-01 > EG-02: the observed outbound call sites equal the explicit baseline exactly (no new caller, no stale entry)",
+      "actual": null,
+      "start": "2026-10-13T14:10:33.200Z",
+      "end": "2026-10-13T14:10:33.200Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: repository at DEV-01 > EG-02: the observed outbound call sites equal the explicit baseline exactly (no new caller, no stale entry)"
+    },
+    {
+      "caseId": "EG-03",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: repository at DEV-01 > EG-03: the baseline records the R8 §0.3 bypass sites (router replySafe, command/progress/placeholder/error replies, StreamRelay)",
+      "actual": null,
+      "start": "2026-10-13T14:10:33.200Z",
+      "end": "2026-10-13T14:10:33.200Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: repository at DEV-01 > EG-03: the baseline records the R8 §0.3 bypass sites (router replySafe, command/progress/placeholder/error replies, StreamRelay)"
+    },
+    {
+      "caseId": "EG-04",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: negative controls > EG-04: the clean fixture (egress module only) passes",
+      "actual": null,
+      "start": "2026-10-13T14:10:33.200Z",
+      "end": "2026-10-13T14:10:33.372Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: negative controls > EG-04: the clean fixture (egress module only) passes"
+    },
+    {
+      "caseId": "EG-05",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: negative controls > EG-05: an unauthorized sendRichTextMessage call fails",
+      "actual": null,
+      "start": "2026-10-13T14:10:33.373Z",
+      "end": "2026-10-13T14:10:33.540Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: negative controls > EG-05: an unauthorized sendRichTextMessage call fails"
+    },
+    {
+      "caseId": "EG-06",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: negative controls > EG-06: an aliased import fails",
+      "actual": null,
+      "start": "2026-10-13T14:10:33.541Z",
+      "end": "2026-10-13T14:10:33.698Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: negative controls > EG-06: an aliased import fails"
+    },
+    {
+      "caseId": "EG-07",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: negative controls > EG-07: a namespace import fails (property and element access)",
+      "actual": null,
+      "start": "2026-10-13T14:10:33.699Z",
+      "end": "2026-10-13T14:10:33.859Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: negative controls > EG-07: a namespace import fails (property and element access)"
+    },
+    {
+      "caseId": "EG-08",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: negative controls > EG-08: a named re-export, a star re-export and a caller through the re-export chain all fail",
+      "actual": null,
+      "start": "2026-10-13T14:10:33.859Z",
+      "end": "2026-10-13T14:10:34.020Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: negative controls > EG-08: a named re-export, a star re-export and a caller through the re-export chain all fail"
+    },
+    {
+      "caseId": "EG-09",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: negative controls > EG-09: a dynamic import of the boundary module fails",
+      "actual": null,
+      "start": "2026-10-13T14:10:34.021Z",
+      "end": "2026-10-13T14:10:34.174Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: negative controls > EG-09: a dynamic import of the boundary module fails"
+    },
+    {
+      "caseId": "EG-10",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: negative controls > EG-10: a new unclassified boundary export is treated as guarded and reported",
+      "actual": null,
+      "start": "2026-10-13T14:10:34.174Z",
+      "end": "2026-10-13T14:10:34.320Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: negative controls > EG-10: a new unclassified boundary export is treated as guarded and reported"
+    },
+    {
+      "caseId": "EG-11",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: negative controls > EG-11: baseline accounting is exact — one extra call over a baselined count fails, a stale baseline entry fails",
+      "actual": null,
+      "start": "2026-10-13T14:10:34.321Z",
+      "end": "2026-10-13T14:10:34.782Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: negative controls > EG-11: baseline accounting is exact — one extra call over a baselined count fails, a stale baseline entry fails"
+    },
+    {
+      "caseId": "EG-12",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "egress"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "egress bypass scan: negative controls > EG-12: classified infrastructure and reads stay permitted outside egress",
+      "actual": null,
+      "start": "2026-10-13T14:10:34.782Z",
+      "end": "2026-10-13T14:10:34.927Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: negative controls > EG-12: classified infrastructure and reads stay permitted outside egress"
+    }
+  ]
+}

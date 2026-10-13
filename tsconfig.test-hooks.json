@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": ".", "outDir": "dist-test", "declaration": false, "sourceMap": false },
+  "include": ["test/hooks/test-hooks.ts", "src/seams/**/*.ts"],
+  "exclude": ["node_modules", "dist", "dist-test"]
+}

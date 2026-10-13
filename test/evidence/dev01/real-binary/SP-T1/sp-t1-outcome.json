@@ -1,0 +1,23 @@
+{
+  "caseId": "SP-T1",
+  "pin": "0.142.3",
+  "turn1": {
+    "advertised": true,
+    "called": true,
+    "toolOutputSeen": true
+  },
+  "afterResume": {
+    "advertised": true,
+    "called": true,
+    "toolOutputSeen": true
+  },
+  "afterRespawn": {
+    "advertised": true,
+    "called": true,
+    "toolOutputSeen": true
+  },
+  "schemaRegistrationPathsBesidesThreadStart": [],
+  "reRegistration": null,
+  "outcome": "A",
+  "basis": "callable on turn 1, after thread/resume{config:{}} and after respawn + resume without re-registration"
+}

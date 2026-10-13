@@ -1,0 +1,17 @@
+{
+  "pin": "0.142.3",
+  "capturedBy": "test/real-binary/sb.real.test.ts#SB-FIX",
+  "sequence": [
+    "response:initialize",
+    "response:thread/start",
+    "thread/started",
+    "response:turn/start",
+    "turn/started",
+    "item/started:userMessage",
+    "item/completed:userMessage",
+    "item/started:agentMessage",
+    "item/completed:agentMessage",
+    "turn/completed:completed",
+    "response:thread/unsubscribe"
+  ]
+}
