@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="downgrade">
+  <testsuite name="downgrade" tests="7" failures="0" skipped="0">
+    <testcase classname="test/downgrade/downgrade-open.test.ts" name="downgrade-open harness &gt; DG-01: the baseline build is compiled from the pinned A commit object, not the working tree" time="0.011">
+    <properties>
+      <property name="caseId" value="DG-01"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;downgrade&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="downgrade-open harness &gt; DG-01: the baseline build is compiled from the pinned A commit object, not the working tree"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:27.683Z"/>
+      <property name="end" value="2026-10-13T14:10:27.694Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/downgrade/downgrade-open.test.ts" name="downgrade-open harness &gt; DG-02: the seeded DB populates every original table with two distinguishable conversations via baseline store APIs" time="0.029">
+    <properties>
+      <property name="caseId" value="DG-02"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;downgrade&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="downgrade-open harness &gt; DG-02: the seeded DB populates every original table with two distinguishable conversations via baseline store APIs"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:27.695Z"/>
+      <property name="end" value="2026-10-13T14:10:27.724Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/downgrade/downgrade-open.test.ts" name="downgrade-open harness &gt; DG-03: with the head's actual migration list (empty at DEV-01) the dd12980 build reopens the DB and runs its core paths" time="0.007">
+    <properties>
+      <property name="caseId" value="DG-03"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;downgrade&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="downgrade-open harness &gt; DG-03: with the head's actual migration list (empty at DEV-01) the dd12980 build reopens the DB and runs its core paths"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:27.724Z"/>
+      <property name="end" value="2026-10-13T14:10:27.731Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/downgrade/downgrade-open.test.ts" name="downgrade-open harness &gt; DG-04: an additive fixture migration (new table + nullable column) keeps the dd12980 core paths and original-table semantics" time="0.004">
+    <properties>
+      <property name="caseId" value="DG-04"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;downgrade&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="downgrade-open harness &gt; DG-04: an additive fixture migration (new table + nullable column) keeps the dd12980 core paths and original-table semantics"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:27.731Z"/>
+      <property name="end" value="2026-10-13T14:10:27.735Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/downgrade/downgrade-open.test.ts" name="downgrade-open harness &gt; DG-05 negative control (drop-table): a destructive migration is detected by the dd12980 core paths" time="0.003">
+    <properties>
+      <property name="caseId" value="test/downgrade/downgrade-open.test.ts#downgrade-open harness &gt; DG-05 negative control (drop-table): a destructive migration is detected by the dd12980 core paths"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;downgrade&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="downgrade-open harness &gt; DG-05 negative control (drop-table): a destructive migration is detected by the dd12980 core paths"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:27.736Z"/>
+      <property name="end" value="2026-10-13T14:10:27.739Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/downgrade/downgrade-open.test.ts" name="downgrade-open harness &gt; DG-05 negative control (not-null-without-default): a destructive migration is detected by the dd12980 core paths" time="0.003">
+    <properties>
+      <property name="caseId" value="test/downgrade/downgrade-open.test.ts#downgrade-open harness &gt; DG-05 negative control (not-null-without-default): a destructive migration is detected by the dd12980 core paths"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;downgrade&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="downgrade-open harness &gt; DG-05 negative control (not-null-without-default): a destructive migration is detected by the dd12980 core paths"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:27.739Z"/>
+      <property name="end" value="2026-10-13T14:10:27.742Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/downgrade/downgrade-open.test.ts" name="downgrade-open harness &gt; DG-05 negative control (rename-column): a destructive migration is detected by the dd12980 core paths" time="0.003">
+    <properties>
+      <property name="caseId" value="test/downgrade/downgrade-open.test.ts#downgrade-open harness &gt; DG-05 negative control (rename-column): a destructive migration is detected by the dd12980 core paths"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;downgrade&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="downgrade-open harness &gt; DG-05 negative control (rename-column): a destructive migration is detected by the dd12980 core paths"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:27.743Z"/>
+      <property name="end" value="2026-10-13T14:10:27.746Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+  </testsuite>
+</testsuites>

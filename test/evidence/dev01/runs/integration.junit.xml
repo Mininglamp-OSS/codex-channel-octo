@@ -1,0 +1,645 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="integration">
+  <testsuite name="integration" tests="40" failures="0" skipped="0">
+    <testcase classname="test/harness/case-reporter.test.ts" name="case records &gt; CR-01: every record carries every R8 §10.1 field" time="0.001">
+    <properties>
+      <property name="caseId" value="CR-01"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="case records &gt; CR-01: every record carries every R8 §10.1 field"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.280Z"/>
+      <property name="end" value="2026-10-13T14:10:28.281Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/case-reporter.test.ts" name="case records &gt; CR-02: case IDs come from the title prefix, else file#full-title; catalog metadata and test meta are merged" time="0.000">
+    <properties>
+      <property name="caseId" value="CR-02"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="case records &gt; CR-02: case IDs come from the title prefix, else file#full-title; catalog metadata and test meta are merged"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.281Z"/>
+      <property name="end" value="2026-10-13T14:10:28.281Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/case-reporter.test.ts" name="case records &gt; CR-03: failures are failed; todo and skipped are pending — never passed" time="0.000">
+    <properties>
+      <property name="caseId" value="CR-03"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="case records &gt; CR-03: failures are failed; todo and skipped are pending — never passed"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.282Z"/>
+      <property name="end" value="2026-10-13T14:10:28.282Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/case-reporter.test.ts" name="case records &gt; CR-04: JUnit output escapes XML, marks failures and skipped, and embeds the record as properties" time="0.000">
+    <properties>
+      <property name="caseId" value="CR-04"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="case records &gt; CR-04: JUnit output escapes XML, marks failures and skipped, and embeds the record as properties"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.282Z"/>
+      <property name="end" value="2026-10-13T14:10:28.282Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/fake-app-server.test.ts" name="fake App Server &gt; FAS-01 (SB-01 parity): rejects requests before initialize and a second initialize with -32600" time="0.030">
+    <properties>
+      <property name="caseId" value="FAS-01"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake App Server &gt; FAS-01 (SB-01 parity): rejects requests before initialize and a second initialize with -32600"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.294Z"/>
+      <property name="end" value="2026-10-13T14:10:28.324Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/fake-app-server.test.ts" name="fake App Server &gt; FAS-02: a basic turn has the same normalized notification shape as the pinned 0.142.3 binary capture" time="0.045">
+    <properties>
+      <property name="caseId" value="FAS-02"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake App Server &gt; FAS-02: a basic turn has the same normalized notification shape as the pinned 0.142.3 binary capture"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.325Z"/>
+      <property name="end" value="2026-10-13T14:10:28.370Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/fake-app-server.test.ts" name="fake App Server &gt; FAS-03: a turn/start on an active thread is recorded as a steering violation" time="0.456">
+    <properties>
+      <property name="caseId" value="FAS-03"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake App Server &gt; FAS-03: a turn/start on an active thread is recorded as a steering violation"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.370Z"/>
+      <property name="end" value="2026-10-13T14:10:28.826Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/fake-app-server.test.ts" name="fake App Server &gt; FAS-04: runtime.dropInterruptResponse withholds the interrupt response but still terminates the turn" time="0.657">
+    <properties>
+      <property name="caseId" value="FAS-04"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake App Server &gt; FAS-04: runtime.dropInterruptResponse withholds the interrupt response but still terminates the turn"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.826Z"/>
+      <property name="end" value="2026-10-13T14:10:29.483Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/fake-app-server.test.ts" name="fake App Server &gt; FAS-05: runtime.dropTurnCompleted answers the interrupt but never emits turn/completed" time="0.552">
+    <properties>
+      <property name="caseId" value="FAS-05"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake App Server &gt; FAS-05: runtime.dropTurnCompleted answers the interrupt but never emits turn/completed"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:29.484Z"/>
+      <property name="end" value="2026-10-13T14:10:30.036Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/fake-app-server.test.ts" name="fake App Server &gt; FAS-06: runtime.failUnsubscribe makes thread/unsubscribe fail" time="0.047">
+    <properties>
+      <property name="caseId" value="FAS-06"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake App Server &gt; FAS-06: runtime.failUnsubscribe makes thread/unsubscribe fail"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.037Z"/>
+      <property name="end" value="2026-10-13T14:10:30.084Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/fake-app-server.test.ts" name="fake App Server &gt; FAS-07: runtime.killChild exits the process mid-turn with no terminal event" time="0.031">
+    <properties>
+      <property name="caseId" value="FAS-07"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake App Server &gt; FAS-07: runtime.killChild exits the process mid-turn with no terminal event"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.084Z"/>
+      <property name="end" value="2026-10-13T14:10:30.115Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/fake-app-server.test.ts" name="fake App Server &gt; FAS-08: server requests are tracked; an unanswered one is reported as a violation at shutdown" time="0.040">
+    <properties>
+      <property name="caseId" value="FAS-08"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake App Server &gt; FAS-08: server requests are tracked; an unanswered one is reported as a violation at shutdown"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.116Z"/>
+      <property name="end" value="2026-10-13T14:10:30.156Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/fake-app-server.test.ts" name="fake App Server &gt; FAS-09: an answered server request lets the scripted turn complete and is not a violation" time="0.039">
+    <properties>
+      <property name="caseId" value="FAS-09"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake App Server &gt; FAS-09: an answered server request lets the scripted turn complete and is not a violation"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.156Z"/>
+      <property name="end" value="2026-10-13T14:10:30.195Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/harness/fake-app-server.test.ts" name="fake App Server &gt; FAS-10: unknown fault point names are rejected at start-up (typo guard)" time="0.025">
+    <properties>
+      <property name="caseId" value="FAS-10"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake App Server &gt; FAS-10: unknown fault point names are rejected at start-up (typo guard)"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.195Z"/>
+      <property name="end" value="2026-10-13T14:10:30.220Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo WS: production WKSocket handshake and delivery &gt; FO-01: register + CONNECT carry the pinned protocol fields and the bot identity" time="0.032">
+    <properties>
+      <property name="caseId" value="FO-01"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo WS: production WKSocket handshake and delivery &gt; FO-01: register + CONNECT carry the pinned protocol fields and the bot identity"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.348Z"/>
+      <property name="end" value="2026-10-13T14:10:28.380Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo WS: production WKSocket handshake and delivery &gt; FO-02: RECV is decrypted, delivered with full int64 precision, and ACKed only after a successful parse" time="0.016">
+    <properties>
+      <property name="caseId" value="FO-02"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo WS: production WKSocket handshake and delivery &gt; FO-02: RECV is decrypted, delivered with full int64 precision, and ACKed only after a successful parse"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.380Z"/>
+      <property name="end" value="2026-10-13T14:10:28.396Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo WS: production WKSocket handshake and delivery &gt; FO-03: a poison payload is not ACKed until the third delivery and never reaches the handler" time="0.256">
+    <properties>
+      <property name="caseId" value="FO-03"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo WS: production WKSocket handshake and delivery &gt; FO-03: a poison payload is not ACKed until the third delivery and never reaches the handler"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.397Z"/>
+      <property name="end" value="2026-10-13T14:10:28.653Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo WS: production WKSocket handshake and delivery &gt; FO-04: a CONNACK salt shorter than 16 bytes fails the handshake (client closes, nothing delivered)" time="2.024">
+    <properties>
+      <property name="caseId" value="FO-04"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo WS: production WKSocket handshake and delivery &gt; FO-04: a CONNACK salt shorter than 16 bytes fails the handshake (client closes, nothing delivered)"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.653Z"/>
+      <property name="end" value="2026-10-13T14:10:30.677Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo WS: production WKSocket handshake and delivery &gt; FO-05: DISCONNECT triggers the existing kick → force_refresh re-register → reconnect path" time="0.026">
+    <properties>
+      <property name="caseId" value="FO-05"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo WS: production WKSocket handshake and delivery &gt; FO-05: DISCONNECT triggers the existing kick → force_refresh re-register → reconnect path"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.678Z"/>
+      <property name="end" value="2026-10-13T14:10:30.704Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo WS: production WKSocket handshake and delivery &gt; FO-06: transport.dropConnack leaves the client unconnected and is recorded as a consumed fault" time="0.162">
+    <properties>
+      <property name="caseId" value="FO-06"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo WS: production WKSocket handshake and delivery &gt; FO-06: transport.dropConnack leaves the client unconnected and is recorded as a consumed fault"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.704Z"/>
+      <property name="end" value="2026-10-13T14:10:30.866Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo WS: production WKSocket handshake and delivery &gt; FO-07: api.forceStatus(register,503) fails register() and releases the per-bot lock" time="0.014">
+    <properties>
+      <property name="caseId" value="FO-07"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo WS: production WKSocket handshake and delivery &gt; FO-07: api.forceStatus(register,503) fails register() and releases the per-bot lock"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.867Z"/>
+      <property name="end" value="2026-10-13T14:10:30.881Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-03.send: sendMessage posts type-1 payload, mention block and a fresh client_msg_no" time="0.008">
+    <properties>
+      <property name="caseId" value="EP-03.send"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-03.send: sendMessage posts type-1 payload, mention block and a fresh client_msg_no"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.882Z"/>
+      <property name="end" value="2026-10-13T14:10:30.890Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-02/EP-09/EP-10: heartbeat, typing and read receipt wire shapes" time="0.006">
+    <properties>
+      <property name="caseId" value="test/integration/fake-octo-transport.test.ts#fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-02/EP-09/EP-10: heartbeat, typing and read receipt wire shapes"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-02/EP-09/EP-10: heartbeat, typing and read receipt wire shapes"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.891Z"/>
+      <property name="end" value="2026-10-13T14:10:30.897Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-19.get: user/info encodes the uid, maps 200 and returns null on 404" time="0.003">
+    <properties>
+      <property name="caseId" value="EP-19.get"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-19.get: user/info encodes the uid, maps 200 and returns null on 404"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.898Z"/>
+      <property name="end" value="2026-10-13T14:10:30.901Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-13.get / EP-14.get / EP-15.get / EP-16.get: group reads encode path segments" time="0.005">
+    <properties>
+      <property name="caseId" value="test/integration/fake-octo-transport.test.ts#fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-13.get / EP-14.get / EP-15.get / EP-16.get: group reads encode path segments"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-13.get / EP-14.get / EP-15.get / EP-16.get: group reads encode path segments"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.901Z"/>
+      <property name="end" value="2026-10-13T14:10:30.906Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-11.sync: messages/sync request body and base64 payload decoding" time="0.001">
+    <properties>
+      <property name="caseId" value="EP-11.sync"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-11.sync: messages/sync request body and base64 payload decoding"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.906Z"/>
+      <property name="end" value="2026-10-13T14:10:30.907Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/integration/fake-octo-transport.test.ts" name="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-21.get: upload/credentials encodes the filename and scrubs Bearer tokens from error text" time="0.001">
+    <properties>
+      <property name="caseId" value="EP-21.get"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="fake Octo REST: endpoint wire inventory for existing A endpoints &gt; EP-21.get: upload/credentials encodes the filename and scrubs Bearer tokens from error text"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:30.908Z"/>
+      <property name="end" value="2026-10-13T14:10:30.909Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="Clock seam &gt; SEAM-CLOCK-01: systemClock tracks wall time and a monotonic source" time="0.005">
+    <properties>
+      <property name="caseId" value="SEAM-CLOCK-01"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="Clock seam &gt; SEAM-CLOCK-01: systemClock tracks wall time and a monotonic source"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.301Z"/>
+      <property name="end" value="2026-10-13T14:10:28.306Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="Clock seam &gt; SEAM-CLOCK-02: systemClock.clearTimeout cancels a pending timer" time="0.010">
+    <properties>
+      <property name="caseId" value="SEAM-CLOCK-02"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="Clock seam &gt; SEAM-CLOCK-02: systemClock.clearTimeout cancels a pending timer"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.307Z"/>
+      <property name="end" value="2026-10-13T14:10:28.317Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="Clock seam &gt; SEAM-CLOCK-03: FakeClock fires timers in deadline order and only when advanced" time="0.000">
+    <properties>
+      <property name="caseId" value="SEAM-CLOCK-03"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="Clock seam &gt; SEAM-CLOCK-03: FakeClock fires timers in deadline order and only when advanced"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.317Z"/>
+      <property name="end" value="2026-10-13T14:10:28.317Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="Clock seam &gt; SEAM-CLOCK-04: FakeClock runs timers scheduled from inside a callback within the same advance window" time="0.000">
+    <properties>
+      <property name="caseId" value="SEAM-CLOCK-04"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="Clock seam &gt; SEAM-CLOCK-04: FakeClock runs timers scheduled from inside a callback within the same advance window"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.318Z"/>
+      <property name="end" value="2026-10-13T14:10:28.318Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="Clock seam &gt; SEAM-CLOCK-05: a wall-clock jump moves now() but never fires or skips monotonic timers" time="0.000">
+    <properties>
+      <property name="caseId" value="SEAM-CLOCK-05"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="Clock seam &gt; SEAM-CLOCK-05: a wall-clock jump moves now() but never fires or skips monotonic timers"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.318Z"/>
+      <property name="end" value="2026-10-13T14:10:28.318Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="Clock seam &gt; SEAM-CLOCK-06: FakeClock.clearTimeout removes a pending timer and rejects negative advance" time="0.000">
+    <properties>
+      <property name="caseId" value="SEAM-CLOCK-06"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="Clock seam &gt; SEAM-CLOCK-06: FakeClock.clearTimeout removes a pending timer and rejects negative advance"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.318Z"/>
+      <property name="end" value="2026-10-13T14:10:28.318Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="FaultPlan seam &gt; SEAM-FAULT-01: the named fault points are exactly the R8 §10.4 list" time="0.000">
+    <properties>
+      <property name="caseId" value="SEAM-FAULT-01"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="FaultPlan seam &gt; SEAM-FAULT-01: the named fault points are exactly the R8 §10.4 list"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.319Z"/>
+      <property name="end" value="2026-10-13T14:10:28.319Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="FaultPlan seam &gt; SEAM-FAULT-02: parameterized points render stable keys" time="0.000">
+    <properties>
+      <property name="caseId" value="SEAM-FAULT-02"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="FaultPlan seam &gt; SEAM-FAULT-02: parameterized points render stable keys"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.319Z"/>
+      <property name="end" value="2026-10-13T14:10:28.319Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="FaultPlan seam &gt; SEAM-FAULT-03: NO_FAULTS always proceeds" time="0.000">
+    <properties>
+      <property name="caseId" value="SEAM-FAULT-03"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="FaultPlan seam &gt; SEAM-FAULT-03: NO_FAULTS always proceeds"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.319Z"/>
+      <property name="end" value="2026-10-13T14:10:28.319Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="FaultPlan seam &gt; SEAM-FAULT-04: ScriptedFaultPlan fires an armed point exactly the armed number of times and logs hits" time="0.000">
+    <properties>
+      <property name="caseId" value="SEAM-FAULT-04"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="FaultPlan seam &gt; SEAM-FAULT-04: ScriptedFaultPlan fires an armed point exactly the armed number of times and logs hits"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.319Z"/>
+      <property name="end" value="2026-10-13T14:10:28.319Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="FaultPlan seam &gt; SEAM-FAULT-05: segment-scoped points only match their own segment index" time="0.000">
+    <properties>
+      <property name="caseId" value="SEAM-FAULT-05"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="FaultPlan seam &gt; SEAM-FAULT-05: segment-scoped points only match their own segment index"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.319Z"/>
+      <property name="end" value="2026-10-13T14:10:28.319Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="FaultPlan seam &gt; SEAM-FAULT-06: arming an unknown point name is rejected (typo guard)" time="0.000">
+    <properties>
+      <property name="caseId" value="SEAM-FAULT-06"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="FaultPlan seam &gt; SEAM-FAULT-06: arming an unknown point name is rejected (typo guard)"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.319Z"/>
+      <property name="end" value="2026-10-13T14:10:28.319Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/seams/seams.test.ts" name="FaultPlan seam &gt; SEAM-FAULT-07: unconsumed() reports armed faults that never fired" time="0.000">
+    <properties>
+      <property name="caseId" value="SEAM-FAULT-07"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;integration&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="FaultPlan seam &gt; SEAM-FAULT-07: unconsumed() reports armed faults that never fired"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:28.319Z"/>
+      <property name="end" value="2026-10-13T14:10:28.319Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+  </testsuite>
+</testsuites>

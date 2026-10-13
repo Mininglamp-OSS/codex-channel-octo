@@ -1,0 +1,27 @@
+{
+  "id": "M09-proto-version",
+  "rows": [
+    "T1",
+    "INV-P1"
+  ],
+  "file": "src/octo/socket.ts",
+  "filter": "GB-04|INV-P1",
+  "controlPassed": true,
+  "killed": true,
+  "executedFailures": [
+    {
+      "file": "-e7gI6f/test/goldens/b-wire.golden.test.ts",
+      "title": "P1 handshake and AES vs B (production WKSocket through the fake server) GB-04 (T1/T3/T5): A CONNECT equals the B CONNECT frame byte-for-byte for identical inputs",
+      "status": "failed",
+      "failure": "AssertionError: expected '107a030000213838383838383838383838383…' to be '107a040000213838383838383838383838383…' // Object.is equality"
+    },
+    {
+      "file": "-e7gI6f/test/locks/invariant-locks.test.ts",
+      "title": "INV-P1 protocol constants INV-P1: CONNECT carries PROTO_VERSION=4, deviceFlag=0, a W-suffixed deviceID; AES-128-CBC key=MD5(base64(shared))[0:16], IV=salt[0:16]",
+      "status": "failed",
+      "failure": "AssertionError: expected { version: 3, deviceFlag: +0, …(5) } to match object { version: 4, deviceFlag: +0 }"
+    }
+  ],
+  "mutatedLoadErrors": [],
+  "controlCases": 44
+}

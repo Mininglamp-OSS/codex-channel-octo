@@ -1,0 +1,61 @@
+{
+  "version": "independent-delivery-v1",
+  "source": "R8 §10.10",
+  "marker": "[DLY f=<fixtureNonce> o=<occurrenceToken> r=<runToken> k=<kind> m=<logicalOrdinal 6 digits> s=<index 6>/<count 6>]",
+  "captureRecordFields": [
+    "fixture",
+    "logicalIdentity",
+    "kind",
+    "occurrence",
+    "run",
+    "ordinal",
+    "index",
+    "count",
+    "senderUid",
+    "target",
+    "requestOrdinal",
+    "requestAt",
+    "requestBodyHash",
+    "serverNormalizedPayloadHash",
+    "normalizationFixtureVersion",
+    "clientMsgNo",
+    "httpStatus",
+    "responseMessageId",
+    "responseAt",
+    "transportOutcome"
+  ],
+  "inventoryRecordFields": [
+    "messageId",
+    "channelId",
+    "channelType",
+    "senderUid",
+    "serverTimestamp",
+    "fixtureMarker",
+    "payloadHash",
+    "serverNormalizedPayloadHash",
+    "normalizationFixtureVersion"
+  ],
+  "rules": [
+    "1 each expected confirmed segment has exactly one stored message matching identity/body/sender/target; 0 = missing, >1 = duplicate committed",
+    "2 every observed message maps to one permitted identity; wrong target/sender/body fails",
+    "3 all attempts examined: <=2 429 retries and <=1 proven pre-write retry with identical bytes/key are permitted; retry after ambiguity, duplicate logical attempts and changed retry payloads fail even if the server dedupes",
+    "4 unknown segments may be observed 0 or 1 times (verdict unknown, never pass); no resend after restart",
+    "5 incomplete pagination leaves the verdict pending"
+  ],
+  "verdicts": [
+    "pass",
+    "fail",
+    "unknown",
+    "pending"
+  ],
+  "fixtures": [
+    "ORACLE-01",
+    "ORACLE-02",
+    "ORACLE-03",
+    "ORACLE-04",
+    "ORACLE-05",
+    "ORACLE-06",
+    "ORACLE-07",
+    "ORACLE-08"
+  ]
+}

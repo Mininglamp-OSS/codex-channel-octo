@@ -1,0 +1,263 @@
+{
+  "id": "ORACLE-03",
+  "description": "a segment stored in the wrong target fails (and leaves the expected segment missing)",
+  "expectedVerdict": "fail",
+  "expectedViolations": [
+    "wrong-target",
+    "missing-confirmed-segment"
+  ],
+  "trace": {
+    "fixture": "fx03",
+    "expected": [
+      {
+        "identity": {
+          "occurrence": "oc3",
+          "run": "run3",
+          "kind": "cron.reminder",
+          "ordinal": 0,
+          "index": 1,
+          "count": 2
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx03 o=oc3 r=run3 k=cron.reminder m=000000 s=000001/000002]\nreminder 1",
+        "outcome": "confirmed"
+      },
+      {
+        "identity": {
+          "occurrence": "oc3",
+          "run": "run3",
+          "kind": "cron.reminder",
+          "ordinal": 0,
+          "index": 2,
+          "count": 2
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx03 o=oc3 r=run3 k=cron.reminder m=000000 s=000002/000002]\nreminder 2",
+        "outcome": "confirmed"
+      }
+    ],
+    "captures": [
+      {
+        "fixture": "fx03",
+        "logicalIdentity": "oc3/run3/cron.reminder/0/1",
+        "kind": "cron.reminder",
+        "occurrence": "oc3",
+        "run": "run3",
+        "ordinal": 0,
+        "index": 1,
+        "count": 2,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 7,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "5399b93042ab5ea81f518fcd96d3a4a7fed34bb68f67e75d4c47750604decd74",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run3-1",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      },
+      {
+        "fixture": "fx03",
+        "logicalIdentity": "oc3/run3/cron.reminder/0/2",
+        "kind": "cron.reminder",
+        "occurrence": "oc3",
+        "run": "run3",
+        "ordinal": 0,
+        "index": 2,
+        "count": 2,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 8,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "80f971b1411afa1c0dd4fdbf3389c6c8e1ef7f486071a178088cf161ec2150ad",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run3-2",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      }
+    ],
+    "inventory": {
+      "complete": true,
+      "declaredPageCount": 1,
+      "pages": [
+        {
+          "cursor": "c0",
+          "next": null,
+          "records": [
+            {
+              "messageId": "900000000000000008",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx03 o=oc3 r=run3 k=cron.reminder m=000000 s=000001/000002]",
+              "payloadHash": "5399b93042ab5ea81f518fcd96d3a4a7fed34bb68f67e75d4c47750604decd74",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            },
+            {
+              "messageId": "900000000000000009",
+              "channelId": "g_other",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx03 o=oc3 r=run3 k=cron.reminder m=000000 s=000002/000002]",
+              "payloadHash": "80f971b1411afa1c0dd4fdbf3389c6c8e1ef7f486071a178088cf161ec2150ad",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "controlTrace": {
+    "fixture": "fx03",
+    "expected": [
+      {
+        "identity": {
+          "occurrence": "oc3",
+          "run": "run3",
+          "kind": "cron.reminder",
+          "ordinal": 0,
+          "index": 1,
+          "count": 2
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx03 o=oc3 r=run3 k=cron.reminder m=000000 s=000001/000002]\nreminder 1",
+        "outcome": "confirmed"
+      },
+      {
+        "identity": {
+          "occurrence": "oc3",
+          "run": "run3",
+          "kind": "cron.reminder",
+          "ordinal": 0,
+          "index": 2,
+          "count": 2
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx03 o=oc3 r=run3 k=cron.reminder m=000000 s=000002/000002]\nreminder 2",
+        "outcome": "confirmed"
+      }
+    ],
+    "captures": [
+      {
+        "fixture": "fx03",
+        "logicalIdentity": "oc3/run3/cron.reminder/0/1",
+        "kind": "cron.reminder",
+        "occurrence": "oc3",
+        "run": "run3",
+        "ordinal": 0,
+        "index": 1,
+        "count": 2,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 7,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "5399b93042ab5ea81f518fcd96d3a4a7fed34bb68f67e75d4c47750604decd74",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run3-1",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      },
+      {
+        "fixture": "fx03",
+        "logicalIdentity": "oc3/run3/cron.reminder/0/2",
+        "kind": "cron.reminder",
+        "occurrence": "oc3",
+        "run": "run3",
+        "ordinal": 0,
+        "index": 2,
+        "count": 2,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 8,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "80f971b1411afa1c0dd4fdbf3389c6c8e1ef7f486071a178088cf161ec2150ad",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run3-2",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      }
+    ],
+    "inventory": {
+      "complete": true,
+      "declaredPageCount": 1,
+      "pages": [
+        {
+          "cursor": "c0",
+          "next": null,
+          "records": [
+            {
+              "messageId": "900000000000000008",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx03 o=oc3 r=run3 k=cron.reminder m=000000 s=000001/000002]",
+              "payloadHash": "5399b93042ab5ea81f518fcd96d3a4a7fed34bb68f67e75d4c47750604decd74",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            },
+            {
+              "messageId": "900000000000000009",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx03 o=oc3 r=run3 k=cron.reminder m=000000 s=000002/000002]",
+              "payloadHash": "80f971b1411afa1c0dd4fdbf3389c6c8e1ef7f486071a178088cf161ec2150ad",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

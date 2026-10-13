@@ -1,0 +1,906 @@
+{
+  "runner": "real-binary",
+  "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+  "environment": {
+    "node": "v26.5.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "ci": false,
+    "runner": "real-binary"
+  },
+  "generatedAt": "2026-10-13T14:22:55.102Z",
+  "records": [
+    {
+      "caseId": "SB-00",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "pinned binary > SB-00: the binary under test is exactly codex-cli 0.142.3 from the installed vendor package",
+      "actual": null,
+      "start": "2026-10-13T14:21:44.567Z",
+      "end": "2026-10-13T14:21:44.567Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "pinned binary > SB-00: the binary under test is exactly codex-cli 0.142.3 from the installed vendor package"
+    },
+    {
+      "caseId": "SB-01",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: Pre-init request → error `-32600` with message `Not initialized`; second `initialize` → `-32600 Already initialized`",
+      "actual": {
+        "pre": {
+          "code": -32600,
+          "message": "Not initialized"
+        },
+        "again": {
+          "code": -32600,
+          "message": "Already initialized"
+        }
+      },
+      "start": "2026-10-13T14:21:44.568Z",
+      "end": "2026-10-13T14:21:44.631Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-01/app-server-1.jsonl",
+        "test/evidence/dev01/real-binary/SB-01/app-server-1.stderr.log",
+        "test/evidence/dev01/real-binary/SB-01/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-01: pre-init request → -32600 Not initialized; second initialize → -32600 Already initialized"
+    },
+    {
+      "caseId": "SB-02",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: Second `turn/start` on an active thread returns a turn id that receives no `turn/started` or `turn/completed` within 10 s. Runtime test: a second `runTurn` on the same lane does not call `turn/start` until the first is terminal",
+      "actual": {
+        "firstTurnId": "01a135a4-0771-7d41-b2de-0a1ca06e9c0b",
+        "secondTurnId": "01a135a4-077e-71a1-9e71-c5c4ddf284b5",
+        "sameId": false,
+        "eventsForSecondIdWithin10s": 0
+      },
+      "start": "2026-10-13T14:21:44.632Z",
+      "end": "2026-10-13T14:21:54.740Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-02/app-server-2.jsonl",
+        "test/evidence/dev01/real-binary/SB-02/app-server-2.stderr.log",
+        "test/evidence/dev01/real-binary/SB-02/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-02: a second turn/start on an active thread returns a turn id that receives no turn/started or turn/completed within 10 s"
+    },
+    {
+      "caseId": "test/real-binary/sb.real.test.ts#SB contract cases > SB-02 runtime (DEV-04): a second runTurn on the same lane does not call turn/start until the first is terminal",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "SB contract cases > SB-02 runtime (DEV-04): a second runTurn on the same lane does not call turn/start until the first is terminal",
+      "actual": null,
+      "start": null,
+      "end": null,
+      "status": "pending",
+      "evidencePaths": [],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-02 runtime (DEV-04): a second runTurn on the same lane does not call turn/start until the first is terminal"
+    },
+    {
+      "caseId": "SB-03",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: After a terminal `codex exec resume` turn, `thread/resume{config:{}}` + `turn/start` model input contains the terminal turn (mock records input). An identical resume without `config` does not",
+      "actual": {
+        "execExit": 0,
+        "resumeWithoutConfigSeesTerminalTurn": false,
+        "resumeWithConfigSeesTerminalTurn": true
+      },
+      "start": "2026-10-13T14:21:54.740Z",
+      "end": "2026-10-13T14:21:58.012Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-03/app-server-3.jsonl",
+        "test/evidence/dev01/real-binary/SB-03/app-server-3.stderr.log",
+        "test/evidence/dev01/real-binary/SB-03/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-03: after a terminal `codex exec resume` turn, thread/resume{config:{}} sees it; an identical resume without config does not"
+    },
+    {
+      "caseId": "SB-04",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: `turn/start` overrides persist across turns and a reload. Runtime sends only `cwd`, `approvalPolicy` and `effort` (asserted from the request log)",
+      "actual": {
+        "efforts": [
+          "high",
+          "high",
+          "high"
+        ]
+      },
+      "start": "2026-10-13T14:21:58.013Z",
+      "end": "2026-10-13T14:21:58.134Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-04/app-server-4.jsonl",
+        "test/evidence/dev01/real-binary/SB-04/app-server-4.stderr.log",
+        "test/evidence/dev01/real-binary/SB-04/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-04: turn/start overrides persist across turns and a config:{} reload"
+    },
+    {
+      "caseId": "test/real-binary/sb.real.test.ts#SB contract cases > SB-04 runtime (DEV-04): turn/start carries only cwd, approvalPolicy and effort (asserted from the runtime request log)",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "SB contract cases > SB-04 runtime (DEV-04): turn/start carries only cwd, approvalPolicy and effort (asserted from the runtime request log)",
+      "actual": null,
+      "start": null,
+      "end": null,
+      "status": "pending",
+      "evidencePaths": [],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-04 runtime (DEV-04): turn/start carries only cwd, approvalPolicy and effort (asserted from the runtime request log)"
+    },
+    {
+      "caseId": "SB-05",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: AGENTS.md edited after the first turn → the mock-recorded instructions are unchanged on later turns",
+      "actual": {
+        "firstHasAlpha": true,
+        "secondHasAlpha": true,
+        "secondHasBravo": false
+      },
+      "start": "2026-10-13T14:21:58.135Z",
+      "end": "2026-10-13T14:21:58.244Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-05/app-server-5.jsonl",
+        "test/evidence/dev01/real-binary/SB-05/app-server-5.stderr.log",
+        "test/evidence/dev01/real-binary/SB-05/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-05: AGENTS.md edited after the first turn leaves the recorded instructions unchanged on later turns"
+    },
+    {
+      "caseId": "SB-06",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: exec-created thread resumes in app-server; app-server thread resumes with `codex exec resume`; both list the prior turns",
+      "actual": {
+        "execThread": "01a135a4-3c94-75a3-ad72-7a76c8625790",
+        "priorTurnsListed": 1,
+        "execTurnSeen": true,
+        "exec2Exit": 0,
+        "execSawPrior": true
+      },
+      "start": "2026-10-13T14:21:58.244Z",
+      "end": "2026-10-13T14:22:08.652Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-06/app-server-6.jsonl",
+        "test/evidence/dev01/real-binary/SB-06/app-server-6.stderr.log",
+        "test/evidence/dev01/real-binary/SB-06/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-06: an exec-created thread resumes in app-server and an app-server thread resumes in `codex exec resume`, both with prior turns"
+    },
+    {
+      "caseId": "SB-07",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: Under `never`, a shell tool call yields a `commandExecution` item with no server request. Under `on-request` with escalation, the request has `id:0`; the parity error reply → item status `failed`, then `turn/completed status=completed`, then `serverRequest/resolved`",
+      "actual": {
+        "neverCommandItems": 1,
+        "neverServerRequests": 0,
+        "escalationRequestId": 0,
+        "order": [
+          "requestApproval",
+          "serverRequest/resolved",
+          "item/completed:failed",
+          "turn/completed:completed"
+        ],
+        "errors": [
+          "expected [ 'requestApproval', …(3) ] to deeply equal [ 'requestApproval', …(3) ]"
+        ]
+      },
+      "start": "2026-10-13T14:22:08.653Z",
+      "end": "2026-10-13T14:22:08.844Z",
+      "status": "failed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-07/app-server-7.jsonl",
+        "test/evidence/dev01/real-binary/SB-07/app-server-7.stderr.log",
+        "test/evidence/dev01/real-binary/SB-07/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-07: never → commandExecution with no server request; on-request escalation → request id 0, parity reply, item failed, turn completed, then serverRequest/resolved"
+    },
+    {
+      "caseId": "SB-08",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: `turn/interrupt` → response `{}` within 2 s, then `turn/completed status=interrupted` within 5 s",
+      "actual": {
+        "response": {},
+        "responseMs": 1,
+        "completedMs": 13,
+        "status": "interrupted"
+      },
+      "start": "2026-10-13T14:22:08.844Z",
+      "end": "2026-10-13T14:22:08.936Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-08/app-server-8.jsonl",
+        "test/evidence/dev01/real-binary/SB-08/app-server-8.stderr.log",
+        "test/evidence/dev01/real-binary/SB-08/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-08: turn/interrupt → {} within 2 s, then turn/completed status=interrupted within 5 s"
+    },
+    {
+      "caseId": "SB-09",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: Two threads, 4 s scripted turns each, concurrently: wall time ≤ 1.3× single-turn wall time (median of 5 runs)",
+      "actual": {
+        "singlesMs": [
+          4024,
+          4032,
+          4027,
+          4031,
+          4033
+        ],
+        "pairsMs": [
+          4031,
+          4027,
+          4019,
+          4028,
+          4024
+        ],
+        "ratio": 0.9989278760021486
+      },
+      "start": "2026-10-13T14:22:08.937Z",
+      "end": "2026-10-13T14:22:49.845Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-09/app-server-9.jsonl",
+        "test/evidence/dev01/real-binary/SB-09/app-server-9.stderr.log",
+        "test/evidence/dev01/real-binary/SB-09/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-09: two concurrent 4 s turns on different threads take ≤ 1.3× single-turn wall time (median of 5 runs)"
+    },
+    {
+      "caseId": "SB-10",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: SIGKILL / stdin EOF / SIGTERM mid-turn → after respawn, resume shows the turn `interrupted`; exit observed within 30 s EOF maximum, and within 2 s for direct SIGTERM/SIGKILL; after host SIGKILL children exit on EOF within 30 s (measure, not assume immediate)",
+      "actual": {
+        "mode": "SIGKILL",
+        "exitMs": 3,
+        "lastTurnStatus": "interrupted"
+      },
+      "start": "2026-10-13T14:22:49.845Z",
+      "end": "2026-10-13T14:22:49.980Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-10-SIGKILL/app-server-10.jsonl",
+        "test/evidence/dev01/real-binary/SB-10-SIGKILL/app-server-10.stderr.log",
+        "test/evidence/dev01/real-binary/SB-10-SIGKILL/mock-requests.jsonl",
+        "test/evidence/dev01/real-binary/SB-10-SIGKILL/app-server-11.jsonl",
+        "test/evidence/dev01/real-binary/SB-10-SIGKILL/app-server-11.stderr.log"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-10 (SIGKILL): mid-turn termination exits within bound and the turn reads back interrupted after respawn"
+    },
+    {
+      "caseId": "SB-10",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: SIGKILL / stdin EOF / SIGTERM mid-turn → after respawn, resume shows the turn `interrupted`; exit observed within 30 s EOF maximum, and within 2 s for direct SIGTERM/SIGKILL; after host SIGKILL children exit on EOF within 30 s (measure, not assume immediate)",
+      "actual": {
+        "mode": "SIGTERM",
+        "exitMs": 3,
+        "lastTurnStatus": "interrupted"
+      },
+      "start": "2026-10-13T14:22:49.980Z",
+      "end": "2026-10-13T14:22:50.107Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-10-SIGTERM/app-server-12.jsonl",
+        "test/evidence/dev01/real-binary/SB-10-SIGTERM/app-server-12.stderr.log",
+        "test/evidence/dev01/real-binary/SB-10-SIGTERM/mock-requests.jsonl",
+        "test/evidence/dev01/real-binary/SB-10-SIGTERM/app-server-13.jsonl",
+        "test/evidence/dev01/real-binary/SB-10-SIGTERM/app-server-13.stderr.log"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-10 (SIGTERM): mid-turn termination exits within bound and the turn reads back interrupted after respawn"
+    },
+    {
+      "caseId": "SB-10",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: SIGKILL / stdin EOF / SIGTERM mid-turn → after respawn, resume shows the turn `interrupted`; exit observed within 30 s EOF maximum, and within 2 s for direct SIGTERM/SIGKILL; after host SIGKILL children exit on EOF within 30 s (measure, not assume immediate)",
+      "actual": {
+        "mode": "stdin-EOF",
+        "exitMs": 6,
+        "lastTurnStatus": "interrupted"
+      },
+      "start": "2026-10-13T14:22:50.108Z",
+      "end": "2026-10-13T14:22:50.237Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-10-stdin-EOF/app-server-14.jsonl",
+        "test/evidence/dev01/real-binary/SB-10-stdin-EOF/app-server-14.stderr.log",
+        "test/evidence/dev01/real-binary/SB-10-stdin-EOF/mock-requests.jsonl",
+        "test/evidence/dev01/real-binary/SB-10-stdin-EOF/app-server-15.jsonl",
+        "test/evidence/dev01/real-binary/SB-10-stdin-EOF/app-server-15.stderr.log"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-10 (stdin-EOF): mid-turn termination exits within bound and the turn reads back interrupted after respawn"
+    },
+    {
+      "caseId": "SB-10",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: SIGKILL / stdin EOF / SIGTERM mid-turn → after respawn, resume shows the turn `interrupted`; exit observed within 30 s EOF maximum, and within 2 s for direct SIGTERM/SIGKILL; after host SIGKILL children exit on EOF within 30 s (measure, not assume immediate)",
+      "actual": {
+        "childExited": true,
+        "childExitMs": 52
+      },
+      "start": "2026-10-13T14:22:50.237Z",
+      "end": "2026-10-13T14:22:50.391Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-10-host/host-child.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-10 (host SIGKILL): the app-server child exits on stdin EOF within 30 s after its host is killed (measured)"
+    },
+    {
+      "caseId": "SB-11",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: `CODEX_API_KEY` env alone → mock sees no `Authorization`. Ephemeral store + `account/login/start{apiKey}` → `Bearer <key>` and no `auth.json` written",
+      "actual": {
+        "envOnlyRequests": 2,
+        "envOnlyRequestsWithAuthorization": 0,
+        "loggedAuthorization": [
+          "Bearer <fake-key>",
+          "Bearer <fake-key>"
+        ],
+        "authJsonWritten": false
+      },
+      "start": "2026-10-13T14:22:50.392Z",
+      "end": "2026-10-13T14:22:50.572Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-11/app-server-16.jsonl",
+        "test/evidence/dev01/real-binary/SB-11/app-server-16.stderr.log",
+        "test/evidence/dev01/real-binary/SB-11/mock-requests.jsonl",
+        "test/evidence/dev01/real-binary/SB-11-login/app-server-17.jsonl",
+        "test/evidence/dev01/real-binary/SB-11-login/app-server-17.stderr.log",
+        "test/evidence/dev01/real-binary/SB-11-login/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-11: CODEX_API_KEY env alone sends no Authorization; ephemeral store + account/login/start sends Bearer <key> and writes no auth.json"
+    },
+    {
+      "caseId": "SB-12",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: exec with `-c approval_policy=\"on-request\"` → rollout `turn_context.approval_policy == \"never\"`",
+      "actual": {
+        "exit": 0,
+        "approvalPolicies": [
+          "never"
+        ]
+      },
+      "start": "2026-10-13T14:22:50.572Z",
+      "end": "2026-10-13T14:22:52.714Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-12/exec-1791901372700-8431.log",
+        "test/evidence/dev01/real-binary/SB-12/rollouts/rollout-2026-10-13T22-22-50-01a135a5-08fc-73b2-8ce2-3e184ee6d3ba.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-12: exec with -c approval_policy=\"on-request\" records turn_context.approval_policy == \"never\""
+    },
+    {
+      "caseId": "SB-13",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: `runtimeWorkspaceRoots:[cwd,X]` + network `-c` → `turn_context` equals exec `--add-dir X`",
+      "actual": {
+        "exec": {
+          "cwd": "/private/var/folders/6x/fy0qtg9d5_q_xc0pln8n17lc0000gn/T/dev01-rb-SB-13-OO3O5a/work",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "writable_roots": [
+              "/private/var/folders/6x/fy0qtg9d5_q_xc0pln8n17lc0000gn/T/dev01-rb-SB-13-OO3O5a/extra"
+            ],
+            "network_access": true,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "workspace_roots": [
+            "/private/var/folders/6x/fy0qtg9d5_q_xc0pln8n17lc0000gn/T/dev01-rb-SB-13-OO3O5a/work",
+            "/private/var/folders/6x/fy0qtg9d5_q_xc0pln8n17lc0000gn/T/dev01-rb-SB-13-OO3O5a/extra"
+          ]
+        },
+        "appServer": {
+          "cwd": "/private/var/folders/6x/fy0qtg9d5_q_xc0pln8n17lc0000gn/T/dev01-rb-SB-13-OO3O5a/work",
+          "approval_policy": "never",
+          "sandbox_policy": {
+            "type": "workspace-write",
+            "writable_roots": [
+              "/private/var/folders/6x/fy0qtg9d5_q_xc0pln8n17lc0000gn/T/dev01-rb-SB-13-OO3O5a/extra"
+            ],
+            "network_access": true,
+            "exclude_tmpdir_env_var": false,
+            "exclude_slash_tmp": false
+          },
+          "workspace_roots": [
+            "/private/var/folders/6x/fy0qtg9d5_q_xc0pln8n17lc0000gn/T/dev01-rb-SB-13-OO3O5a/work",
+            "/private/var/folders/6x/fy0qtg9d5_q_xc0pln8n17lc0000gn/T/dev01-rb-SB-13-OO3O5a/extra"
+          ]
+        }
+      },
+      "start": "2026-10-13T14:22:52.714Z",
+      "end": "2026-10-13T14:22:54.562Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-13/exec-1791901374442-f0b6.log",
+        "test/evidence/dev01/real-binary/SB-13/app-server-18.jsonl",
+        "test/evidence/dev01/real-binary/SB-13/app-server-18.stderr.log",
+        "test/evidence/dev01/real-binary/SB-13/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-13: runtimeWorkspaceRoots:[cwd,X] + network -c gives the same turn_context sandbox as exec --add-dir X"
+    },
+    {
+      "caseId": "SB-14",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.3",
+      "steps": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "expected": "Pass: `codex app-server --session-source exec` exits non-zero with \"unexpected argument\"",
+      "actual": {
+        "exit": 2,
+        "stderrHead": "error: unexpected argument '--session-source' found\n\n  tip: a similar argument exists: '--ws-issuer'\n\nUsage: codex app-server --config <key=value> --ws-issuer <ISSUER>\n\nFor more information, try '--help'.\n"
+      },
+      "start": "2026-10-13T14:22:54.563Z",
+      "end": "2026-10-13T14:22:54.587Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-14/exec-1791901374587-c01b.log"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SB contract cases > SB-14: `codex app-server --session-source exec` exits non-zero with \"unexpected argument\""
+    },
+    {
+      "caseId": "SP-T1",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": "R8 §6.4",
+      "steps": "thread/start.dynamicTools on 0.142.3: callable on turn 1, after thread/resume{config:{}}, after respawn + resume (test/real-binary/sb.real.test.ts#SP-T1).",
+      "expected": "Outcome A/B/C recorded with raw evidence; consequence per the §6.4 table (gates DEV-14 only).",
+      "actual": {
+        "caseId": "SP-T1",
+        "pin": "0.142.3",
+        "turn1": {
+          "advertised": true,
+          "called": true,
+          "toolOutputSeen": true
+        },
+        "afterResume": {
+          "advertised": true,
+          "called": true,
+          "toolOutputSeen": true
+        },
+        "afterRespawn": {
+          "advertised": true,
+          "called": true,
+          "toolOutputSeen": true
+        },
+        "schemaRegistrationPathsBesidesThreadStart": [],
+        "reRegistration": null,
+        "outcome": "A",
+        "basis": "callable on turn 1, after thread/resume{config:{}} and after respawn + resume without re-registration"
+      },
+      "start": "2026-10-13T14:22:54.587Z",
+      "end": "2026-10-13T14:22:54.987Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SP-T1/app-server-19.jsonl",
+        "test/evidence/dev01/real-binary/SP-T1/app-server-19.stderr.log",
+        "test/evidence/dev01/real-binary/SP-T1/mock-requests.jsonl",
+        "test/evidence/dev01/real-binary/SP-T1/app-server-20.jsonl",
+        "test/evidence/dev01/real-binary/SP-T1/app-server-20.stderr.log",
+        "test/evidence/dev01/real-binary/SP-T1/sp-t1-outcome.json"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "SP-T1 dynamic tools spike > SP-T1: dynamicTools registered at thread/start — callable on turn 1, after thread/resume{config:{}}, and after respawn + resume (outcome A/B/C recorded)"
+    },
+    {
+      "caseId": "SB-FIX",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "real-binary"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "protocol fixture capture > SB-FIX: the basic-turn normalized notification shape matches the committed 0.142.3 fixture used by the fake App Server",
+      "actual": {
+        "sequence": [
+          "response:initialize",
+          "response:thread/start",
+          "thread/started",
+          "response:turn/start",
+          "turn/started",
+          "item/started:userMessage",
+          "item/completed:userMessage",
+          "item/started:agentMessage",
+          "item/completed:agentMessage",
+          "turn/completed:completed",
+          "response:thread/unsubscribe"
+        ]
+      },
+      "start": "2026-10-13T14:22:54.988Z",
+      "end": "2026-10-13T14:22:55.085Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/real-binary/SB-FIX/app-server-21.jsonl",
+        "test/evidence/dev01/real-binary/SB-FIX/app-server-21.stderr.log",
+        "test/evidence/dev01/real-binary/SB-FIX/mock-requests.jsonl"
+      ],
+      "file": "test/real-binary/sb.real.test.ts",
+      "title": "protocol fixture capture > SB-FIX: the basic-turn normalized notification shape matches the committed 0.142.3 fixture used by the fake App Server"
+    }
+  ]
+}
