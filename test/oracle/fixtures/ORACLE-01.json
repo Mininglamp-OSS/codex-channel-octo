@@ -1,0 +1,187 @@
+{
+  "id": "ORACLE-01",
+  "description": "correct 3-segment send with a marker on every part",
+  "expectedVerdict": "pass",
+  "expectedViolations": [],
+  "trace": {
+    "fixture": "fx01",
+    "expected": [
+      {
+        "identity": {
+          "occurrence": "oc1",
+          "run": "run1",
+          "kind": "cron.result",
+          "ordinal": 0,
+          "index": 1,
+          "count": 3
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx01 o=oc1 r=run1 k=cron.result m=000000 s=000001/000003]\npart 1",
+        "outcome": "confirmed"
+      },
+      {
+        "identity": {
+          "occurrence": "oc1",
+          "run": "run1",
+          "kind": "cron.result",
+          "ordinal": 0,
+          "index": 2,
+          "count": 3
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx01 o=oc1 r=run1 k=cron.result m=000000 s=000002/000003]\npart 2",
+        "outcome": "confirmed"
+      },
+      {
+        "identity": {
+          "occurrence": "oc1",
+          "run": "run1",
+          "kind": "cron.result",
+          "ordinal": 0,
+          "index": 3,
+          "count": 3
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx01 o=oc1 r=run1 k=cron.result m=000000 s=000003/000003]\npart 3",
+        "outcome": "confirmed"
+      }
+    ],
+    "captures": [
+      {
+        "fixture": "fx01",
+        "logicalIdentity": "oc1/run1/cron.result/0/1",
+        "kind": "cron.result",
+        "occurrence": "oc1",
+        "run": "run1",
+        "ordinal": 0,
+        "index": 1,
+        "count": 3,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 1,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "b682dd51e5d9b3e09304c0f13f1aebc91a69a93d5fb2ce8ab44926e1d95382ce",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run1-1",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      },
+      {
+        "fixture": "fx01",
+        "logicalIdentity": "oc1/run1/cron.result/0/2",
+        "kind": "cron.result",
+        "occurrence": "oc1",
+        "run": "run1",
+        "ordinal": 0,
+        "index": 2,
+        "count": 3,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 2,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "370a1a050326a1dfc62cc3ce3fff79681a0a14b3e1f86eb426e1974c0b818771",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run1-2",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      },
+      {
+        "fixture": "fx01",
+        "logicalIdentity": "oc1/run1/cron.result/0/3",
+        "kind": "cron.result",
+        "occurrence": "oc1",
+        "run": "run1",
+        "ordinal": 0,
+        "index": 3,
+        "count": 3,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 3,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "a9ecb6067570746752e31f60577370bfbf12d70ba120728a15861bf8d9ea5193",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run1-3",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      }
+    ],
+    "inventory": {
+      "complete": true,
+      "declaredPageCount": 1,
+      "pages": [
+        {
+          "cursor": "c0",
+          "next": null,
+          "records": [
+            {
+              "messageId": "900000000000000001",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx01 o=oc1 r=run1 k=cron.result m=000000 s=000001/000003]",
+              "payloadHash": "b682dd51e5d9b3e09304c0f13f1aebc91a69a93d5fb2ce8ab44926e1d95382ce",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            },
+            {
+              "messageId": "900000000000000002",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx01 o=oc1 r=run1 k=cron.result m=000000 s=000002/000003]",
+              "payloadHash": "370a1a050326a1dfc62cc3ce3fff79681a0a14b3e1f86eb426e1974c0b818771",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            },
+            {
+              "messageId": "900000000000000003",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx01 o=oc1 r=run1 k=cron.result m=000000 s=000003/000003]",
+              "payloadHash": "a9ecb6067570746752e31f60577370bfbf12d70ba120728a15861bf8d9ea5193",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "id": "ORACLE-06",
+  "description": "an allowed 429 retry observed twice but committed once passes",
+  "expectedVerdict": "pass",
+  "expectedViolations": [],
+  "expectedCounts": {
+    "permittedNetworkRetries": 1
+  },
+  "trace": {
+    "fixture": "fx06",
+    "expected": [
+      {
+        "identity": {
+          "occurrence": "oc6",
+          "run": "run6",
+          "kind": "chat.reply",
+          "ordinal": 0,
+          "index": 1,
+          "count": 1
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx06 o=oc6 r=run6 k=chat.reply m=000000 s=000001/000001]\nanswer",
+        "outcome": "confirmed"
+      }
+    ],
+    "captures": [
+      {
+        "fixture": "fx06",
+        "logicalIdentity": "oc6/run6/chat.reply/0/1",
+        "kind": "chat.reply",
+        "occurrence": "oc6",
+        "run": "run6",
+        "ordinal": 0,
+        "index": 1,
+        "count": 1,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 14,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "eb8688b110faa6757c3ef4db228843160de15c365d8e88aaa3986c2cbd8fcf52",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run6-1",
+        "httpStatus": 429,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      },
+      {
+        "fixture": "fx06",
+        "logicalIdentity": "oc6/run6/chat.reply/0/1",
+        "kind": "chat.reply",
+        "occurrence": "oc6",
+        "run": "run6",
+        "ordinal": 0,
+        "index": 1,
+        "count": 1,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 15,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "eb8688b110faa6757c3ef4db228843160de15c365d8e88aaa3986c2cbd8fcf52",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run6-1",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      }
+    ],
+    "inventory": {
+      "complete": true,
+      "declaredPageCount": 1,
+      "pages": [
+        {
+          "cursor": "c0",
+          "next": null,
+          "records": [
+            {
+              "messageId": "900000000000000018",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx06 o=oc6 r=run6 k=chat.reply m=000000 s=000001/000001]",
+              "payloadHash": "eb8688b110faa6757c3ef4db228843160de15c365d8e88aaa3986c2cbd8fcf52",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

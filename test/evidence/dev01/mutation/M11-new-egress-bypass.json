@@ -1,0 +1,20 @@
+{
+  "id": "M11-new-egress-bypass",
+  "rows": [
+    "HB-B5"
+  ],
+  "file": "src/commands.ts",
+  "filter": "EG-02",
+  "controlPassed": true,
+  "killed": true,
+  "executedFailures": [
+    {
+      "file": "-ojHwGK/test/egress/egress-bypass-scan.test.ts",
+      "title": "egress bypass scan: repository at DEV-01 EG-02: the observed outbound call sites equal the explicit baseline exactly (no new caller, no stale entry)",
+      "status": "failed",
+      "failure": "AssertionError: expected [ { code: 'unauthorized-call', …(4) } ] to deeply equal []"
+    }
+  ],
+  "mutatedLoadErrors": [],
+  "controlCases": 12
+}

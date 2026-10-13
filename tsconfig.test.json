@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": ".", "noEmit": true, "allowJs": true, "checkJs": false, "noUnusedLocals": false, "noUnusedParameters": false },
+  "include": ["test/**/*.ts", "src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test/egress/fixtures/**", "src/__tests__/**"]
+}

@@ -1,0 +1,21 @@
+
+> @mininglamp-oss/codex-channel-octo@0.1.0 check:src-scope
+> node scripts/ci/check-src-diff.mjs
+
+{
+  "allowlist": [
+    "src/seams/clock.ts",
+    "src/seams/fault-plan.ts"
+  ],
+  "changes": [
+    {
+      "status": "A",
+      "path": "src/seams/clock.ts"
+    },
+    {
+      "status": "A",
+      "path": "src/seams/fault-plan.ts"
+    }
+  ],
+  "violations": []
+}

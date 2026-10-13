@@ -1,0 +1,21 @@
+{
+  "id": "M03-unbounded-buffer",
+  "rows": [
+    "BX-2",
+    "T4"
+  ],
+  "file": "src/octo/socket.ts",
+  "filter": "BX-2",
+  "controlPassed": true,
+  "killed": true,
+  "executedFailures": [
+    {
+      "file": "-Px34Rs/test/locks/bx-locks.test.ts",
+      "title": "BX locks (B defects not ported) BX-2: a 1 MiB+ partial frame closes the link and a large frame parses without argument spreads",
+      "status": "failed",
+      "failure": "Error: STACK_TRACE_ERROR"
+    }
+  ],
+  "mutatedLoadErrors": [],
+  "controlCases": 13
+}

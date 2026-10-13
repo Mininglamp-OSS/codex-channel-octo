@@ -1,0 +1,710 @@
+{
+  "runner": "goldens",
+  "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+  "environment": {
+    "node": "v26.5.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "ci": false,
+    "runner": "goldens"
+  },
+  "generatedAt": "2026-10-13T14:10:27.193Z",
+  "records": [
+    {
+      "caseId": "GB-00",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "B golden provenance > GB-00: golden bytes match the committed sha256 and the pinned B source",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.943Z",
+      "end": "2026-10-13T14:10:26.944Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/b-wire.golden.test.ts",
+      "title": "B golden provenance > GB-00: golden bytes match the committed sha256 and the pinned B source"
+    },
+    {
+      "caseId": "GB-01",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "T1/T2/T3: A Encoder/Decoder vs B > GB-01: A Encoder produces the B bytes for every primitive vector (incl. CJK, emoji, empty, int64)",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.945Z",
+      "end": "2026-10-13T14:10:26.945Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/b-wire.golden.test.ts",
+      "title": "T1/T2/T3: A Encoder/Decoder vs B > GB-01: A Encoder produces the B bytes for every primitive vector (incl. CJK, emoji, empty, int64)"
+    },
+    {
+      "caseId": "GB-02",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "T1/T2/T3: A Encoder/Decoder vs B > GB-02: A Decoder reads back the encoded primitives",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.945Z",
+      "end": "2026-10-13T14:10:26.945Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/b-wire.golden.test.ts",
+      "title": "T1/T2/T3: A Encoder/Decoder vs B > GB-02: A Decoder reads back the encoded primitives"
+    },
+    {
+      "caseId": "GB-03",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "T1/T2/T3: A Encoder/Decoder vs B > GB-03 (BX-2): B silently over-reads truncated input; A raises a typed bounds error instead",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.945Z",
+      "end": "2026-10-13T14:10:26.945Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/b-wire.golden.test.ts",
+      "title": "T1/T2/T3: A Encoder/Decoder vs B > GB-03 (BX-2): B silently over-reads truncated input; A raises a typed bounds error instead"
+    },
+    {
+      "caseId": "GB-04",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "P1 handshake and AES vs B (production WKSocket through the fake server) > GB-04 (T1/T3/T5): A CONNECT equals the B CONNECT frame byte-for-byte for identical inputs",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.946Z",
+      "end": "2026-10-13T14:10:26.974Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/b-wire.golden.test.ts",
+      "title": "P1 handshake and AES vs B (production WKSocket through the fake server) > GB-04 (T1/T3/T5): A CONNECT equals the B CONNECT frame byte-for-byte for identical inputs"
+    },
+    {
+      "caseId": "GB-05",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "P1 handshake and AES vs B (production WKSocket through the fake server) > GB-05 (T6): the B AES key/IV/ciphertext vectors satisfy the P1 derivation independently",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.974Z",
+      "end": "2026-10-13T14:10:26.977Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/b-wire.golden.test.ts",
+      "title": "P1 handshake and AES vs B (production WKSocket through the fake server) > GB-05 (T6): the B AES key/IV/ciphertext vectors satisfy the P1 derivation independently"
+    },
+    {
+      "caseId": "GB-06",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "P1 handshake and AES vs B (production WKSocket through the fake server) > GB-06 (T9/T10/BX-1): A decodes every B RECV vector to the B message and ACKs with the B RECVACK bytes only after decrypt",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.978Z",
+      "end": "2026-10-13T14:10:27.154Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/b-wire.golden.test.ts",
+      "title": "P1 handshake and AES vs B (production WKSocket through the fake server) > GB-06 (T9/T10/BX-1): A decodes every B RECV vector to the B message and ACKs with the B RECVACK bytes only after decrypt"
+    },
+    {
+      "caseId": "GB-07",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "P1 handshake and AES vs B (production WKSocket through the fake server) > GB-07: the fake codec reproduces the B-verified CONNACK/RECV frames and parses the B RECVACK",
+      "actual": null,
+      "start": "2026-10-13T14:10:27.155Z",
+      "end": "2026-10-13T14:10:27.156Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/b-wire.golden.test.ts",
+      "title": "P1 handshake and AES vs B (production WKSocket through the fake server) > GB-07: the fake codec reproduces the B-verified CONNACK/RECV frames and parses the B RECVACK"
+    },
+    {
+      "caseId": "GOC-00",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "OC schedule golden provenance > GOC-00: golden bytes match the committed sha256, pinned OC source and croner 10.0.1",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.907Z",
+      "end": "2026-10-13T14:10:26.908Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "OC schedule golden provenance > GOC-00: golden bytes match the committed sha256, pinned OC source and croner 10.0.1"
+    },
+    {
+      "caseId": "test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'lord-howe-repeated-half-hour'",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'lord-howe-repeated-half-hour'",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.908Z",
+      "end": "2026-10-13T14:10:26.908Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'lord-howe-repeated-half-hour'"
+    },
+    {
+      "caseId": "test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'ny-last-valid-second-before-gap'",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'ny-last-valid-second-before-gap'",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.909Z",
+      "end": "2026-10-13T14:10:26.909Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'ny-last-valid-second-before-gap'"
+    },
+    {
+      "caseId": "test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'oslo-skips-nonexistent-reminder'",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'oslo-skips-nonexistent-reminder'",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.909Z",
+      "end": "2026-10-13T14:10:26.909Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'oslo-skips-nonexistent-reminder'"
+    },
+    {
+      "caseId": "test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'ny-sun2-future-nonexistent'",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'ny-sun2-future-nonexistent'",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.909Z",
+      "end": "2026-10-13T14:10:26.909Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'ny-sun2-future-nonexistent'"
+    },
+    {
+      "caseId": "test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'year-limited-nonexistent'",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'year-limited-nonexistent'",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.909Z",
+      "end": "2026-10-13T14:10:26.909Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'year-limited-nonexistent'"
+    },
+    {
+      "caseId": "test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'year-limited-repeated-hour'",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'year-limited-repeated-hour'",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.909Z",
+      "end": "2026-10-13T14:10:26.909Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'year-limited-repeated-hour'"
+    },
+    {
+      "caseId": "test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'retry-rejects-real-gap-a'",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'retry-rejects-real-gap-a'",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.909Z",
+      "end": "2026-10-13T14:10:26.909Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'retry-rejects-real-gap-a'"
+    },
+    {
+      "caseId": "test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'retry-rejects-real-gap-b'",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'retry-rejects-real-gap-b'",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.909Z",
+      "end": "2026-10-13T14:10:26.909Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table > GOC-01 'retry-rejects-real-gap-b'"
+    },
+    {
+      "caseId": "GOC-02",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "SF-4 fixed-instant DST cases (generated, never hand-computed) > GOC-02: London, New York and Shanghai cron cases plus an every-schedule are all present",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.909Z",
+      "end": "2026-10-13T14:10:26.909Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "SF-4 fixed-instant DST cases (generated, never hand-computed) > GOC-02: London, New York and Shanghai cron cases plus an every-schedule are all present"
+    },
+    {
+      "caseId": "GOC-03",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "SF-4 fixed-instant DST cases (generated, never hand-computed) > GOC-03: every generated cron instant lands on the expression wall time (gap skipped, never the transition instant)",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.910Z",
+      "end": "2026-10-13T14:10:26.920Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "SF-4 fixed-instant DST cases (generated, never hand-computed) > GOC-03: every generated cron instant lands on the expression wall time (gap skipped, never the transition instant)"
+    },
+    {
+      "caseId": "GOC-04",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "SF-4 fixed-instant DST cases (generated, never hand-computed) > GOC-04: every schedules are pure UTC arithmetic across a DST transition",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.920Z",
+      "end": "2026-10-13T14:10:26.920Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "SF-4 fixed-instant DST cases (generated, never hand-computed) > GOC-04: every schedules are pure UTC arithmetic across a DST transition"
+    },
+    {
+      "caseId": "GOC-05",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "CR-2.6 effective stagger (R8 §3.4.8) > GOC-05 (STAG arithmetic): j7f3k2q/300000 → 253353 via uint32BE of the first four digest bytes, not the whole digest",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.920Z",
+      "end": "2026-10-13T14:10:26.920Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.6 effective stagger (R8 §3.4.8) > GOC-05 (STAG arithmetic): j7f3k2q/300000 → 253353 via uint32BE of the first four digest bytes, not the whole digest"
+    },
+    {
+      "caseId": "GOC-06",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "CR-2.6 effective stagger (R8 §3.4.8) > GOC-06: default-width normalization matches R8 examples (top-of-hour wildcard → 300000; fixed daily 09:00 → 0)",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.920Z",
+      "end": "2026-10-13T14:10:26.920Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.6 effective stagger (R8 §3.4.8) > GOC-06: default-width normalization matches R8 examples (top-of-hour wildcard → 300000; fixed daily 09:00 → 0)"
+    },
+    {
+      "caseId": "GOC-07",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "CR-2.6 effective stagger (R8 §3.4.8) > GOC-07: the R8 §3.4.8 boundary walk-through is reproduced by the pinned effective wrappers",
+      "actual": null,
+      "start": "2026-10-13T14:10:26.920Z",
+      "end": "2026-10-13T14:10:26.920Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.6 effective stagger (R8 §3.4.8) > GOC-07: the R8 §3.4.8 boundary walk-through is reproduced by the pinned effective wrappers"
+    },
+    {
+      "caseId": "DEV-09",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "goldens"
+      },
+      "preconditions": "R8 §10.9",
+      "steps": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "expected": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "actual": null,
+      "start": null,
+      "end": null,
+      "status": "pending",
+      "evidencePaths": [],
+      "file": "test/goldens/oc-schedule.golden.test.ts",
+      "title": "CR-2.6 effective stagger (R8 §3.4.8) > DEV-09: the codex-buddy schedule port reproduces every OC golden row (pending: no port exists at DEV-01)"
+    }
+  ]
+}

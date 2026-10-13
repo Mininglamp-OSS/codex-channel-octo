@@ -1,0 +1,451 @@
+{
+  "generator": "scripts/goldens/gen-b.mjs",
+  "source": {
+    "repo": "Mininglamp-OSS/openclaw-channel-octo",
+    "commit": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+    "files": {
+      "src/socket.ts": "9928f49ddcdad56e1c89ccbe38141d3100c2953c719143d3dc6ca5d16980f216"
+    }
+  },
+  "dependencies": {
+    "crypto-js": "4.2.0",
+    "curve25519-js": "0.0.4",
+    "md5-typescript": "1.0.5",
+    "ws": "8.21.0"
+  },
+  "method": "B src/socket.ts bundled unmodified by esbuild with an appended export statement; executed with fixed seeds, Math.random=0.5 and a stub transport",
+  "vectors": {
+    "encoder": [
+      {
+        "ops": [
+          [
+            "writeByte",
+            127
+          ]
+        ],
+        "bytesHex": "7f"
+      },
+      {
+        "ops": [
+          [
+            "writeInt16",
+            48879
+          ]
+        ],
+        "bytesHex": "beef"
+      },
+      {
+        "ops": [
+          [
+            "writeInt32",
+            305441741
+          ]
+        ],
+        "bytesHex": "1234abcd"
+      },
+      {
+        "ops": [
+          [
+            "writeInt32",
+            3735928559
+          ]
+        ],
+        "bytesHex": "deadbeef"
+      },
+      {
+        "ops": [
+          [
+            "writeInt64",
+            "9007199254740993123"
+          ]
+        ],
+        "bytesHex": "7d00000000000463"
+      },
+      {
+        "ops": [
+          [
+            "writeInt64",
+            "0"
+          ]
+        ],
+        "bytesHex": "0000000000000000"
+      },
+      {
+        "ops": [
+          [
+            "writeString",
+            "hello"
+          ]
+        ],
+        "bytesHex": "000568656c6c6f"
+      },
+      {
+        "ops": [
+          [
+            "writeString",
+            "你好 😀"
+          ]
+        ],
+        "bytesHex": "000be4bda0e5a5bd20f09f9880"
+      },
+      {
+        "ops": [
+          [
+            "writeString",
+            ""
+          ]
+        ],
+        "bytesHex": "0000"
+      },
+      {
+        "ops": [
+          [
+            "writeString",
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ]
+        ],
+        "bytesHex": "012c787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878"
+      },
+      {
+        "ops": [
+          [
+            "writeByte",
+            4
+          ],
+          [
+            "writeString",
+            "dev"
+          ],
+          [
+            "writeInt64",
+            "1791900000000"
+          ],
+          [
+            "writeString",
+            "k"
+          ]
+        ],
+        "bytesHex": "040003646576000001a135901f0000016b"
+      }
+    ],
+    "truncatedDecode": [
+      {
+        "op": "readInt16",
+        "bytesHex": "01",
+        "bResult": 256
+      },
+      {
+        "op": "readInt32",
+        "bytesHex": "010203",
+        "bResult": 16909056
+      },
+      {
+        "op": "readString",
+        "bytesHex": "000541",
+        "bResult": "A"
+      }
+    ],
+    "connect": [
+      {
+        "uid": "u_bot_golden",
+        "token": "im_token_golden",
+        "clientTimestamp": 1791900000000,
+        "mathRandom": 0.5,
+        "clientSeedHex": "9bc539753c4d491e1b898a7635604e820f1afa7b5e182beed55dc44dc61ec682",
+        "deviceID": "88888888888848888888888888888888W",
+        "clientKey": "YEmd/NuB2YqPKmG9Gfdb/J7ggbguu7MOSO6qIbKnCVI=",
+        "frameHex": "107a04000021383838383838383838383838343838383838383838383838383838383838383857000c755f626f745f676f6c64656e000f696d5f746f6b656e5f676f6c64656e000001a135901f00002c59456d642f4e7542325971504b6d4739476664622f4a37676762677575374d4f534f367149624b6e4356493d"
+      },
+      {
+        "uid": "u_bot_golden",
+        "token": "TTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTTT",
+        "clientTimestamp": 1791900000000,
+        "mathRandom": 0.5,
+        "clientSeedHex": "297f43e5f01904d3fbfb32ad31dea3c53dbcfa9ffb97a30739c129d7cd019f3c",
+        "deviceID": "88888888888848888888888888888888W",
+        "clientKey": "n00cbXBSoHmEB0NXwreEjvOGrdQUep1gDeuNtMNrhBA=",
+        "frameHex": "10970304000021383838383838383838383838343838383838383838383838383838383838383857000c755f626f745f676f6c64656e012c545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454545454000001a135901f00002c6e303063625842536f486d4542304e58777265456a764f4772645155657031674465754e744d4e726842413d"
+      }
+    ],
+    "aes": [
+      {
+        "clientSeedHex": "203e56f83c488e5ec9d8f43c45dee8cd444c124d78ecf7c632bf5e0cc9d698f3",
+        "serverSeedHex": "cd9091bb51184f98c7dff66bc32ce0f6416291c7902b3996e7973b073705135b",
+        "sharedSecretBase64": "XdtKTFG1JbwxxKY5y9ZRqIaQK7lgryqVgNlwxsVhFHI=",
+        "aesKey": "b34eea25bf9d21cd",
+        "salt": "golden-salt-v4-0123456789",
+        "aesIV": "golden-salt-v4-0",
+        "plaintext": "{\"type\":1,\"content\":\"aes vector v4 你好 😀\"}",
+        "ciphertextBase64": "2R3FhaGesXO442oyTkHMFD0rm2F9QEslpitQTCA+qXUFqdowWueaSVtzwx+EpGzqfDI/som/B7Ph0t3Jk1Cnqg==",
+        "bDecrypted": "{\"type\":1,\"content\":\"aes vector v4 你好 😀\"}"
+      },
+      {
+        "clientSeedHex": "c58a667d2d8b67b2ec22872a94e784ea72d8cbee4d90f7a08bc3904c2ce0b60c",
+        "serverSeedHex": "daed1dc2a45e546750ab1e714bfdcb0446bd5cee1fccceab3b1998ce201def60",
+        "sharedSecretBase64": "FsHOtHYTkHSJwceSEMdbEliPsNtTqikWb0BLOLgQKjM=",
+        "aesKey": "7d08aec28f310a1c",
+        "salt": "golden-salt-v3-0123456789",
+        "aesIV": "golden-salt-v3-0",
+        "plaintext": "{\"type\":1,\"content\":\"aes vector v3 你好 😀\"}",
+        "ciphertextBase64": "SkrgNiK2dH6L0Q+JwHXQySDeWym64RSBGuXhltjUhRH3HGVNOh2DdquAOFpJ7zpGbFUG3nnDDQOVSmxv7SXZEg==",
+        "bDecrypted": "{\"type\":1,\"content\":\"aes vector v3 你好 😀\"}"
+      }
+    ],
+    "session": [
+      {
+        "name": "server-v4",
+        "clientSeedHex": "203e56f83c488e5ec9d8f43c45dee8cd444c124d78ecf7c632bf5e0cc9d698f3",
+        "serverVersion": 4,
+        "connackFrameHex": "215b04000000000000000001002c76644c76324b724f38484f59354e537a762f5052527a694664426b7775424e7a734c422b6e2b2b357278453d0019676f6c64656e2d73616c742d76342d303132333435363738390000000000000000",
+        "serverKey": "vdLv2KrO8HOY5NSzv/PRRziFdBkwuBNzsLB+n++5rxE=",
+        "salt": "golden-salt-v4-0123456789",
+        "recv": [
+          {
+            "spec": {
+              "setting": 0,
+              "msgKey": "k1",
+              "fromUid": "u_alice",
+              "channelId": "u_alice",
+              "channelType": 1,
+              "expire": 0,
+              "clientMsgNo": "c1",
+              "messageId": "9007199254740993123",
+              "messageSeq": 42,
+              "timestamp": 1791900000,
+              "payloadBase64Ascii": "2R3FhaGesXO442oyTkHMFHRRqr6qRkgmbVB/R1+WAyvZ+vXY4FQMNTkCmlrmLaeH"
+            },
+            "frameHex": "50700000026b310007755f616c6963650007755f616c6963650100000000000263317d000000000004630000002a6ace3960325233466861476573584f3434326f79546b484d4648525271723671526b676d6256422f52312b574179765a2b7658593446514d4e546b436d6c726d4c616548",
+            "bOnMessage": {
+              "message_id": "9007199254740993123",
+              "message_seq": 42,
+              "from_uid": "u_alice",
+              "channel_id": "u_alice",
+              "channel_type": 1,
+              "timestamp": 1791900000,
+              "payload": {
+                "type": 1,
+                "content": "hello golden"
+              }
+            },
+            "bRecvackHex": "600c7d000000000004630000002a"
+          },
+          {
+            "spec": {
+              "setting": 10,
+              "msgKey": "k2",
+              "fromUid": "u_bob",
+              "channelId": "g_golden",
+              "channelType": 2,
+              "expire": 7,
+              "clientMsgNo": "c2",
+              "messageId": "18446744073709551615",
+              "messageSeq": 4294967295,
+              "timestamp": 1,
+              "topic": "tp",
+              "payloadBase64Ascii": "2R3FhaGesXO442oyTkHMFMV22iVCCJ+BRdLfHzpFOcUdaigopSXDW3cqky3bdSizKNzc0xRwfSCf+8urlMlhRVBj4s5D0HI4Pl66yFidc7Y="
+            },
+            "frameHex": "509f010a00026b320005755f626f620008675f676f6c64656e020000000700026332ffffffffffffffffffffffff0000000100027470325233466861476573584f3434326f79546b484d464d563232695643434a2b4252644c66487a70464f6355646169676f70535844573363716b7933626453697a4b4e7a6330785277665343662b3875726c4d6c685256426a3473354430484934506c3636794669646337593d",
+            "bOnMessage": {
+              "message_id": "18446744073709551615",
+              "message_seq": 4294967295,
+              "from_uid": "u_bob",
+              "channel_id": "g_golden",
+              "channel_type": 2,
+              "timestamp": 1,
+              "payload": {
+                "type": 1,
+                "content": "topic + stream",
+                "mention": {
+                  "uids": [
+                    "u_bot"
+                  ]
+                }
+              }
+            },
+            "bRecvackHex": "600cffffffffffffffffffffffff"
+          },
+          {
+            "spec": {
+              "setting": 128,
+              "msgKey": "",
+              "fromUid": "u_carol",
+              "channelId": "g_golden____t1",
+              "channelType": 5,
+              "expire": 0,
+              "clientMsgNo": "",
+              "messageId": "1",
+              "messageSeq": 1,
+              "timestamp": 2,
+              "payloadBase64Ascii": "XyywSbUziPZB2On93D8VBCGJ4IY8BgW4xZi3NbVShnbUWrOqA80xvrVT9hmDaSpvyJuBWXrdsqBEmJrm2KX4DobxN3uLQUsM2VYLG64yyq9YNB/9BcASJISn2qd1j64s"
+            },
+            "frameHex": "50b3018000000007755f6361726f6c000e675f676f6c64656e5f5f5f5f74310500000000000000000000000000010000000100000002587979775362557a69505a42324f6e39334438564243474a3449593842675734785a69334e625653686e625557724f71413830787672565439686d4461537076794a754257587264737142456d4a726d324b5834446f62784e33754c5155734d3256594c47363479797139594e422f39426341534a49536e327164316a363473",
+            "bOnMessage": {
+              "message_id": "1",
+              "message_seq": 1,
+              "from_uid": "u_carol",
+              "channel_id": "g_golden____t1",
+              "channel_type": 5,
+              "timestamp": 2,
+              "payload": {
+                "type": 14,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "富文本 😀"
+                  }
+                ],
+                "plain": "富文本 😀"
+              }
+            },
+            "bRecvackHex": "600c000000000000000100000001"
+          },
+          {
+            "spec": {
+              "setting": 0,
+              "msgKey": "k4",
+              "fromUid": "u_mallory",
+              "channelId": "u_mallory",
+              "channelType": 1,
+              "expire": 0,
+              "clientMsgNo": "c4",
+              "messageId": "777",
+              "messageSeq": 7,
+              "timestamp": 3,
+              "payloadBase64Ascii": "not-a-valid-ciphertext!!"
+            },
+            "frameHex": "504c0000026b340009755f6d616c6c6f72790009755f6d616c6c6f7279010000000000026334000000000000030900000007000000036e6f742d612d76616c69642d636970686572746578742121",
+            "bOnMessage": null,
+            "bRecvackHex": "600c000000000000030900000007"
+          }
+        ]
+      },
+      {
+        "name": "server-v3",
+        "clientSeedHex": "c58a667d2d8b67b2ec22872a94e784ea72d8cbee4d90f7a08bc3904c2ce0b60c",
+        "serverVersion": 3,
+        "connackFrameHex": "215303000000000000000001002c7132544e624266683131555369744c595a75475955334564414c534a676a377475516f433751474a72546b3d0019676f6c64656e2d73616c742d76332d30313233343536373839",
+        "serverKey": "q2TNbBfh11USitLYZuGYU3EdALSJgj7tuQoC7QGJrTk=",
+        "salt": "golden-salt-v3-0123456789",
+        "recv": [
+          {
+            "spec": {
+              "setting": 0,
+              "msgKey": "k1",
+              "fromUid": "u_alice",
+              "channelId": "u_alice",
+              "channelType": 1,
+              "expire": 0,
+              "clientMsgNo": "c1",
+              "messageId": "9007199254740993123",
+              "messageSeq": 42,
+              "timestamp": 1791900000,
+              "payloadBase64Ascii": "SkrgNiK2dH6L0Q+JwHXQyS40XsRdXX0CwDUBL2CBOJtMYgF0PK4teZhgW0zOUtNJ"
+            },
+            "frameHex": "50700000026b310007755f616c6963650007755f616c6963650100000000000263317d000000000004630000002a6ace3960536b72674e694b326448364c30512b4a77485851795334305873526458583043774455424c3243424f4a744d59674630504b3474655a686757307a4f55744e4a",
+            "bOnMessage": {
+              "message_id": "9007199254740993123",
+              "message_seq": 42,
+              "from_uid": "u_alice",
+              "channel_id": "u_alice",
+              "channel_type": 1,
+              "timestamp": 1791900000,
+              "payload": {
+                "type": 1,
+                "content": "hello golden"
+              }
+            },
+            "bRecvackHex": "600c7d000000000004630000002a"
+          },
+          {
+            "spec": {
+              "setting": 10,
+              "msgKey": "k2",
+              "fromUid": "u_bob",
+              "channelId": "g_golden",
+              "channelType": 2,
+              "expire": 7,
+              "clientMsgNo": "c2",
+              "messageId": "18446744073709551615",
+              "messageSeq": 4294967295,
+              "timestamp": 1,
+              "topic": "tp",
+              "payloadBase64Ascii": "SkrgNiK2dH6L0Q+JwHXQyb8D1CrXhlM6uyvOZLSJX+Zpy+mr9c301GzUNMu1L2PZFJO1RILUNTZJRl9mEw1mE6esvhrzwzQCpco9UWrkQGI="
+            },
+            "frameHex": "509f010a00026b320005755f626f620008675f676f6c64656e020000000700026332ffffffffffffffffffffffff0000000100027470536b72674e694b326448364c30512b4a774858517962384431437258686c4d367579764f5a4c534a582b5a70792b6d723963333031477a554e4d75314c32505a464a4f3152494c554e545a4a526c396d4577316d453665737668727a777a514370636f395557726b5147493d",
+            "bOnMessage": {
+              "message_id": "18446744073709551615",
+              "message_seq": 4294967295,
+              "from_uid": "u_bob",
+              "channel_id": "g_golden",
+              "channel_type": 2,
+              "timestamp": 1,
+              "payload": {
+                "type": 1,
+                "content": "topic + stream",
+                "mention": {
+                  "uids": [
+                    "u_bot"
+                  ]
+                }
+              }
+            },
+            "bRecvackHex": "600cffffffffffffffffffffffff"
+          },
+          {
+            "spec": {
+              "setting": 128,
+              "msgKey": "",
+              "fromUid": "u_carol",
+              "channelId": "g_golden____t1",
+              "channelType": 5,
+              "expire": 0,
+              "clientMsgNo": "",
+              "messageId": "1",
+              "messageSeq": 1,
+              "timestamp": 2,
+              "payloadBase64Ascii": "ijwfpeByJvHM8P1iTSD3TvaWnJTNbZEhVXlPHwav7RYgHzuPYJyYLAGdHqNaVQ5jw93mwYn2whteS1gZln9DrFa6nXyu5FUZ8dI9QKUngprEbWFjUWLGdmn41N7WixYK"
+            },
+            "frameHex": "50b3018000000007755f6361726f6c000e675f676f6c64656e5f5f5f5f74310500000000000000000000000000010000000100000002696a7766706542794a76484d3850316954534433547661576e4a544e625a456856586c504877617637525967487a7550594a79594c41476448714e615651356a7739336d77596e32776874655331675a6c6e3944724661366e5879753546555a38644939514b556e677072456257466a55574c47646d6e34314e37576978594b",
+            "bOnMessage": {
+              "message_id": "1",
+              "message_seq": 1,
+              "from_uid": "u_carol",
+              "channel_id": "g_golden____t1",
+              "channel_type": 5,
+              "timestamp": 2,
+              "payload": {
+                "type": 14,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "富文本 😀"
+                  }
+                ],
+                "plain": "富文本 😀"
+              }
+            },
+            "bRecvackHex": "600c000000000000000100000001"
+          },
+          {
+            "spec": {
+              "setting": 0,
+              "msgKey": "k4",
+              "fromUid": "u_mallory",
+              "channelId": "u_mallory",
+              "channelType": 1,
+              "expire": 0,
+              "clientMsgNo": "c4",
+              "messageId": "777",
+              "messageSeq": 7,
+              "timestamp": 3,
+              "payloadBase64Ascii": "not-a-valid-ciphertext!!"
+            },
+            "frameHex": "504c0000026b340009755f6d616c6c6f72790009755f6d616c6c6f7279010000000000026334000000000000030900000007000000036e6f742d612d76616c69642d636970686572746578742121",
+            "bOnMessage": null,
+            "bRecvackHex": "600c000000000000030900000007"
+          }
+        ]
+      }
+    ]
+  }
+}

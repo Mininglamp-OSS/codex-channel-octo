@@ -1,0 +1,389 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="manifest">
+  <testsuite name="manifest" tests="24" failures="0" skipped="0">
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: R8 §10.9 bytes &gt; MM-01: the checked-in manifest is byte-identical to the R8 §10.9 JSON block" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-01"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: R8 §10.9 bytes &gt; MM-01: the checked-in manifest is byte-identical to the R8 §10.9 JSON block"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.464Z"/>
+      <property name="end" value="2026-10-13T14:10:31.464Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: R8 §10.9 bytes &gt; MM-02: the R8 document-QA selection counts hold (38 M1 / 20 M2 cases, 45 M2 contract selections, SB-01..14)" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-02"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: R8 §10.9 bytes &gt; MM-02: the R8 document-QA selection counts hold (38 M1 / 20 M2 cases, 45 M2 contract selections, SB-01..14)"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.465Z"/>
+      <property name="end" value="2026-10-13T14:10:31.465Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: linter &gt; MM-03: the checked-in manifest binds every selected ID to a procedure and evidence oracle" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-03"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: linter &gt; MM-03: the checked-in manifest binds every selected ID to a procedure and evidence oracle"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.465Z"/>
+      <property name="end" value="2026-10-13T14:10:31.465Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: linter &gt; MM-04: negative fixture — omitting M2-18 fails as an omitted mandatory case" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-04"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: linter &gt; MM-04: negative fixture — omitting M2-18 fails as an omitted mandatory case"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.466Z"/>
+      <property name="end" value="2026-10-13T14:10:31.466Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: linter &gt; MM-05: negative fixture — omitting M2-20 fails as an omitted mandatory case" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-05"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: linter &gt; MM-05: negative fixture — omitting M2-20 fails as an omitted mandatory case"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.466Z"/>
+      <property name="end" value="2026-10-13T14:10:31.466Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: linter &gt; MM-06: negative fixtures — omitted contract/oracle selections (SB-07, OP-05, ORACLE-04) fail" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-06"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: linter &gt; MM-06: negative fixtures — omitted contract/oracle selections (SB-07, OP-05, ORACLE-04) fail"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.466Z"/>
+      <property name="end" value="2026-10-13T14:10:31.466Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: linter &gt; MM-07: negative fixtures — unknown, duplicate, non-canonical and unbound IDs fail" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-07"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: linter &gt; MM-07: negative fixtures — unknown, duplicate, non-canonical and unbound IDs fail"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.467Z"/>
+      <property name="end" value="2026-10-13T14:10:31.467Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: linter &gt; MM-08: family aliases normalize to the zero-padded canonical form" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-08"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: linter &gt; MM-08: family aliases normalize to the zero-padded canonical form"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.467Z"/>
+      <property name="end" value="2026-10-13T14:10:31.467Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: gate evaluator &gt; MM-09: passed only when every required item passed on the verified head/profile with independent evidence" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-09"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: gate evaluator &gt; MM-09: passed only when every required item passed on the verified head/profile with independent evidence"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.468Z"/>
+      <property name="end" value="2026-10-13T14:10:31.468Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: gate evaluator &gt; MM-10: a single failed item fails; a missing or skipped item is pending (distinct, neither approves)" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-10"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: gate evaluator &gt; MM-10: a single failed item fails; a missing or skipped item is pending (distinct, neither approves)"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.468Z"/>
+      <property name="end" value="2026-10-13T14:10:31.468Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: gate evaluator &gt; MM-11: a pass from another head, another manifest or an implementer-only assertion is not a pass" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-11"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: gate evaluator &gt; MM-11: a pass from another head, another manifest or an implementer-only assertion is not a pass"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.468Z"/>
+      <property name="end" value="2026-10-13T14:10:31.468Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/manifest/milestone-manifest.test.ts" name="milestone manifest: gate evaluator &gt; MM-12: with no evidence at all every milestone is pending, never passed" time="0.000">
+    <properties>
+      <property name="caseId" value="MM-12"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="milestone manifest: gate evaluator &gt; MM-12: with no evidence at all every milestone is pending, never passed"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.469Z"/>
+      <property name="end" value="2026-10-13T14:10:31.469Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="oracle spec &gt; ORACLE-SPEC: the frozen spec matches the manifest policy path and fixture set" time="0.001">
+    <properties>
+      <property name="caseId" value="ORACLE-SPEC"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="oracle spec &gt; ORACLE-SPEC: the frozen spec matches the manifest policy path and fixture set"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.460Z"/>
+      <property name="end" value="2026-10-13T14:10:31.461Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="oracle spec &gt; ORACLE-MARKER: fixed-width markers round-trip and reject malformed or non-fixed-width forms" time="0.000">
+    <properties>
+      <property name="caseId" value="ORACLE-MARKER"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="oracle spec &gt; ORACLE-MARKER: fixed-width markers round-trip and reject malformed or non-fixed-width forms"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.461Z"/>
+      <property name="end" value="2026-10-13T14:10:31.461Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="ORACLE-01..08 frozen traces &gt; ORACLE-01" time="0.000">
+    <properties>
+      <property name="caseId" value="test/oracle/oracle.test.ts#ORACLE-01..08 frozen traces &gt; ORACLE-01"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="ORACLE-01..08 frozen traces &gt; ORACLE-01"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.462Z"/>
+      <property name="end" value="2026-10-13T14:10:31.462Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="ORACLE-01..08 frozen traces &gt; ORACLE-02" time="0.000">
+    <properties>
+      <property name="caseId" value="test/oracle/oracle.test.ts#ORACLE-01..08 frozen traces &gt; ORACLE-02"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="ORACLE-01..08 frozen traces &gt; ORACLE-02"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.462Z"/>
+      <property name="end" value="2026-10-13T14:10:31.462Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="ORACLE-01..08 frozen traces &gt; ORACLE-03" time="0.000">
+    <properties>
+      <property name="caseId" value="test/oracle/oracle.test.ts#ORACLE-01..08 frozen traces &gt; ORACLE-03"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="ORACLE-01..08 frozen traces &gt; ORACLE-03"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.462Z"/>
+      <property name="end" value="2026-10-13T14:10:31.462Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="ORACLE-01..08 frozen traces &gt; ORACLE-04" time="0.000">
+    <properties>
+      <property name="caseId" value="test/oracle/oracle.test.ts#ORACLE-01..08 frozen traces &gt; ORACLE-04"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="ORACLE-01..08 frozen traces &gt; ORACLE-04"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.463Z"/>
+      <property name="end" value="2026-10-13T14:10:31.463Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="ORACLE-01..08 frozen traces &gt; ORACLE-05" time="0.000">
+    <properties>
+      <property name="caseId" value="test/oracle/oracle.test.ts#ORACLE-01..08 frozen traces &gt; ORACLE-05"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="ORACLE-01..08 frozen traces &gt; ORACLE-05"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.463Z"/>
+      <property name="end" value="2026-10-13T14:10:31.463Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="ORACLE-01..08 frozen traces &gt; ORACLE-06" time="0.000">
+    <properties>
+      <property name="caseId" value="test/oracle/oracle.test.ts#ORACLE-01..08 frozen traces &gt; ORACLE-06"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="ORACLE-01..08 frozen traces &gt; ORACLE-06"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.463Z"/>
+      <property name="end" value="2026-10-13T14:10:31.463Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="ORACLE-01..08 frozen traces &gt; ORACLE-07" time="0.000">
+    <properties>
+      <property name="caseId" value="test/oracle/oracle.test.ts#ORACLE-01..08 frozen traces &gt; ORACLE-07"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="ORACLE-01..08 frozen traces &gt; ORACLE-07"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.463Z"/>
+      <property name="end" value="2026-10-13T14:10:31.463Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="ORACLE-01..08 frozen traces &gt; ORACLE-08" time="0.000">
+    <properties>
+      <property name="caseId" value="test/oracle/oracle.test.ts#ORACLE-01..08 frozen traces &gt; ORACLE-08"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="ORACLE-01..08 frozen traces &gt; ORACLE-08"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.463Z"/>
+      <property name="end" value="2026-10-13T14:10:31.463Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="ORACLE-01..08 frozen traces &gt; ORACLE-NEG: every failing or pending fixture has a defect-free control trace that passes" time="0.000">
+    <properties>
+      <property name="caseId" value="ORACLE-NEG"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="ORACLE-01..08 frozen traces &gt; ORACLE-NEG: every failing or pending fixture has a defect-free control trace that passes"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.463Z"/>
+      <property name="end" value="2026-10-13T14:10:31.463Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/oracle/oracle.test.ts" name="ORACLE-01..08 frozen traces &gt; ORACLE-HOST: host receipts never select expectations — a host &quot;delivered&quot; claim cannot hide a missing segment" time="0.000">
+    <properties>
+      <property name="caseId" value="ORACLE-HOST"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;manifest&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="ORACLE-01..08 frozen traces &gt; ORACLE-HOST: host receipts never select expectations — a host &quot;delivered&quot; claim cannot hide a missing segment"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:31.463Z"/>
+      <property name="end" value="2026-10-13T14:10:31.463Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+  </testsuite>
+</testsuites>
