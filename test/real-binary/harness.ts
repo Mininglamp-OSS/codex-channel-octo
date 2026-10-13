@@ -226,8 +226,18 @@ export function generateProtocolSchema(env: RealEnv): { definitions: Record<stri
 
 /** Fail the case if the binary reports any non-loopback model endpoint (no external network in this job). */
 export function assertLoopbackOnly(text: string, where: string): void {
-  const hit = /\b(?:https?|wss?):\/\/(?!127\.0\.0\.1|localhost)[a-z0-9.-]+\.[a-z]{2,}[^\s"']*/i.exec(text);
-  if (hit) throw new Error(`network escape: ${hit[0]} referenced in ${where}`);
+  // The pinned Linux binary prints this offline prerequisite reference. Do not
+  // allowlist its domain: a connection to the same URL must still fail.
+  const diagnostic = 'Codex could not find bubblewrap on PATH. Install bubblewrap with your OS package manager. See the sandbox prerequisites: https://developers.openai.com/codex/concepts/sandboxing#prerequisites. Codex will use the bundled bubblewrap in the meantime.';
+  const evidence = text.replaceAll(diagnostic, '<offline sandbox prerequisite diagnostic>');
+  for (const match of evidence.matchAll(/\b(?:https?|wss?):\/\/[^\s"'<>]+/gi)) {
+    let host: string;
+    try { host = new URL(match[0]).hostname.toLowerCase(); }
+    catch { throw new Error(`network escape: malformed URL ${match[0]} referenced in ${where}`); }
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(host)) {
+      throw new Error(`network escape: ${match[0]} referenced in ${where}`);
+    }
+  }
 }
 
 export function readRolloutTurnContexts(env: RealEnv, threadId: string): Array<Record<string, unknown>> {

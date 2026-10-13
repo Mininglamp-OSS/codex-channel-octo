@@ -90,6 +90,8 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      - name: Install Linux sandbox prerequisite
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - run: npm run test:real-binary
         env:
           DEV01_REPORT_DIR: artifacts/runs
