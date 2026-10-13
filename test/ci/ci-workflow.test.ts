@@ -42,6 +42,13 @@ describe('CI workflow', () => {
     expect(runs('egress-bypass-scan')).toMatch(/npm run test:egress/);
     expect(runs('downgrade-open')).toMatch(/npm run test:downgrade/);
     expect(runs('goldens')).toMatch(/npm run goldens:verify/);
+    // Workflow env keys are case-insensitive, even for Linux jobs.
+    for (const job of Object.values(wf.jobs)) {
+      for (const section of [job, ...job.steps]) {
+        const keys = Object.keys((section as { env?: Record<string, string> }).env ?? {});
+        expect(new Set(keys.map((key) => key.toLowerCase())).size).toBe(keys.length);
+      }
+    }
   });
 
   it('CI-04: package.json exposes the DEV-01 runners', () => {

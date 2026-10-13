@@ -80,7 +80,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NO_PROXY: 127.0.0.1,localhost
-      no_proxy: 127.0.0.1,localhost
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
