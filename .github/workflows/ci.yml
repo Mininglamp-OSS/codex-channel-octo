@@ -91,7 +91,14 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - name: Install Linux sandbox prerequisite
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        # Ubuntu 24.04 needs the narrowly scoped bwrap user-namespace profile.
+        # https://learn.chatgpt.com/docs/sandboxing#prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap apparmor-profiles apparmor-utils
+          sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          bwrap --unshare-user --ro-bind / / /bin/true
       - run: npm run test:real-binary
         env:
           DEV01_REPORT_DIR: artifacts/runs
