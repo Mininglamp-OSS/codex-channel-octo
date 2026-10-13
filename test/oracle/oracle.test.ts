@@ -15,13 +15,20 @@ interface OracleFixture {
   expectedViolations: string[];
   expectedCounts?: Record<string, number>;
   trace: unknown;
+  ledger?: unknown;
+  controlLedger?: unknown;
   controlTrace?: unknown;
-  variants?: Array<{ name: string; expectedVerdict: string; expectedViolations: string[]; trace: unknown }>;
+  variants?: Array<{ name: string; expectedVerdict: string; expectedViolations: string[]; trace: unknown; ledger?: unknown }>;
 }
 
+const ledgers = JSON.parse(readFileSync(new URL('./capture-ledgers-v1.json', import.meta.url), 'utf8')).fixtures;
 const dir = new URL('./fixtures/', import.meta.url);
 const fixtures = readdirSync(dir).filter((f) => /^ORACLE-\d\d\.json$/.test(f)).sort()
-  .map((f) => JSON.parse(readFileSync(new URL(f, dir), 'utf8')) as OracleFixture);
+  .map((f) => {
+    const fixture = JSON.parse(readFileSync(new URL(f, dir), 'utf8')) as OracleFixture;
+    return { ...fixture, ledger: ledgers[fixture.id].trace, controlLedger: ledgers[fixture.id].controlTrace,
+      variants: fixture.variants?.map(v => ({ ...v, ledger: ledgers[fixture.id][v.name] })) };
+  });
 
 describe('oracle spec', () => {
   it('ORACLE-SPEC: the frozen spec matches the manifest policy path and fixture set', () => {
@@ -53,12 +60,12 @@ describe('oracle spec', () => {
 
 describe('ORACLE-01..08 frozen traces', () => {
   it.each(fixtures.map((f) => [f.id, f] as const))('%s', (_id, f) => {
-    const report = evaluateDelivery(f.trace);
+    const report = evaluateDelivery(f.trace, f.ledger);
     expect(report.verdict, f.description).toBe(f.expectedVerdict);
     expect(report.violations.map((v: { code: string }) => v.code).sort()).toEqual([...f.expectedViolations].sort());
     if (f.expectedCounts) expect(report.counts).toMatchObject(f.expectedCounts);
     for (const v of f.variants ?? []) {
-      const r = evaluateDelivery(v.trace);
+      const r = evaluateDelivery(v.trace, v.ledger);
       expect(r.verdict, `${f.id}/${v.name}`).toBe(v.expectedVerdict);
       expect(r.violations.map((x: { code: string }) => x.code).sort(), `${f.id}/${v.name}`).toEqual([...v.expectedViolations].sort());
     }
@@ -69,7 +76,7 @@ describe('ORACLE-01..08 frozen traces', () => {
     expect(defective.map((f) => f.id)).toEqual(['ORACLE-02', 'ORACLE-03', 'ORACLE-05', 'ORACLE-07', 'ORACLE-08']);
     for (const f of defective) {
       expect(f.controlTrace, f.id).toBeDefined();
-      const r = evaluateDelivery(f.controlTrace);
+      const r = evaluateDelivery(f.controlTrace, f.controlLedger);
       expect(r.verdict, `${f.id} control`).toBe('pass');
       expect(r.violations, `${f.id} control`).toEqual([]);
     }
@@ -80,7 +87,7 @@ describe('ORACLE-01..08 frozen traces', () => {
     const trace = JSON.parse(JSON.stringify(f.trace)) as { inventory: { pages: Array<{ records: unknown[] }> }; hostReceipts?: unknown[] };
     trace.inventory.pages[0].records.pop();
     trace.hostReceipts = [{ state: 'delivered', segmentsSent: 3 }];
-    const r = evaluateDelivery(trace);
+    const r = evaluateDelivery(trace, f.ledger);
     expect(r.verdict).toBe('fail');
     expect(r.violations.map((v: { code: string }) => v.code)).toContain('missing-confirmed-segment');
   });

@@ -70,10 +70,52 @@ export function scanEgress(cfg) {
 
   const usages = [];
   const violations = [];
+  const bindingTypes = declaration => {
+    const types = new Set([checker.getTypeAtLocation(declaration.initializer ?? declaration)]);
+    const seen = new Set();
+    const origin = expression => {
+      if (!expression || seen.has(expression)) return;
+      seen.add(expression);
+      types.add(checker.getTypeAtLocation(expression));
+      if (ts.isParenthesizedExpression(expression) || ts.isAsExpression(expression)
+        || ts.isTypeAssertionExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isNonNullExpression(expression)) {
+        origin(expression.expression);
+      } else if (ts.isIdentifier(expression)) {
+        const symbol = checker.getSymbolAtLocation(expression);
+        for (const decl of symbol?.declarations ?? []) if (ts.isVariableDeclaration(decl)) origin(decl.initializer);
+      }
+    };
+    origin(declaration.initializer);
+    return [...types];
+  };
   for (const sf of program.getSourceFiles()) {
     const file = rel(sf.fileName);
     if (file.startsWith('..') || sf.isDeclarationFile || isBoundary(sf) || isEgress(file)) continue;
     const visit = (node) => {
+      if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+        // A binding's local symbol points to this declaration, not the imported
+        // export. Resolve its property on the initializer/contextual namespace.
+        const declaration = node.parent.parent;
+        const types = bindingTypes(declaration);
+        const guarded = types.some(type => checker.getPropertiesOfType(type).some(p => primitiveOf(p)));
+        let property;
+        if (node.dotDotDotToken) {
+          if (guarded) violations.push({ code: 'unresolved-boundary-extraction', file, symbol: `...${node.name.getText()}` });
+        } else if (node.propertyName && ts.isComputedPropertyName(node.propertyName)) {
+          const expression = node.propertyName.expression;
+          if (ts.isStringLiteralLike(expression)) property = expression.text;
+          else if (guarded) violations.push({ code: 'unresolved-boundary-extraction', file, symbol: `[${expression.getText()}]` });
+        } else {
+          const key = node.propertyName ?? node.name;
+          if (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) property = key.text;
+          else if (guarded) violations.push({ code: 'unresolved-boundary-extraction', file, symbol: key.getText() });
+        }
+        const name = property === undefined ? undefined : types.map(type => primitiveOf(checker.getPropertyOfType(type, property))).find(Boolean);
+        if (name) usages.push({ file, symbol: name, line: sf.getLineAndCharacterOfPosition(node.getStart()).line + 1, via: 'namespace-binding' });
+        // One reference extraction, matching const local = namespace.export.
+        // Binding declaration names and alias invocations are not extra sites.
+        return;
+      }
       if (ts.isExportDeclaration(node) && !node.isTypeOnly) {
         if (!node.exportClause && node.moduleSpecifier) {
           const modSym = checker.getSymbolAtLocation(node.moduleSpecifier);
