@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 // Current-run output (default: git-ignored artifacts/mutation); the committed
 // snapshot under test/evidence/dev01/mutation is not rewritten.
-const OUT = join(ROOT, process.env.DEV01_MUTATION_DIR ?? join('artifacts', 'mutation'));
+const OUT = resolve(ROOT, process.env.DEV01_MUTATION_DIR ?? join('artifacts', 'mutation'));
 
 export const MUTATIONS = [
   { id: 'M01-ack-before-decrypt', rows: ['BX-1', 'T10', 'INV-P3'], file: 'src/octo/socket.ts',

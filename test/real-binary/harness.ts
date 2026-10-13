@@ -11,7 +11,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { JsonlRpcClient, type RpcMessage } from '../harness/jsonl-client.js';
@@ -20,7 +20,7 @@ import { pins } from '../harness/pins.js';
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
 // Current-run raw evidence goes to $DEV01_EVIDENCE_DIR/real-binary (default: git-ignored
 // artifacts/); committed snapshots under test/evidence/dev01/ are never rewritten.
-const EVIDENCE_ROOT = join(process.env.DEV01_EVIDENCE_DIR ? join(REPO, process.env.DEV01_EVIDENCE_DIR) : join(REPO, 'artifacts', 'evidence'), 'real-binary');
+const EVIDENCE_ROOT = join(resolve(REPO, process.env.DEV01_EVIDENCE_DIR ?? join('artifacts', 'evidence')), 'real-binary');
 const PLATFORM_PACKAGES: Record<string, string> = {
   'darwin-arm64': '@openai/codex-darwin-arm64', 'darwin-x64': '@openai/codex-darwin-x64',
   'linux-x64': '@openai/codex-linux-x64', 'linux-arm64': '@openai/codex-linux-arm64',

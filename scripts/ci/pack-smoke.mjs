@@ -19,7 +19,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const start = new Date().toISOString();
 const sourceState = captureSourceState(ROOT);
-const OUT_DIR = join(ROOT, process.env.DEV01_REPORT_DIR ?? join('artifacts', 'runs'));
+const OUT_DIR = resolve(ROOT, process.env.DEV01_REPORT_DIR ?? join('artifacts', 'runs'));
 const OUT_FILE = join(OUT_DIR, `pack-smoke-node${process.versions.node.split('.')[0]}.results.json`);
 const checks = [];
 const check = (name, ok, detail = '') => { checks.push({ name, ok, detail }); if (!ok) console.error(`pack-smoke: FAIL ${name} ${detail}`); };
