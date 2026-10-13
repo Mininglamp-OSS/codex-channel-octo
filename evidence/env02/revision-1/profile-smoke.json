@@ -1,0 +1,151 @@
+{
+  "version": "0.142.3",
+  "executable": "/Users/mlamp/service/spk-xin2101/tools/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex",
+  "sha256": "8eecc8a6d61a7a8d39a9e6dde28553dfb6f0747d0c56b89eda188e0f2e92caea",
+  "profiles": [
+    {
+      "status": {
+        "state": "running",
+        "pid": 47740,
+        "supervisorPid": 47736,
+        "childPid": 47743,
+        "initialized": true,
+        "profile": "test-a",
+        "version": "codex-cli 0.142.3"
+      },
+      "result": {
+        "state": "stopped",
+        "profile": "test-a",
+        "events": [
+          {
+            "event": "child",
+            "pid": 47743
+          },
+          {
+            "event": "initialize",
+            "ok": true,
+            "version": "codex-cli 0.142.3"
+          },
+          {
+            "event": "exit",
+            "code": 0,
+            "pid": 47740
+          }
+        ],
+        "paths": {
+          "home": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-a/home",
+          "codexHome": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-a/codex-home",
+          "config": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-a/config/config.json",
+          "dbRoot": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-a/config",
+          "pid": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-a/state.json",
+          "logs": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-a/logs/process.json",
+          "cwd": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-a/cwd"
+        }
+      }
+    },
+    {
+      "status": {
+        "state": "running",
+        "pid": 47741,
+        "supervisorPid": 47737,
+        "childPid": 47742,
+        "initialized": true,
+        "profile": "test-b",
+        "version": "codex-cli 0.142.3"
+      },
+      "result": {
+        "state": "stopped",
+        "profile": "test-b",
+        "events": [
+          {
+            "event": "child",
+            "pid": 47742
+          },
+          {
+            "event": "initialize",
+            "ok": true,
+            "version": "codex-cli 0.142.3"
+          },
+          {
+            "event": "exit",
+            "code": 0,
+            "pid": 47741
+          }
+        ],
+        "paths": {
+          "home": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-b/home",
+          "codexHome": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-b/codex-home",
+          "config": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-b/config/config.json",
+          "dbRoot": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-b/config",
+          "pid": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-b/state.json",
+          "logs": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-b/logs/process.json",
+          "cwd": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-b/cwd"
+        }
+      }
+    }
+  ],
+  "sharedServiceActions": [],
+  "secondProfileUnaffected": true,
+  "gateway": {
+    "status": {
+      "state": "running",
+      "pid": 47760,
+      "supervisorPid": 47758,
+      "childPid": 47761,
+      "initialized": true,
+      "profile": "test-gateway",
+      "version": "codex-cli 0.142.3"
+    },
+    "result": {
+      "state": "stopped",
+      "profile": "test-gateway",
+      "events": [
+        {
+          "event": "child",
+          "pid": 47761
+        },
+        {
+          "event": "gateway-log",
+          "sha256": "c9874407f4534cae460a1a8a95697872f59cc90092d44b59ba5f3fd790315175"
+        },
+        {
+          "event": "ready",
+          "ok": true
+        },
+        {
+          "event": "exit",
+          "code": 0,
+          "pid": 47760
+        }
+      ],
+      "paths": {
+        "home": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-gateway/home",
+        "codexHome": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-gateway/codex-home",
+        "config": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-gateway/config/config.json",
+        "dbRoot": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-gateway/config",
+        "pid": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-gateway/state.json",
+        "logs": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-gateway/logs/process.json",
+        "cwd": "/Users/mlamp/.openclaw/tmp/env02-rla35kgx/test-gateway/cwd"
+      }
+    }
+  },
+  "crash": {
+    "status": {
+      "state": "running",
+      "pid": 47764,
+      "supervisorPid": 47762,
+      "childPid": 47765,
+      "initialized": true,
+      "profile": "test-crash",
+      "version": "codex-cli 0.142.3"
+    },
+    "guardianExited": true,
+    "childExited": true,
+    "staleStateCleaned": true
+  },
+  "cleanup": {
+    "allCollected": true,
+    "liveProfiles": 0,
+    "temporaryRootsRemovedOnExit": true
+  }
+}

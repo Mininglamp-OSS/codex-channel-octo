@@ -1,0 +1,50 @@
+
+ RUN  v3.2.6 /Users/mlamp/octo-daemon_workspaces/620b900b-0dea-443e-b0da-9948b6aa6dcf/c93ea026/workdir/codex-channel-octo
+
+ ❯ src/__tests__/capture-smoke.test.ts (2 tests | 2 failed) 5ms
+   × uses supported registration, CONNACK, membership and complete readback with cleanup 3ms
+     → expected "spy" to be called once, but got 0 times
+   × refuses a missing bot membership before reading the target transcript 2ms
+     → promise resolved "undefined" instead of rejecting
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  21:38:57
+   Duration  258ms (transform 39ms, setup 0ms, collect 39ms, tests 5ms, environment 0ms, prepare 42ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/__tests__/capture-smoke.test.ts > uses supported registration, CONNACK, membership and complete readback with cleanup
+AssertionError: expected "spy" to be called once, but got 0 times
+ ❯ src/__tests__/capture-smoke.test.ts:17:31
+     15|   const records: unknown[] = []; const adapter = transport();
+     16|   await smoke(manifest, 'fixture-secret', (r: unknown) => records.push…
+     17|   expect(adapter.registerBot).toHaveBeenCalledOnce();
+       |                               ^
+     18|   expect(adapter.getGroupMembers).toHaveBeenCalledOnce();
+     19|   expect(adapter.readback).toHaveBeenCalledOnce();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/__tests__/capture-smoke.test.ts > refuses a missing bot membership before reading the target transcript
+AssertionError: promise resolved "undefined" instead of rejecting
+
+- Expected: 
+Error {
+  "message": "rejected promise",
+}
+
++ Received: 
+undefined
+
+ ❯ src/__tests__/capture-smoke.test.ts:25:91
+     23| it('refuses a missing bot membership before reading the target transcr…
+     24|   const records: unknown[] = []; const adapter = transport([{ uid: 'ow…
+     25|   await expect(smoke(manifest, 'fixture-secret', (r: unknown) => recor…
+       |                                                                                           ^
+     26|   expect(adapter.readback).not.toHaveBeenCalled();
+     27|   expect(records).toContainEqual({ event: 'incomplete', reason: 'regis…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+

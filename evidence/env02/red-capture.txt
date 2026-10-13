@@ -1,0 +1,75 @@
+
+ RUN  v3.2.6 /Users/mlamp/octo-daemon_workspaces/620b900b-0dea-443e-b0da-9948b6aa6dcf/c93ea026/workdir/codex-channel-octo
+
+ ❯ src/__tests__/capture-proxy.test.ts (3 tests | 3 failed) 20ms
+   × captures every attempt before forwarding and records failed/unknown outcomes independently 17ms
+     → expected [] to deeply equal [ 1, 2, 3 ]
+   × redacts known secrets and credential patterns recursively 0ms
+     → expected '{"Authorization":"Bearer abc","conten…' not to match /abc|bf_secret|sk-secret|fixture-secret/
+   × refuses unauthorized targets and generic proxy routes without upstream calls 2ms
+     → expected 200 to be 404 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/__tests__/capture-proxy.test.ts > captures every attempt before forwarding and records failed/unknown outcomes independently
+AssertionError: expected [] to deeply equal [ 1, 2, 3 ]
+
+- Expected
++ Received
+
+- [
+-   1,
+-   2,
+-   3,
+- ]
++ []
+
+ ❯ src/__tests__/capture-proxy.test.ts:33:81
+     31|     }, body: JSON.stringify({ channel_id: 'target', channel_type: 2, p…
+     32|   }
+     33|   expect(records.filter(r => r.event === 'attempt').map(r => r.request…
+       |                                                                                 ^
+     34|   expect(records.filter(r => r.event === 'outcome').map(r => r.transpo…
+     35|   expect(records.find(r => r.responseMessageId)?.responseMessageId).to…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/__tests__/capture-proxy.test.ts > redacts known secrets and credential patterns recursively
+AssertionError: expected '{"Authorization":"Bearer abc","conten…' not to match /abc|bf_secret|sk-secret|fixture-secret/
+
+- Expected: 
+/abc|bf_secret|sk-secret|fixture-secret/
+
++ Received: 
+"{\"Authorization\":\"Bearer abc\",\"content\":\"bf_secret sk-secret fixture-secret\",\"nested\":{\"token\":\"abc\"}}"
+
+ ❯ src/__tests__/capture-proxy.test.ts:39:166
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/__tests__/capture-proxy.test.ts > refuses unauthorized targets and generic proxy routes without upstream calls
+AssertionError: expected 200 to be 404 // Object.is equality
+
+- Expected
++ Received
+
+- 404
++ 200
+
+ ❯ src/__tests__/capture-proxy.test.ts:47:25
+     45|   servers.push(capture.server);
+     46|   const denied = await fetch(capture.url + '/private/admin', { headers…
+     47|   expect(denied.status).toBe(404);
+       |                         ^
+     48|   const target = await fetch(capture.url + '/v1/bot/sendMessage', { me…
+     49|     body: JSON.stringify({ channel_id: 'production', channel_type: 2 }…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed (3)
+   Start at  21:23:37
+   Duration  192ms (transform 16ms, setup 0ms, collect 14ms, tests 20ms, environment 0ms, prepare 23ms)
+

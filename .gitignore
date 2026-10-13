@@ -8,3 +8,4 @@ config.json
 *.lock.pid
 .DS_Store
 *.log
+scripts/__pycache__/

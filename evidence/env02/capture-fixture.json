@@ -1,0 +1,97 @@
+[
+  {
+    "captureSessionId": "e45e476801a83e2e410ddd53adae2bb1",
+    "event": "attempt",
+    "requestOrdinal": 1,
+    "requestAt": 1791899128611,
+    "route": "/v1/bot/sendMessage",
+    "transportOutcome": "unknown"
+  },
+  {
+    "captureSessionId": "e45e476801a83e2e410ddd53adae2bb1",
+    "requestOrdinal": 1,
+    "requestAt": 1791899128611,
+    "route": "/v1/bot/sendMessage",
+    "target": {
+      "channelId": "target",
+      "channelType": 2
+    },
+    "requestBodyHash": "9aa7103b9e03305534199a78f7f135d05dde80094fc241835a318c426f1b0c8f",
+    "clientMsgNo": "fixture",
+    "event": "request",
+    "bytesReceived": 112
+  },
+  {
+    "captureSessionId": "e45e476801a83e2e410ddd53adae2bb1",
+    "event": "outcome",
+    "requestOrdinal": 1,
+    "transportOutcome": "confirmed",
+    "httpStatus": 200,
+    "responseAt": 1791899128629,
+    "responseMessageId": "9000000000000001",
+    "responseBodyHash": "6f768db379459a83ce82ff4fda5cd76f19c0a131d912f193674854be2df4ca5c",
+    "bytesForwarded": 112
+  },
+  {
+    "captureSessionId": "e45e476801a83e2e410ddd53adae2bb1",
+    "event": "attempt",
+    "requestOrdinal": 2,
+    "requestAt": 1791899128631,
+    "route": "/v1/bot/sendMessage",
+    "transportOutcome": "unknown"
+  },
+  {
+    "captureSessionId": "e45e476801a83e2e410ddd53adae2bb1",
+    "requestOrdinal": 2,
+    "requestAt": 1791899128631,
+    "route": "/v1/bot/sendMessage",
+    "target": {
+      "channelId": "target",
+      "channelType": 2
+    },
+    "requestBodyHash": "9aa7103b9e03305534199a78f7f135d05dde80094fc241835a318c426f1b0c8f",
+    "clientMsgNo": "fixture",
+    "event": "request",
+    "bytesReceived": 112
+  },
+  {
+    "captureSessionId": "e45e476801a83e2e410ddd53adae2bb1",
+    "event": "outcome",
+    "requestOrdinal": 2,
+    "transportOutcome": "failed",
+    "httpStatus": 403,
+    "responseAt": 1791899128635,
+    "responseBodyHash": "96cae19b11ea7d4bd2443c4ad3520d438bf424aea549d364143602a5b19a474b",
+    "bytesForwarded": 112
+  },
+  {
+    "captureSessionId": "e45e476801a83e2e410ddd53adae2bb1",
+    "event": "attempt",
+    "requestOrdinal": 3,
+    "requestAt": 1791899128641,
+    "route": "/v1/bot/sendMessage",
+    "transportOutcome": "unknown"
+  },
+  {
+    "captureSessionId": "e45e476801a83e2e410ddd53adae2bb1",
+    "requestOrdinal": 3,
+    "requestAt": 1791899128641,
+    "route": "/v1/bot/sendMessage",
+    "target": {
+      "channelId": "target",
+      "channelType": 2
+    },
+    "requestBodyHash": "9aa7103b9e03305534199a78f7f135d05dde80094fc241835a318c426f1b0c8f",
+    "clientMsgNo": "fixture",
+    "event": "request",
+    "bytesReceived": 112
+  },
+  {
+    "captureSessionId": "e45e476801a83e2e410ddd53adae2bb1",
+    "event": "outcome",
+    "requestOrdinal": 3,
+    "transportOutcome": "unknown",
+    "responseAt": 1791899128656,
+    "bytesForwarded": 112
+  }
+]

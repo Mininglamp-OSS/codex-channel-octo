@@ -337,7 +337,12 @@ export async function* queryAgent(
   const agentsMdOk = writeAgentsMd(cwd, systemPrompt);
 
   const env = buildCodexEnv(config.sdk, process.env);
+  const testExecutable = process.env.CODEX_OCTO_TEST_CODEX_PATH;
+  if (testExecutable && !process.env.CODEX_OCTO_TEST_PROFILE_ROOT) {
+    throw new Error('Pinned test executable requires an isolated profile');
+  }
   const codex = new Codex({
+    ...(testExecutable ? { codexPathOverride: testExecutable } : {}),
     ...(config.sdk.codexApiKey ? { apiKey: config.sdk.codexApiKey } : {}),
     ...(config.sdk.codexBaseUrl ? { baseUrl: config.sdk.codexBaseUrl } : {}),
     ...(env ? { env } : {}),

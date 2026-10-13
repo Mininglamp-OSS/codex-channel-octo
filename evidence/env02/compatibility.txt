@@ -1,0 +1,1 @@
+PASS: exported default path, merged defaults and zero-bot resolution are byte-identical to dd12980.

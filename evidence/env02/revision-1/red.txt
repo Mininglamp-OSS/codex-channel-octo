@@ -1,0 +1,444 @@
+
+ RUN  v3.2.6 /Users/mlamp/octo-daemon_workspaces/620b900b-0dea-443e-b0da-9948b6aa6dcf/c93ea026/workdir/codex-channel-octo
+
+ ❯ src/__tests__/capture-smoke.test.ts (11 tests | 9 failed) 11ms
+   ✓ uses supported registration, CONNACK, membership and complete readback with cleanup 2ms
+   × refuses false designation before any network operation 4ms
+     → expected "spy" to not be called at all, but actually been called 1 times
+
+Received: 
+
+  1st spy call:
+
+    Array [
+      Object {
+        "apiUrl": "https://example.com",
+        "botToken": "fixture-secret",
+        "signal": AbortSignal {
+          Symbol(kEvents): Map {},
+          Symbol(events.maxEventTargetListeners): 0,
+          Symbol(events.maxEventTargetListenersWarned): false,
+          Symbol(kHandlers): Map {},
+          Symbol(kAborted): false,
+          Symbol(kReason): undefined,
+          Symbol(kComposite): false,
+          Symbol(kTimeout): true,
+        },
+      },
+    ]
+
+
+Number of calls: 1
+
+   × refuses missing designation before any network operation 1ms
+     → expected "spy" to not be called at all, but actually been called 1 times
+
+Received: 
+
+  1st spy call:
+
+    Array [
+      Object {
+        "apiUrl": "https://example.com",
+        "botToken": "fixture-secret",
+        "signal": AbortSignal {
+          Symbol(kEvents): Map {},
+          Symbol(events.maxEventTargetListeners): 0,
+          Symbol(events.maxEventTargetListenersWarned): false,
+          Symbol(kHandlers): Map {},
+          Symbol(kAborted): false,
+          Symbol(kReason): undefined,
+          Symbol(kComposite): false,
+          Symbol(kTimeout): true,
+        },
+      },
+    ]
+
+
+Number of calls: 1
+
+   × refuses empty expected bot before any network operation 1ms
+     → expected "spy" to not be called at all, but actually been called 1 times
+
+Received: 
+
+  1st spy call:
+
+    Array [
+      Object {
+        "apiUrl": "https://example.com",
+        "botToken": "fixture-secret",
+        "signal": AbortSignal {
+          Symbol(kEvents): Map {},
+          Symbol(events.maxEventTargetListeners): 0,
+          Symbol(events.maxEventTargetListenersWarned): false,
+          Symbol(kHandlers): Map {},
+          Symbol(kAborted): false,
+          Symbol(kReason): undefined,
+          Symbol(kComposite): false,
+          Symbol(kTimeout): true,
+        },
+      },
+    ]
+
+
+Number of calls: 1
+
+   × refuses invalid target type before any network operation 0ms
+     → expected "spy" to not be called at all, but actually been called 1 times
+
+Received: 
+
+  1st spy call:
+
+    Array [
+      Object {
+        "apiUrl": "https://example.com",
+        "botToken": "fixture-secret",
+        "signal": AbortSignal {
+          Symbol(kEvents): Map {},
+          Symbol(events.maxEventTargetListeners): 0,
+          Symbol(events.maxEventTargetListenersWarned): false,
+          Symbol(kHandlers): Map {},
+          Symbol(kAborted): false,
+          Symbol(kReason): undefined,
+          Symbol(kComposite): false,
+          Symbol(kTimeout): true,
+        },
+      },
+    ]
+
+
+Number of calls: 1
+
+   × refuses empty target before any network operation 1ms
+     → promise resolved "undefined" instead of rejecting
+   × refuses invalid member inventory before any network operation 0ms
+     → expected "spy" to not be called at all, but actually been called 1 times
+
+Received: 
+
+  1st spy call:
+
+    Array [
+      Object {
+        "apiUrl": "https://example.com",
+        "botToken": "fixture-secret",
+        "signal": AbortSignal {
+          Symbol(kEvents): Map {},
+          Symbol(events.maxEventTargetListeners): 0,
+          Symbol(events.maxEventTargetListenersWarned): false,
+          Symbol(kHandlers): Map {},
+          Symbol(kAborted): false,
+          Symbol(kReason): undefined,
+          Symbol(kComposite): false,
+          Symbol(kTimeout): true,
+        },
+      },
+    ]
+
+
+Number of calls: 1
+
+   × refuses unverified DM before any network operation 0ms
+     → expected "spy" to not be called at all, but actually been called 1 times
+
+Received: 
+
+  1st spy call:
+
+    Array [
+      Object {
+        "apiUrl": "https://example.com",
+        "botToken": "fixture-secret",
+        "signal": AbortSignal {
+          Symbol(kEvents): Map {},
+          Symbol(events.maxEventTargetListeners): 0,
+          Symbol(events.maxEventTargetListenersWarned): false,
+          Symbol(kHandlers): Map {},
+          Symbol(kAborted): false,
+          Symbol(kReason): undefined,
+          Symbol(kComposite): false,
+          Symbol(kTimeout): true,
+        },
+      },
+    ]
+
+
+Number of calls: 1
+
+   × refuses invalid page size before any network operation 0ms
+     → promise resolved "undefined" instead of rejecting
+   × refuses invalid lower watermark before any network operation 0ms
+     → promise resolved "undefined" instead of rejecting
+   ✓ refuses a missing bot membership before reading the target transcript 0ms
+ ❯ src/__tests__/capture-proxy.test.ts (26 tests | 17 failed) 104ms
+   ✓ captures every attempt before forwarding and records failed/unknown outcomes independently 35ms
+   ✓ captures independent WS frames without persisting CONNECT credentials 7ms
+   ✓ redacts known secrets and credential patterns recursively 0ms
+   ✓ refuses unauthorized targets and generic proxy routes without upstream calls 4ms
+   × validates the response for send numeric 6ms
+     → expected 'unknown' to be 'confirmed' // Object.is equality
+   ✓ validates the response for send string 2ms
+   ✓ validates the response for send raw int64 2ms
+   ✓ validates the response for send string int64 2ms
+   × validates the response for send empty ID 2ms
+     → expected 'confirmed' to be 'unknown' // Object.is equality
+   × validates the response for send whitespace ID 2ms
+     → expected 'confirmed' to be 'unknown' // Object.is equality
+   × validates the response for send invalid ID 1ms
+     → expected 'confirmed' to be 'unknown' // Object.is equality
+   × validates the response for send null ID 2ms
+     → expected null to be undefined // Object.is equality
+   × validates the response for send object ID 2ms
+     → expected {} to be undefined // Object.is equality
+   × validates the response for send negative ID 2ms
+     → expected -1 to be undefined // Object.is equality
+   × validates the response for send fractional ID 1ms
+     → expected 1.5 to be undefined // Object.is equality
+   × validates the response for send oversized ID 1ms
+     → expected 'confirmed' to be 'unknown' // Object.is equality
+   ✓ validates the response for send malformed 1ms
+   × validates the response for edit malformed 1ms
+     → expected 'confirmed' to be 'unknown' // Object.is equality
+   × validates the response for edit empty body 1ms
+     → expected 'confirmed' to be 'unknown' // Object.is equality
+   × validates the response for edit unverified object 1ms
+     → expected 'confirmed' to be 'unknown' // Object.is equality
+   × validates the response for edit null response 1ms
+     → expected 'confirmed' to be 'unknown' // Object.is equality
+   × validates the response for edit empty ID 2ms
+     → expected 'confirmed' to be 'unknown' // Object.is equality
+   × validates the response for edit mismatched ID 1ms
+     → expected 'confirmed' to be 'unknown' // Object.is equality
+   × validates the response for edit matching numeric ID 2ms
+     → expected 123 to be '123' // Object.is equality
+   ✓ validates the response for edit matching string ID 1ms
+   × redacts returned and rotated credentials from REST metadata, markers and WS records 19ms
+     → expected '[{"captureSessionId":"b06b32bb264f1c3…' not to contain 'opaqueOldCredential'
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 26 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for send numeric
+AssertionError: expected 'unknown' to be 'confirmed' // Object.is equality
+
+Expected: "confirmed"
+Received: "unknown"
+
+ ❯ src/__tests__/capture-proxy.test.ts:117:39
+    115|       body: JSON.stringify({ channel_id: 'target', channel_type: 2, me…
+    116|     const outcome = records.find(r => r.event === 'outcome');
+    117|     expect(outcome?.transportOutcome).toBe(expected);
+       |                                       ^
+    118|     expect(outcome?.responseMessageId).toBe(id);
+    119|   } finally { await capture.close(); }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/26]⎯
+
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for send empty ID
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for send whitespace ID
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for send invalid ID
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for send oversized ID
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for edit malformed
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for edit empty body
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for edit unverified object
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for edit null response
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for edit empty ID
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for edit mismatched ID
+AssertionError: expected 'confirmed' to be 'unknown' // Object.is equality
+
+Expected: "unknown"
+Received: "confirmed"
+
+ ❯ src/__tests__/capture-proxy.test.ts:117:39
+    115|       body: JSON.stringify({ channel_id: 'target', channel_type: 2, me…
+    116|     const outcome = records.find(r => r.event === 'outcome');
+    117|     expect(outcome?.transportOutcome).toBe(expected);
+       |                                       ^
+    118|     expect(outcome?.responseMessageId).toBe(id);
+    119|   } finally { await capture.close(); }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/26]⎯
+
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for send null ID
+AssertionError: expected null to be undefined // Object.is equality
+
+- Expected: 
+undefined
+
++ Received: 
+null
+
+ ❯ src/__tests__/capture-proxy.test.ts:118:40
+    116|     const outcome = records.find(r => r.event === 'outcome');
+    117|     expect(outcome?.transportOutcome).toBe(expected);
+    118|     expect(outcome?.responseMessageId).toBe(id);
+       |                                        ^
+    119|   } finally { await capture.close(); }
+    120| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/26]⎯
+
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for send object ID
+AssertionError: expected {} to be undefined // Object.is equality
+
+- Expected: 
+undefined
+
++ Received: 
+{}
+
+ ❯ src/__tests__/capture-proxy.test.ts:118:40
+    116|     const outcome = records.find(r => r.event === 'outcome');
+    117|     expect(outcome?.transportOutcome).toBe(expected);
+    118|     expect(outcome?.responseMessageId).toBe(id);
+       |                                        ^
+    119|   } finally { await capture.close(); }
+    120| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/26]⎯
+
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for send negative ID
+AssertionError: expected -1 to be undefined // Object.is equality
+
+- Expected: 
+undefined
+
++ Received: 
+-1
+
+ ❯ src/__tests__/capture-proxy.test.ts:118:40
+    116|     const outcome = records.find(r => r.event === 'outcome');
+    117|     expect(outcome?.transportOutcome).toBe(expected);
+    118|     expect(outcome?.responseMessageId).toBe(id);
+       |                                        ^
+    119|   } finally { await capture.close(); }
+    120| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/26]⎯
+
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for send fractional ID
+AssertionError: expected 1.5 to be undefined // Object.is equality
+
+- Expected: 
+undefined
+
++ Received: 
+1.5
+
+ ❯ src/__tests__/capture-proxy.test.ts:118:40
+    116|     const outcome = records.find(r => r.event === 'outcome');
+    117|     expect(outcome?.transportOutcome).toBe(expected);
+    118|     expect(outcome?.responseMessageId).toBe(id);
+       |                                        ^
+    119|   } finally { await capture.close(); }
+    120| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/26]⎯
+
+ FAIL  src/__tests__/capture-proxy.test.ts > validates the response for edit matching numeric ID
+AssertionError: expected 123 to be '123' // Object.is equality
+
+- Expected: 
+"123"
+
++ Received: 
+123
+
+ ❯ src/__tests__/capture-proxy.test.ts:118:40
+    116|     const outcome = records.find(r => r.event === 'outcome');
+    117|     expect(outcome?.transportOutcome).toBe(expected);
+    118|     expect(outcome?.responseMessageId).toBe(id);
+       |                                        ^
+    119|   } finally { await capture.close(); }
+    120| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/26]⎯
+
+ FAIL  src/__tests__/capture-proxy.test.ts > redacts returned and rotated credentials from REST metadata, markers and WS records
+AssertionError: expected '[{"captureSessionId":"b06b32bb264f1c3…' not to contain 'opaqueOldCredential'
+
+Expected: "opaqueOldCredential"
+Received: "[{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"registration","at":1791900315074,"robotId":"bot-a","wsScheme":"ws:","wsHost":"127.0.0.1","ownerUid":"opaqueOldCredential","ownerChannelId":"dm"},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"ws-frame","direction":"outbound","at":1791900315075,"bytes":63,"packetType":6,"frameHash":"cffaaa7e599984bd219ec638fcae08b336effc723804c02047f8bd34811453b9"},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"ws-frame","direction":"inbound","at":1791900315075,"bytes":63,"packetType":6,"frameHash":"cffaaa7e599984bd219ec638fcae08b336effc723804c02047f8bd34811453b9"},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"registration","at":1791900315079,"robotId":"bot-a","wsScheme":"ws:","wsHost":"127.0.0.1","ownerUid":"opaqueNewCredential","ownerChannelId":"dm"},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"ws-frame","direction":"outbound","at":1791900315080,"bytes":63,"packetType":6,"frameHash":"cffaaa7e599984bd219ec638fcae08b336effc723804c02047f8bd34811453b9"},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"ws-frame","direction":"inbound","at":1791900315080,"bytes":63,"packetType":6,"frameHash":"cffaaa7e599984bd219ec638fcae08b336effc723804c02047f8bd34811453b9"},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"attempt","requestOrdinal":3,"requestAt":1791900315080,"route":"/v1/bot/sendMessage","transportOutcome":"unknown"},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","requestOrdinal":3,"requestAt":1791900315080,"route":"/v1/bot/sendMessage","target":{"channelId":"target","channelType":2},"senderUid":"bot-a","requestBodyHash":"8e8de64b9146ce645ce8da55265db00eecc259b8f09cd95e1f67baa17878096d","clientMsgNo":"prefix-opaqueOldCredential-suffix","fixtureMarker":"[DLY f=opaqueOldCredential s=000001/000001]","event":"request","bytesReceived":160},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"outcome","requestOrdinal":3,"transportOutcome":"unknown","httpStatus":200,"responseAt":1791900315082,"responseMessageId":123,"responseBodyHash":"426e300c10d7662bec2fc1df418fcb1fc5ad6aa146d4799ac2373c5e69589a61","bytesForwarded":160},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"attempt","requestOrdinal":4,"requestAt":1791900315082,"route":"/v1/bot/sendMessage","transportOutcome":"unknown"},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","requestOrdinal":4,"requestAt":1791900315082,"route":"/v1/bot/sendMessage","target":{"channelId":"target","channelType":2},"senderUid":"bot-a","requestBodyHash":"c47cb384fba16dd94c6a1dd4b36589303decac6ffd0cbedfb539f7afe0345f50","clientMsgNo":"prefix-opaqueNewCredential-suffix","fixtureMarker":"[DLY f=opaqueNewCredential s=000001/000001]","event":"request","bytesReceived":160},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"outcome","requestOrdinal":4,"transportOutcome":"unknown","httpStatus":200,"responseAt":1791900315084,"responseMessageId":123,"responseBodyHash":"426e300c10d7662bec2fc1df418fcb1fc5ad6aa146d4799ac2373c5e69589a61","bytesForwarded":160},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"attempt","requestOrdinal":5,"requestAt":1791900315086,"route":"/v1/bot/sendMessage","transportOutcome":"unknown"},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","requestOrdinal":5,"requestAt":1791900315086,"route":"/v1/bot/sendMessage","target":{"channelId":"target","channelType":2},"senderUid":"bot-a","requestBodyHash":"9c7a6747e0041350904df0cf97fc73373588ee592a9f058c22575c8f6aff4c46","clientMsgNo":"prefix-opaqueRefreshCredential-suffix","fixtureMarker":"[DLY f=opaqueRefreshCredential s=000001/000001]","event":"request","bytesReceived":168},{"captureSessionId":"b06b32bb264f1c380ab7ca03b34e064d","event":"outcome","requestOrdinal":5,"transportOutcome":"unknown","httpStatus":200,"responseAt":1791900315088,"responseMessageId":123,"responseBodyHash":"426e300c10d7662bec2fc1df418fcb1fc5ad6aa146d4799ac2373c5e69589a61","bytesForwarded":168}]"
+
+ ❯ src/__tests__/capture-proxy.test.ts:161:71
+    159|     expect(records.filter(r => r.event === 'ws-frame')).toHaveLength(4…
+    160|     expect(records.filter(r => r.event === 'request')).toHaveLength(3);
+    161|     for (const secret of secrets) expect(JSON.stringify(records)).not.…
+       |                                                                       ^
+    162|     expect(records.filter(r => r.event === 'request').every(r => Strin…
+    163|     if (process.env.ENV02_EVIDENCE_DIR) writeFileSync(`${process.env.E…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/26]⎯
+
+ FAIL  src/__tests__/capture-smoke.test.ts > refuses false designation before any network operation
+ FAIL  src/__tests__/capture-smoke.test.ts > refuses missing designation before any network operation
+ FAIL  src/__tests__/capture-smoke.test.ts > refuses empty expected bot before any network operation
+ FAIL  src/__tests__/capture-smoke.test.ts > refuses invalid target type before any network operation
+ FAIL  src/__tests__/capture-smoke.test.ts > refuses invalid member inventory before any network operation
+ FAIL  src/__tests__/capture-smoke.test.ts > refuses unverified DM before any network operation
+AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+
+Received: 
+
+  1st spy call:
+
+    Array [
+      Object {
+        "apiUrl": "https://example.com",
+        "botToken": "fixture-secret",
+        "signal": AbortSignal {
+          Symbol(kEvents): Map {},
+          Symbol(events.maxEventTargetListeners): 0,
+          Symbol(events.maxEventTargetListenersWarned): false,
+          Symbol(kHandlers): Map {},
+          Symbol(kAborted): false,
+          Symbol(kReason): undefined,
+          Symbol(kComposite): false,
+          Symbol(kTimeout): true,
+        },
+      },
+    ]
+
+
+Number of calls: 1
+
+ ❯ src/__tests__/capture-smoke.test.ts:37:35
+     35|   const adapter = transport();
+     36|   await expect(smoke(input, 'fixture-secret', () => {}, adapter)).reje…
+     37|   expect(adapter.registerBot).not.toHaveBeenCalled();
+       |                                   ^
+     38|   expect(adapter.construct).not.toHaveBeenCalled();
+     39|   expect(adapter.getGroupMembers).not.toHaveBeenCalled();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/26]⎯
+
+ FAIL  src/__tests__/capture-smoke.test.ts > refuses empty target before any network operation
+ FAIL  src/__tests__/capture-smoke.test.ts > refuses invalid page size before any network operation
+ FAIL  src/__tests__/capture-smoke.test.ts > refuses invalid lower watermark before any network operation
+AssertionError: promise resolved "undefined" instead of rejecting
+
+- Expected: 
+Error {
+  "message": "rejected promise",
+}
+
++ Received: 
+undefined
+
+ ❯ src/__tests__/capture-smoke.test.ts:36:65
+     34| ])('refuses %s before any network operation', async (_name, input) => {
+     35|   const adapter = transport();
+     36|   await expect(smoke(input, 'fixture-secret', () => {}, adapter)).reje…
+       |                                                                 ^
+     37|   expect(adapter.registerBot).not.toHaveBeenCalled();
+     38|   expect(adapter.construct).not.toHaveBeenCalled();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/26]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  26 failed | 11 passed (37)
+   Start at  22:05:14
+   Duration  366ms (transform 58ms, setup 0ms, collect 104ms, tests 115ms, environment 0ms, prepare 83ms)
+
