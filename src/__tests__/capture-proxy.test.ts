@@ -4,7 +4,8 @@ import { writeFileSync } from 'node:fs';
 import WebSocket, { WebSocketServer } from 'ws';
 // Test-only capture code is deliberately outside the release source tree.
 // @ts-expect-error JavaScript helper has runtime-checked interfaces.
-import { startCapture, sanitize } from '../../scripts/capture_proxy.mjs';
+import { startCapture, sanitize, validateProtectedDescriptors } from '../../scripts/capture_proxy.mjs';
+import { registerBot } from '../octo/api.js';
 const servers: Server[] = [];
 afterEach(async () => { for (const s of servers.splice(0)) { s.closeAllConnections(); await new Promise(r => s.close(r)); } });
 async function fixture() {
@@ -120,17 +121,19 @@ it.each([
 });
 
 it('redacts returned and rotated credentials from REST metadata, markers and WS records', async () => {
-  const secrets = ['opaqueOldCredential', 'opaqueNewCredential', 'opaqueRefreshCredential'];
+  const secrets = ['opaqueOldCredential', 'opaqueNewCredential', 'opaqueRefreshCredential', 'opaqueTicketCredential'];
   const remote = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>(resolve => remote.once('listening', resolve));
   remote.on('connection', ws => ws.on('message', data => ws.send(data)));
   let registrations = 0;
+  const paths: string[] = [];
   const upstream = createServer(async (req, res) => {
     for await (const chunk of req) { void chunk; }
-    if (req.url === '/v1/bot/register') {
+    paths.push(req.url!);
+    if (req.url === '/v1/bot/register' || req.url === '/v1/bot/register?force_refresh=true') {
       const imToken = secrets[registrations++ % 2];
       res.end(JSON.stringify({ robot_id: 'bot-a', im_token: imToken,
-        credentials: { refresh_token: secrets[2] }, owner_uid: imToken, owner_channel_id: 'dm',
+        ticket: secrets[3], credentials: { refresh_token: secrets[2] }, owner_uid: imToken, owner_channel_id: 'dm',
         ws_url: `ws://127.0.0.1:${(remote.address() as { port: number }).port}` }));
     } else res.end('{"message_id":123}');
   });
@@ -143,8 +146,7 @@ it('redacts returned and rotated credentials from REST metadata, markers and WS 
   let socket: WebSocket | undefined;
   try {
     for (let i = 0; i < 2; i++) {
-      const registration = await (await fetch(capture.url + '/v1/bot/register', { method: 'POST',
-        headers: { Authorization: 'Bearer fixture-secret' }, body: '{}' })).json();
+      const registration = await registerBot({ apiUrl: capture.url, botToken: 'fixture-secret', forceRefresh: i === 1 });
       expect(registration.im_token).toBe(secrets[i]); // Credentials are forwarded, never retained in evidence.
       socket = new WebSocket(registration.ws_url);
       await new Promise<void>(resolve => socket!.once('open', resolve));
@@ -157,9 +159,41 @@ it('redacts returned and rotated credentials from REST metadata, markers and WS 
       headers: { Authorization: 'Bearer fixture-secret' }, body: JSON.stringify({ channel_id: 'target', channel_type: 2,
         client_msg_no: `prefix-${secret}-suffix`, payload: { content: `[DLY f=${secret} s=000001/000001]` } }) });
     expect(records.filter(r => r.event === 'ws-frame')).toHaveLength(4);
-    expect(records.filter(r => r.event === 'request')).toHaveLength(3);
+    expect(records.filter(r => r.event === 'request')).toHaveLength(secrets.length);
+    expect(paths.slice(0, 2)).toEqual(['/v1/bot/register', '/v1/bot/register?force_refresh=true']);
     for (const secret of secrets) expect(JSON.stringify(records)).not.toContain(secret);
     expect(records.filter(r => r.event === 'request').every(r => String(r.clientMsgNo).includes('[REDACTED]'))).toBe(true);
     if (process.env.ENV02_EVIDENCE_DIR) writeFileSync(`${process.env.ENV02_EVIDENCE_DIR}/rotated-credentials-fixture.json`, JSON.stringify(records, null, 2));
   } finally { socket?.terminate(); await capture.close(); await new Promise<void>(resolve => remote.close(() => resolve())); }
+});
+
+
+it.each([
+  ['/v1/bot/register?force_refresh=false', 'POST', true, 404],
+  ['/v1/bot/register?force_refresh=true&extra=opaque-query', 'POST', true, 404],
+  ['/v1/bot/register?force_refresh=true&force_refresh=true', 'POST', true, 404],
+  ['/v1/bot/heartbeat?force_refresh=true', 'POST', true, 404],
+  ['/v1/bot/register', 'GET', true, 404],
+  ['/v1/bot/register', 'POST', false, 401],
+  ['/private/admin', 'POST', true, 404],
+])('records refusal of %s without forwarding it', async (path, method, auth, status) => {
+  let forwarded = 0;
+  const upstream = createServer((_req, res) => { forwarded++; res.end('{}'); });
+  servers.push(upstream);
+  await new Promise<void>(r => upstream.listen(0, '127.0.0.1', r));
+  const records: Record<string, unknown>[] = [];
+  const capture = await startCapture({ upstream: `http://127.0.0.1:${(upstream.address() as { port: number }).port}`,
+    token: 'fixture-secret', fixtureOnly: true, allowedTargets: [{ channelId: 'target', channelType: 2 }],
+    record: (r: Record<string, unknown>) => records.push(r) });
+  try {
+    const response = await fetch(capture.url + path, { method, headers: auth ? { Authorization: 'Bearer fixture-secret' } : {} });
+    expect(response.status).toBe(status); expect(forwarded).toBe(0);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ event: 'refused', requestOrdinal: 1, method, httpStatus: status, forwarded: false });
+    expect(JSON.stringify(records)).not.toMatch(/fixture-secret|opaque-query/);
+  } finally { await capture.close(); }
+});
+
+it.each([NaN, 0, 2, 3.5])('rejects invalid descriptor %s before fstat', (fd) => {
+  expect(() => validateProtectedDescriptors([fd])).toThrow('Invalid protected descriptor');
 });

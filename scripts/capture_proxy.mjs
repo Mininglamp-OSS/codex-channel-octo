@@ -44,11 +44,22 @@ function confirmation(route, text, request) {
   return { observedResponseMessageId: id };
 }
 
-function retainCredentials(value, secretValues) {
+const registrationPublicFields = new Set(['robot_id', 'ws_url', 'api_url', 'owner_uid', 'owner_channel_id']);
+export function retainCredentials(value, secretValues, publicRoot = true) {
   if (!value || typeof value !== 'object') return;
   for (const [key, item] of Object.entries(value)) {
-    if (/authorization|token|secret|password|api.?key/i.test(key) && typeof item === 'string' && item) secretValues.add(item);
-    else if (item && typeof item === 'object') retainCredentials(item, secretValues);
+    if (publicRoot && registrationPublicFields.has(key)) continue;
+    if (typeof item === 'string' && item) secretValues.add(item);
+    else if (item && typeof item === 'object') retainCredentials(item, secretValues, false);
+  }
+}
+
+export function validateProtectedDescriptors(descriptors) {
+  if (typeof process.getuid !== 'function') throw new Error('Protected capture requires a POSIX platform');
+  for (const fd of descriptors) {
+    if (!Number.isInteger(fd) || fd < 3) throw new Error('Invalid protected descriptor');
+    const st = fstatSync(fd);
+    if (!st.isFile() || (st.mode & 0o777) !== 0o600 || st.nlink !== 1 || st.uid !== process.getuid()) throw new Error('Invalid protected descriptor');
   }
 }
 
@@ -80,7 +91,10 @@ export async function startCapture(options) {
     pending.add(work); work.finally(() => pending.delete(work));
   });
   server.on('upgrade', (req, socket, head) => {
-    if (req.url !== wsPath || !wsUpstream) { socket.destroy(); return; }
+    if (req.url !== wsPath || !wsUpstream) {
+      emit({ event: 'refused', requestOrdinal: ++ordinal, requestAt: Date.now(), route: '/ws', method: 'UPGRADE', reason: 'unregistered-or-unlisted-ws', forwarded: false });
+      socket.destroy(); return;
+    }
     websocket.handleUpgrade(req, socket, head, local => {
       const remote = new WebSocket(wsUpstream, { maxPayload: 1024 * 1024, handshakeTimeout: 5000, followRedirects: false });
       sockets.add(local); sockets.add(remote);
@@ -104,11 +118,18 @@ export async function startCapture(options) {
     const send = ['/v1/bot/sendMessage', '/v1/bot/message/edit'].includes(route);
     const post = ['/v1/bot/sendMessage', '/v1/bot/message/edit', '/v1/bot/register', '/v1/bot/heartbeat', '/v1/bot/messages/sync'].includes(route);
     const group = route.match(/^\/v1\/bot\/groups\/([^/]+)\/members$/);
-    if (url.search || (!post && !group) || req.method !== (post ? 'POST' : 'GET')) { res.writeHead(404); res.end('{}'); return; }
-    if (!equal(String(req.headers.authorization ?? ''), `Bearer ${options.token}`)) { res.writeHead(401); res.end('{}'); return; }
-    req.setTimeout(5000, () => req.destroy());
     const requestOrdinal = ++ordinal;
     const requestAt = Date.now();
+    const refuse = (status, reason) => {
+      emit({ event: 'refused', requestOrdinal, requestAt, route, method: req.method, reason, httpStatus: status, forwarded: false });
+      res.writeHead(status); res.end('{}');
+    };
+    const permittedQuery = route === '/v1/bot/register' && url.search === '?force_refresh=true';
+    if ((url.search && !permittedQuery) || (!post && !group) || req.method !== (post ? 'POST' : 'GET')) {
+      refuse(404, 'unsupported-route-method-or-query'); return;
+    }
+    if (!equal(String(req.headers.authorization ?? ''), `Bearer ${options.token}`)) { refuse(401, 'unauthorized'); return; }
+    req.setTimeout(5000, () => req.destroy());
     if (send) emit({ event: 'attempt', requestOrdinal, requestAt, route, transportOutcome: 'unknown' });
     const chunks = []; let size = 0;
     try {
@@ -119,6 +140,7 @@ export async function startCapture(options) {
       }
     } catch {
       if (send) emit({ event: 'outcome', requestOrdinal, transportOutcome: 'unknown', bytesReceived: size, responseAt: Date.now(), forwarded: false });
+      emit({ event: 'refused', requestOrdinal, requestAt, route, method: req.method, reason: 'incomplete-or-oversized-body', forwarded: false });
       res.destroy(); return;
     }
     const raw = Buffer.concat(chunks);
@@ -126,8 +148,11 @@ export async function startCapture(options) {
     try { body = raw.length ? parseOctoJson(raw.toString()) : {}; }
     catch {
       if (send) emit({ event: 'outcome', requestOrdinal, transportOutcome: 'failed', httpStatus: 400, forwarded: false });
-      res.writeHead(400); res.end('{}'); return;
+      refuse(400, 'malformed-body'); return;
     }
+    let groupNo;
+    try { if (group) groupNo = decodeURIComponent(group[1]); }
+    catch { refuse(400, 'malformed-group-target'); return; }
     const target = { channelId: body.channel_id, channelType: body.channel_type };
     const record = { requestOrdinal, requestAt, route, target,
       senderUid, requestBodyHash: hash(raw), clientMsgNo: body.client_msg_no,
@@ -136,15 +161,15 @@ export async function startCapture(options) {
     if (send) emit({ ...record, event: 'request', bytesReceived: size });
     // No send/readback or membership call can accidentally escape the test inventory.
     if ((send || route.endsWith('/messages/sync')) && !options.allowedTargets.some(t => t.channelId === target.channelId && t.channelType === target.channelType) ||
-        group && !options.allowedTargets.some(t => t.channelType === 2 && t.channelId === decodeURIComponent(group[1]))) {
+        group && !options.allowedTargets.some(t => t.channelType === 2 && t.channelId === groupNo)) {
       if (send) emit({ event: 'outcome', requestOrdinal, responseAt: Date.now(), httpStatus: 403, transportOutcome: 'failed', forwarded: false });
-      res.writeHead(403); res.end('{}'); return;
+      refuse(403, 'target-outside-inventory'); return;
     }
     let outcome = 'unknown';
     try {
       const headers = { Authorization: `Bearer ${options.token}`, 'Content-Type': 'application/json' };
       if (options.fixtureOnly && req.headers['x-fixture']) headers['x-fixture'] = String(req.headers['x-fixture']);
-      const response = await fetch(new URL(route, upstream), { method: req.method, headers,
+      const response = await fetch(new URL(route + url.search, upstream), { method: req.method, headers,
         ...(post ? { body: raw } : {}), redirect: 'manual', signal: AbortSignal.timeout(options.timeoutMs ?? 5000) });
       const responseChunks = []; let responseSize = 0;
       for await (const chunk of response.body ?? []) {
@@ -175,6 +200,7 @@ export async function startCapture(options) {
       res.end(text);
     } catch {
       if (send) emit({ event: 'outcome', requestOrdinal, transportOutcome: 'unknown', responseAt: Date.now(), bytesForwarded: size });
+      else emit({ event: 'incomplete', requestOrdinal, requestAt, route, reason: 'upstream-response-failed', forwarded: true });
       res.writeHead(502); res.end('{}');
     }
   }
@@ -191,10 +217,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const manifestFd = Number(process.env.ENV02_MANIFEST_FD);
   const tokenFd = Number(process.env.ENV02_TOKEN_FD);
   const evidenceFd = Number(process.env.ENV02_EVIDENCE_FD);
-  for (const fd of [manifestFd, tokenFd, evidenceFd]) {
-    const st = fstatSync(fd);
-    if (!Number.isInteger(fd) || fd < 3 || !st.isFile() || (st.mode & 0o777) !== 0o600 || st.nlink !== 1 || st.uid !== process.getuid()) throw new Error('Invalid protected descriptor');
-  }
+  validateProtectedDescriptors([manifestFd, tokenFd, evidenceFd]);
   const manifest = JSON.parse(readFileSync(manifestFd, 'utf8'));
   const token = readFileSync(tokenFd, 'utf8').trim();
   const capture = await startCapture({ upstream: manifest.apiUrl, token, allowedTargets: manifest.targets,

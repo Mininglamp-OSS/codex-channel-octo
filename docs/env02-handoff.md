@@ -136,3 +136,13 @@ npm pack --dry-run --json
 ```
 
 Kent and Grace have consumed the baseline handoff; their live-interface prerequisites remain outstanding. PjM: request formal re-review of the amended head and retain ENV-01/SPK-01a/Stage 2 gates. ENV-02 remains blocked on approved live resources and authenticated cursor/high-watermark/retention verification, with its PR draft. No merge/deployment is authorized by the local revision evidence.
+
+## Current review follow-up (main integration)
+
+The branch now incorporates main `ba6eb03` and preserves its default JSONL proxy, safe diagnostics and resume/cancellation safeguards. An explicitly isolated pinned executable remains opt-in. Historical evidence above is unchanged and does not certify this revision.
+
+The capture proxy accepts and forwards only the supported registration query `?force_refresh=true`; rotation coverage calls the package's real `registerBot` API. Rejected routes, methods, queries, credentials, bodies and targets emit a refusal record without forwarding. Query values are omitted from evidence. Unknown registration string fields and nested credentials are retained for redaction until capture ends. The smoke adapter uses the same credential retention and protected-descriptor checks, and records invalid manifest refusal before network activity. Half-set profile configuration and unsupported platforms receive explicit diagnostics.
+
+Local validation: 1269 Vitest tests across 62 files, eight Python isolation cases, typecheck, lint, build, default-config compatibility and npm pack dry run passed. New proxy/smoke regressions produced 14 failures against the previous implementation. Packaging excludes scripts/evidence and includes an executable JSONL proxy. The macOS test fixture resolves the system temporary-directory symlink; runtime symlink rejection is preserved.
+
+These are local synthetic checks. Dedicated live identity/channel inventory and authenticated cursor/high-watermark/retention acceptance remain outstanding. Path-based profile checks still assume protected directories and do not establish a boundary against a malicious process running as the same OS user. Keep the PR draft pending fresh review and live prerequisites.

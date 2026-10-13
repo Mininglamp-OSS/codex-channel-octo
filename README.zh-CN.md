@@ -98,6 +98,18 @@ IM 输入是**不可信**的,权限边界是 **sandbox**,不是 prompt:
 - 安全前缀(防注入)写入每会话沙箱的 `AGENTS.md` 并在 prompt 顶部重申(纵深防御,但仅软约束)。
 - 每 bot 独立 `CODEX_HOME`,IM 内容默认不落入个人 `~/.codex`。
 
+### Unicode JSONL 传输兼容
+
+macOS/Linux 使用可执行代理，在 SDK 的 `readline` 读取之前将 CLI stdout 中的 U+2028/U+2029 转义。这两个字符在 JSON 字符串中合法，但 Node v24.10.0 将其视为行尾，可能拆坏合法事件，引发 `Failed to parse item` 并终止 SDK 子进程。转义不改变解码后的正文；代理保持 UTF-8 分块、stdin/stderr、背压和信号转发，并解析所安装 SDK 对应的 CLI 依赖。Windows 仍直接启动 SDK，此 Unix 方案不宣称解决 Windows 上的问题。
+
+解析错误仅记录脱敏类别，不记录被拒绝的事件正文或子进程 stderr。已知线程最多续接一次，不确定的副作用禁止 fresh 重放；不静默丢弃事件。测试用真实 SDK 和合成 CLI 复现，无模型请求、网络请求或私有笔记读取。
+
+代理缺失、不是普通文件或没有执行权限时，适配器只告警一次并提示 `npm run build`，退回直接 SDK 启动；退回模式不提供 Unicode 修复。`dev` 先构建/复制代理再启动 TypeScript watcher，修改 `.mjs` 后需重新 build；`prepack` 确保打包前构建。CI 验证包内执行权限，并在 Node 22/24.10.0 测试。入口解析失败只输出固定诊断，不泄露路径或 stderr；日志保留内置错误类别及白名单 OS/Node 错误码，不信任任意可改写的 name/code。
+
+启动链增加两个 Node 进程；子进程未结束时仍转发可捕获信号，信号退出前刷新代理 stdout。SIGKILL 无法捕获，孤儿清理仍依赖外部监管。官方 CLI shim 保留自身环境设置，但 SDK 的 bundled PATH 注入被绕过；CLI 内部搜索会自行定位 rg，直接 shell 调用 rg 可能需要系统安装。
+
+SDK override 使用私有可执行 shell 启动器，通过 `exec` 调用当前 Node 的绝对路径，不依赖 PATH 中存在 node；按代理路径缓存，正常进程退出时清理。显式取消后停止转发并独立排空子进程管道，不等待下游消费；1.5 秒后升级 SIGKILL，再设 0.5 秒退出上限。子进程自然信号退出仍刷新排队输出，但消费者已停止的取消路径允许丢弃输出。转换以有效 UTF-8 JSONL 为前提，不保证任意二进制透明传输。relay/router 同样使用脱敏摘要；包括恢复运行在内，SDK 解析错误不能成为失效线程的控制信号。代理恢复可用后再次丢失会重新告警。
+
 ### Docker 专用配置
 
 在专用 Docker 容器中，可使用 [`config.bot.docker.example.json`](./config.bot.docker.example.json) 作为该 bot 的配置，默认选择 `danger-full-access`。已有配置只需在 `sdk` 内设置：
@@ -134,7 +146,7 @@ IM 输入是**不可信**的,权限边界是 **sandbox**,不是 prompt:
 
 ```bash
 npm install
-npm run build       # tsc → dist/
+npm run build       # 编译 TypeScript，并复制/设置 JSONL 代理执行权限
 npm test            # vitest
 npm run lint        # eslint --max-warnings 0
 npm run type-check  # tsc --noEmit

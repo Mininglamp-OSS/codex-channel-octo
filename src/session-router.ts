@@ -8,6 +8,7 @@ import { ChannelType, MessageType } from './octo/types.js';
 import { sendMessage } from './octo/api.js';
 import { isAuthenticCronFire } from './cron-fire-marker.js';
 import { MentionPreferences } from './mention-prefs.js';
+import { summarizeAgentError } from './agent-errors.js';
 import { ConversationMarkdown, type ConversationTurnContext } from './conversation-md.js';
 
 export interface RouteResult {
@@ -221,7 +222,7 @@ export class SessionRouter {
       // internally, so reaching here is unexpected. Swallow to keep the lock
       // release path identical (never let an error wedge the queue).
       console.error(
-        `session-router: handler error (session=${result.sessionKey}): ${String(err)}`,
+        `session-router: handler error (session=${result.sessionKey}): ${summarizeAgentError(err)}`,
       );
     } finally {
       if (timeoutHandle) clearTimeout(timeoutHandle);

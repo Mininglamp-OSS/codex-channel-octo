@@ -16,6 +16,7 @@ import { OctoGateway } from './gateway.js';
 import { SessionRouter } from './session-router.js';
 import { GroupContext } from './group-context.js';
 import { queryAgent, isStreamInterruptError } from './agent-bridge.js';
+import { summarizeAgentError } from './agent-errors.js';
 import { sanitizeDisplayName, escapeSectionMarkers, sanitizePromptBody } from './prompt-safety.js';
 import type { SessionCtx } from './cwd-resolver.js';
 import { cleanupExpiredCwds, resolveSessionCwd } from './cwd-resolver.js';
@@ -59,7 +60,7 @@ function configPathForWatch(): string {
 async function main(): Promise<void> {
   // --- Q8: Global unhandled rejection handler ---
   process.on('unhandledRejection', (reason) => {
-    console.error('[codex-channel-octo] Unhandled rejection:', reason instanceof Error ? reason.message : reason);
+    console.error('[codex-channel-octo] Unhandled rejection:', summarizeAgentError(reason));
   });
 
   // --- Config ---
@@ -250,7 +251,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
         && !isConversationMdEvent(msg.payload.event?.type)) return;
       const p = handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId)
         .catch((err) => {
-          console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, err instanceof Error ? err.message : err);
+          console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, summarizeAgentError(err));
         })
         .finally(() => {
           activeHandlers.delete(p);
@@ -806,12 +807,12 @@ export async function handleMessage(
       }
 
     } catch (err) {
-      console.error(`[codex-channel-octo] Error processing message (session=${result.sessionKey}):`, String(err));
+      console.error(`[codex-channel-octo] Error processing message (session=${result.sessionKey}):`, summarizeAgentError(err));
       // Best-effort error reply. A stream interrupt that even one-shot resume
       // recovery couldn't save gets an informative message (upstream returned
       // an incomplete stream); everything else keeps the generic wording.
       const content = isStreamInterruptError(err)
-        ? '模型服务连接中断（上游返回不完整），已自动重试仍未成功，请稍后重发或换个问法。'
+        ? '模型响应流或本地传输解析失败，自动恢复未成功，请稍后重发。'
         : 'An error occurred while processing your message. Please try again.';
       try {
         await sendMessage({

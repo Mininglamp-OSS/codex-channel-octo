@@ -33,8 +33,9 @@ export function runtimeConfigPath(): string {
   if (!root && !path) return DEFAULT_CONFIG_PATH;
   if (!root || !path || !isAbsolute(root) || root.split(sep).includes('..') ||
       path !== pathJoin(root, 'config', 'config.json')) {
-    throw new Error('Invalid test profile config path');
+    throw new Error('Invalid test profile configuration: set both CODEX_OCTO_TEST_PROFILE_ROOT and CODEX_OCTO_TEST_CONFIG_PATH to the isolated config/config.json path');
   }
+  if (typeof process.getuid !== 'function') throw new Error('Test profiles require a POSIX platform');
   const shared = pathJoin(process.env.CODEX_OCTO_TEST_SHARED_HOME ?? homedir(), '.codex-channel-octo');
   if (root === shared || isPathInside(root, shared) || isPathInside(shared, root)) {
     throw new Error('Test profile overlaps shared configuration');

@@ -45,3 +45,18 @@ it('refuses a missing bot membership before reading the target transcript', asyn
   expect(adapter.readback).not.toHaveBeenCalled();
   expect(records).toContainEqual({ event: 'incomplete', reason: 'registration/connectivity/membership/readback verification failed' });
 });
+
+it('redacts unrecognized and nested registration credentials from readback values', async () => {
+  const records: unknown[] = []; const adapter = transport();
+  adapter.registerBot.mockResolvedValue({ robot_id: 'bot-a', im_token: 'fixture-im-token', ws_url: 'wss://example.com',
+    ticket: 'opaque-ticket', nested: { credential: 'opaque-nested' } } as never);
+  adapter.readback.mockResolvedValue({ complete: true, messages: [{ text: 'opaque-ticket opaque-nested fixture-im-token' }] } as never);
+  await smoke(manifest, 'fixture-secret', (r: unknown) => records.push(r), adapter);
+  expect(JSON.stringify(records)).not.toMatch(/opaque-ticket|opaque-nested|fixture-im-token/);
+});
+it('records invalid attestation without contacting the server or retaining the manifest', async () => {
+  const adapter = transport(); const records: unknown[] = [];
+  await expect(smoke({ ...manifest, emptyTestBot: false }, 'fixture-secret', (r: unknown) => records.push(r), adapter)).rejects.toThrow();
+  expect(records).toEqual([{ event: 'refused', reason: 'invalid-smoke-manifest', forwarded: false }]);
+  expect(adapter.registerBot).not.toHaveBeenCalled();
+});

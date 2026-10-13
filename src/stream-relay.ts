@@ -16,6 +16,7 @@ import {
   sendMessage,
 } from "./octo/api.js";
 import { resolveMentions } from "./mention-utils.js";
+import { summarizeAgentError } from "./agent-errors.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -202,7 +203,7 @@ export class StreamRelay {
         }
       } catch (err) {
         streamError = err;
-        console.error(`[stream-relay] agent stream threw after ${accumulated.length} char(s); flushing partial output: ${String(err)}`);
+        console.error(`[stream-relay] agent stream threw after ${accumulated.length} char(s); flushing partial output: ${summarizeAgentError(err)}`);
       }
       if (truncated) {
         console.warn(`[stream-relay] Response truncated at ${maxResponseChars} chars`);
@@ -269,7 +270,7 @@ export class StreamRelay {
               ...(useMentionAll ? { mentionAll: true } : {}),
             });
           } catch (err) {
-            console.error(`[stream-relay] sendMessage failed for segment (${segment.length} chars), continuing: ${String(err)}`);
+            console.error(`[stream-relay] sendMessage failed for segment (${segment.length} chars), continuing: ${summarizeAgentError(err)}`);
             // Continue sending remaining segments — don't let one failure drop the rest
           }
           segStart = segEnd;

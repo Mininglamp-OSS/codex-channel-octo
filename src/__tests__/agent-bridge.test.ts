@@ -49,6 +49,57 @@ import {
   isStreamInterruptError,
 } from '../agent-bridge.js';
 import type { Config } from '../config.js';
+import { summarizeAgentError } from '../agent-errors.js';
+
+describe('SDK JSONL failure recovery', () => {
+  const failure = () => new Error('Failed to parse item: SYNTHETIC_PRIVATE_OUTPUT', {
+    cause: new SyntaxError('Unterminated string in JSON at position 10'),
+  });
+  it('resumes the same thread once without logging the rejected event', async () => {
+    const logs = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      scriptedRuns = [async function* () { yield started('jsonl-thread'); throw failure(); },
+        async function* () { yield msg('answer', 'recovered'); yield turnDone; }];
+      expect(await collect(queryAgent('request', cfg()))).toEqual(['recovered']);
+      expect(calls[1]).toMatchObject({ kind: 'resume', resumeId: 'jsonl-thread' });
+      expect(JSON.stringify(logs.mock.calls)).not.toContain('SYNTHETIC_PRIVATE_OUTPUT');
+    } finally { logs.mockRestore(); }
+  });
+  it('never fresh-replays an uncertain action when parse-error recovery loses the thread', async () => {
+    scriptedRuns = [async function* () { throw failure(); },
+      async function* () { throw new Error('thread not found'); }];
+    await expect(collect(queryAgent('request', cfg(), undefined, undefined, { resume: 'existing' })))
+      .rejects.toThrow('thread not found');
+    expect(calls).toHaveLength(2);
+    expect(calls.every((call) => call.kind === 'resume')).toBe(true);
+  });
+  it('bounds malformed-event recovery to one attempt', async () => {
+    scriptedRuns = [async function* () { yield started('jsonl-thread'); throw failure(); },
+      async function* () { throw failure(); }];
+    let error: unknown;
+    try { await collect(queryAgent('request', cfg())); } catch (failure) { error = failure; }
+    expect(calls).toHaveLength(2);
+    expect(summarizeAgentError(error)).toBe('Codex SDK JSONL parse failure (incomplete-json)');
+  });
+  it('never classifies a recovery-run rejected payload as a stale thread', async () => {
+    const rejected = new Error('Failed to parse item: {"aggregated_output":"thread not found SYNTHETIC_PRIVATE_OUTPUT"}', {
+      cause: new SyntaxError('Unterminated string'),
+    });
+    scriptedRuns = [async function* () { throw new Error('stream closed before response.completed'); },
+      async function* () { throw rejected; },
+      async function* () { yield msg('replay', 'REPLAYED'); }];
+    const reset = vi.fn();
+    await expect(collect(queryAgent('request', cfg(), undefined, undefined, { resume: 'existing', onResumeFailed: reset })))
+      .rejects.toBe(rejected);
+    expect(calls.map((call) => call.kind)).toEqual(['resume', 'resume']);
+    expect(reset).not.toHaveBeenCalled();
+  });
+  it('does not retry an untracked thread', async () => {
+    scriptedRuns = [async function* () { throw failure(); }];
+    await expect(collect(queryAgent('request', cfg()))).rejects.toThrow('Failed to parse item:');
+    expect(calls).toHaveLength(1);
+  });
+});
 
 function cfg(overrides: Partial<Config['sdk']> = {}): Config {
   return {

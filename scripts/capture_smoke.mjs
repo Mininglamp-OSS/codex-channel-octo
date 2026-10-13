@@ -1,6 +1,6 @@
 /** Sanctioned smoke/readback adapter using the package's existing supported Bot API and WKSocket. */
 import { readFileSync, writeSync, fsyncSync } from 'node:fs';
-import { sanitize } from './capture_proxy.mjs';
+import { sanitize, retainCredentials, validateProtectedDescriptors } from './capture_proxy.mjs';
 
 function validateManifest(manifest, token, isAllowedApiUrl) {
   const identity = value => typeof value === 'string' && value.length > 0 && value.trim() === value;
@@ -31,12 +31,13 @@ export async function smoke(manifest, token, record, adapter) {
     Object.assign({}, ...await Promise.all(['api', 'socket', 'evidence'].map(name => import(`../dist/octo/${name}.js`))),
       await import('../dist/url-policy.js'));
   // Validate every locally checkable designation/target field before registration or WS construction.
-  validateManifest(manifest, token, isAllowedApiUrl);
-  const secretValues = [token];
-  const emit = value => record(sanitize(value, secretValues));
+  const secretValues = new Set([token]);
+  const emit = value => record(sanitize(value, [...secretValues]));
+  try { validateManifest(manifest, token, isAllowedApiUrl); }
+  catch { emit({ event: 'refused', reason: 'invalid-smoke-manifest', forwarded: false }); throw new Error('Invalid smoke manifest'); }
   try {
     const registered = await registerBot({ apiUrl: manifest.apiUrl, botToken: token, signal: AbortSignal.timeout(5000) });
-    secretValues.push(registered.im_token);
+    retainCredentials(registered, secretValues);
     if (registered.robot_id !== manifest.expectedRobotId || !isAllowedWsUrl(registered.ws_url)) throw new Error('Unexpected bot/WS target');
     emit({ event: 'registration', robotId: registered.robot_id, ownerUid: registered.owner_uid, ownerChannelId: registered.owner_channel_id });
     let socket;
@@ -70,7 +71,8 @@ export async function smoke(manifest, token, record, adapter) {
   }
 }
 
-if (process.env.ENV02_MANIFEST_FD && process.argv[1]?.endsWith('/capture_smoke.mjs')) {
+if (process.argv[1]?.endsWith('/capture_smoke.mjs')) {
+  validateProtectedDescriptors([process.env.ENV02_MANIFEST_FD, process.env.ENV02_TOKEN_FD, process.env.ENV02_EVIDENCE_FD].map(Number));
   const manifest = JSON.parse(readFileSync(Number(process.env.ENV02_MANIFEST_FD), 'utf8'));
   const token = readFileSync(Number(process.env.ENV02_TOKEN_FD), 'utf8').trim();
   const fd = Number(process.env.ENV02_EVIDENCE_FD);

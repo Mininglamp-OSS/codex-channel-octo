@@ -156,6 +156,19 @@ const { StreamRelay } = await import("../stream-relay.js");
 
 describe("StreamRelay", () => {
   let relay: StreamRelay;
+  it('redacts SDK rejected records through the real delivery boundary and rethrows', async () => {
+    const failure = new Error('Failed to parse item: SYNTHETIC_PRIVATE_OUTPUT token=synthetic-key', { cause: new SyntaxError('Unterminated string') });
+    const logs = vi.spyOn(console, 'error').mockImplementation(() => {});
+    async function* broken() { yield 'safe partial'; throw failure; }
+    try {
+      const result = relay.deliver(CH_ID, CH_TYPE, broken(), API_URL, BOT_TOKEN);
+      const assertion = expect(result).rejects.toBe(failure);
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(JSON.stringify(logs.mock.calls)).toContain('incomplete-json');
+      expect(JSON.stringify(logs.mock.calls)).not.toMatch(/SYNTHETIC_PRIVATE_OUTPUT|synthetic-key/);
+    } finally { logs.mockRestore(); }
+  });
 
   const CH_ID = "test_channel";
   const CH_TYPE = 2; // Group

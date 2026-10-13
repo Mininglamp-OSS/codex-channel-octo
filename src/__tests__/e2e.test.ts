@@ -741,7 +741,7 @@ describe('E2E smoke tests', () => {
 
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        content: '模型服务连接中断（上游返回不完整），已自动重试仍未成功，请稍后重发或换个问法。',
+        content: '模型响应流或本地传输解析失败，自动恢复未成功，请稍后重发。',
       }),
     );
   });
