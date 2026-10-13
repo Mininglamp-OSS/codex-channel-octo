@@ -9,6 +9,27 @@
 const object = x => x !== null && typeof x === 'object' && !Array.isArray(x);
 const integer = x => Number.isSafeInteger(x) && x >= 0;
 const sources = new Set(['independent-capture-proxy', 'independent-tester-synthetic']);
+const text = x => typeof x === 'string' && x.length > 0;
+const hash = x => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
+const OUTCOMES = new Set(['response', 'prewrite-failure', 'disconnect', 'timeout', 'reset']);
+
+/**
+ * Typed capture record check shared with the oracle: a record that fails it can
+ * neither authorize a retry nor explain a committed delivery. Identity bounds
+ * are 1 <= index <= count; only a `response` carries an HTTP status or message ID.
+ */
+export function validCaptureRecord(c) {
+  if (!object(c) || !object(c.target)) return false;
+  if (![c.fixture, c.run, c.kind, c.occurrence, c.senderUid, c.incarnation, c.clientMsgNo, c.target.channelId].every(text)) return false;
+  if (!integer(c.requestOrdinal) || !integer(c.ordinal) || !integer(c.target.channelType)) return false;
+  if (!integer(c.index) || !integer(c.count) || c.index < 1 || c.index > c.count) return false;
+  if (!hash(c.requestBodyHash) || !(c.serverNormalizedPayloadHash == null || hash(c.serverNormalizedPayloadHash))) return false;
+  if (!OUTCOMES.has(c.transportOutcome)) return false;
+  if (c.transportOutcome === 'response') {
+    return Number.isSafeInteger(c.httpStatus) && c.httpStatus >= 100 && c.httpStatus <= 599 && (c.responseMessageId === null || text(c.responseMessageId));
+  }
+  return c.httpStatus === null && c.responseMessageId === null;
+}
 
 export function reconcileCaptureInventory(trace, ledger) {
   const reasons = [];
@@ -49,8 +70,9 @@ export function reconcileCaptureInventory(trace, ledger) {
   }
   if (total !== ledger.declaredAttemptCount) bad('window total count gap');
   for (const capture of captures) {
-    const required = ['fixture','run','incarnation','requestOrdinal','kind','occurrence','ordinal','index','count','senderUid','target','requestBodyHash','httpStatus','responseMessageId','transportOutcome'];
+    const required = ['fixture','run','incarnation','requestOrdinal','kind','occurrence','ordinal','index','count','senderUid','target','requestBodyHash','clientMsgNo','httpStatus','responseMessageId','transportOutcome'];
     if (!object(capture) || required.some(k => !Object.hasOwn(capture,k))) { bad('incomplete capture record'); continue; }
+    if (!validCaptureRecord(capture)) bad('malformed capture record');
     if (capture.fixture !== ledger.fixture) bad('capture fixture scope mismatch');
     const matches = windows.filter(w => object(w) && capture.run === w.run && capture.incarnation === w.incarnation
       && capture.requestOrdinal >= w.firstOrdinal && capture.requestOrdinal <= w.lastOrdinal);

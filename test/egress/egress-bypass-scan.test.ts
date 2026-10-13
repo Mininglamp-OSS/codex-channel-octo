@@ -163,3 +163,134 @@ describe('egress bypass scan: namespace destructuring (B-2)', () => {
     expect(got).toContain('unauthorized-call:src/cast.ts:sendMessage');
   });
 });
+
+describe('egress bypass scan: namespace origin tracking (B-2 review repair)', () => {
+  type Usage = { file: string; symbol: string; via: string };
+  type Violation = { code: string; file: string; symbol: string; observed?: number; baseline?: number };
+  const scan = (name: string, baseline?: Array<{ file: string; symbol: string; count: number }>) =>
+    scanEgress(fixtureConfig(name, baseline)) as { usages: Usage[]; violations: Violation[] };
+  const keyed = (r: { violations: Violation[] }) => r.violations.map((v) => `${v.code}:${v.file}:${v.symbol}`).sort();
+  const tally = (r: { usages: Usage[] }) => r.usages.reduce<Record<string, number>>((acc, u) => {
+    const k = `${u.file}#${u.symbol}`; acc[k] = (acc[k] ?? 0) + 1; return acc;
+  }, {});
+  // One extraction site per reference; calls through the extracted local are not recounted.
+  const originTally = {
+    'src/assigned-variants.ts#sendMessage': 1,
+    'src/assigned-variants.ts#sendRichTextMessage': 1,
+    'src/assigned-variants.ts#sendTyping': 1,
+    'src/assigned.ts#sendMessage': 1,
+    'src/chain.ts#sendMessage': 1,
+    'src/conditional.ts#sendTyping': 1,
+    'src/constkey-variants.ts#sendRichTextMessage': 1,
+    'src/constkey-variants.ts#sendTyping': 2,
+    'src/constkey.ts#sendMessage': 1,
+    'src/cycle.ts#sendTyping': 1,
+    'src/nested-deep.ts#sendTyping': 1,
+    'src/nested-param.ts#sendTyping': 1,
+    'src/nested.ts#sendMessage': 1,
+    'src/object-spread.ts#sendTyping': 1,
+  };
+  const originBaseline = Object.entries(originTally).map(([k, count]) => {
+    const [file, symbol] = k.split('#');
+    return { file, symbol, count };
+  });
+
+  it('EG-19: nested destructuring of an object holding the namespace keeps its origin', () => {
+    const r = scan('namespace-origin');
+    expect(keyed(r)).toContain('unauthorized-call:src/nested.ts:sendMessage');
+    expect(tally(r)['src/nested.ts#sendMessage']).toBe(1);
+    expect(tally(r)['src/nested-deep.ts#sendTyping']).toBe(1);
+    expect(tally(r)['src/nested-param.ts#sendTyping']).toBe(1);
+  });
+
+  it('EG-20: constant computed keys resolve on the namespace (as const, const aliases, assertions, computed destructuring)', () => {
+    const r = scan('namespace-origin');
+    expect(keyed(r)).toContain('unauthorized-call:src/constkey.ts:sendMessage');
+    expect(tally(r)['src/constkey.ts#sendMessage']).toBe(1);
+    expect(tally(r)['src/constkey-variants.ts#sendTyping']).toBe(2);
+    expect(tally(r)['src/constkey-variants.ts#sendRichTextMessage']).toBe(1);
+    expect(keyed(r).filter((k) => k.startsWith('unresolved-boundary-extraction'))).toEqual([]);
+  });
+
+  it('EG-21: an assigned erased alias keeps its origin through assignments, assertions, spreads, conditionals and cycles', () => {
+    const r = scan('namespace-origin');
+    expect(keyed(r)).toContain('unauthorized-call:src/assigned.ts:sendMessage');
+    expect(tally(r)['src/assigned.ts#sendMessage']).toBe(1);
+    for (const k of ['src/assigned-variants.ts#sendMessage', 'src/assigned-variants.ts#sendRichTextMessage',
+      'src/cycle.ts#sendTyping', 'src/object-spread.ts#sendTyping', 'src/conditional.ts#sendTyping', 'src/chain.ts#sendMessage']) {
+      expect(tally(r)[k], k).toBe(1);
+    }
+  });
+
+  it('EG-22: origin-tracked extraction counts exactly once and baselines exactly', () => {
+    const r = scan('namespace-origin');
+    expect(tally(r)).toEqual(originTally);
+    expect(keyed(r)).toEqual(Object.keys(originTally).map((k) => `unauthorized-call:${k.replace('#', ':')}`).sort());
+    expect(keyed(scan('namespace-origin', originBaseline))).toEqual([]);
+    expect(keyed(scan('namespace-origin', originBaseline.map((b) => (b.file === 'src/nested.ts' ? { ...b, count: 2 } : b)))))
+      .toEqual(['stale-baseline:src/nested.ts:sendMessage']);
+    expect(keyed(scan('namespace-origin', originBaseline.map((b) => (b.file === 'src/constkey-variants.ts' && b.symbol === 'sendTyping' ? { ...b, count: 1 } : b)))))
+      .toEqual(['unauthorized-call:src/constkey-variants.ts:sendTyping']);
+  });
+
+  it('EG-23: unresolved keys and untracked stores of a guarded namespace fail closed', () => {
+    const r = scan('namespace-origin-unresolved');
+    expect(keyed(r)).toEqual([
+      'unresolved-boundary-extraction:src/dynamic-key.ts:[pick]',
+      'unresolved-boundary-extraction:src/erased-dynamic.ts:[pick2]',
+      'unresolved-boundary-extraction:src/erased-dynamic.ts:[pick2]',
+      "unresolved-boundary-extraction:src/escape.ts:Reflect.get(api, 'sendTyping')",
+      'unresolved-boundary-extraction:src/escape.ts:holder.ns = api',
+      'unresolved-boundary-extraction:src/escape2.ts:[api]',
+      'unresolved-boundary-extraction:src/escape2.ts:{ sendTyping: sm } = api',
+      "unresolved-boundary-extraction:src/let-key.ts:[lk as 'registerBot']",
+      // The typed array element still resolves through the checker as one extraction.
+      'unauthorized-call:src/escape2.ts:sendMessage',
+    ].sort());
+    expect(tally(r)).toEqual({ 'src/escape2.ts#sendMessage': 1 });
+  });
+
+  it('EG-24: namespace re-exports are reported and their erased aliases keep origin', () => {
+    expect(keyed(scan('namespace-origin-reexport'))).toEqual([
+      'unauthorized-call:src/consumer-local.ts:sendTyping',
+      'unauthorized-call:src/consumer-ns.ts:sendMessage',
+      'unauthorized-reexport:src/barrel-local.ts:apiNs',
+      'unauthorized-reexport:src/barrel-ns.ts:* as ns',
+    ]);
+  });
+
+  it('EG-25: no false positives — classified helpers/reads, unrelated namespaces, locals and the egress module', () => {
+    const r = scan('namespace-origin-negative');
+    expect(r.violations).toEqual([]);
+    expect(r.usages).toEqual([]);
+  });
+
+  it('EG-26: direct namespace property and literal element access still count once each', () => {
+    expect(tally(scan('namespace'))).toEqual({ 'src/handler.ts#sendMessage': 1, 'src/handler.ts#sendTyping': 1 });
+  });
+
+  it('EG-27: cyclic object spreads terminate and retain reachable boundary properties', () => {
+    const r = scan('namespace-origin-cycle');
+    expect(tally(r)).toEqual({ 'src/handler.ts#sendMessage': 1 });
+    expect(keyed(r)).toEqual(['unauthorized-call:src/handler.ts:sendMessage']);
+  });
+
+  it('EG-28: cyclic unrelated object spreads terminate without boundary violations', () => {
+    const r = scan('namespace-origin-cycle-negative');
+    expect(r.usages).toEqual([]);
+    expect(r.violations).toEqual([]);
+  });
+
+  it('EG-29: a namespace exported through an erased local preserves its boundary origin', () => {
+    expect(keyed(scan('namespace-origin-erased-export'))).toEqual([
+      'unauthorized-call:src/consumer.ts:sendMessage',
+      'unauthorized-reexport:src/barrel.ts:alias',
+    ]);
+  });
+
+  it('EG-30: shorthand object properties retain an erased namespace origin', () => {
+    const r = scan('namespace-origin-shorthand');
+    expect(tally(r)).toEqual({ 'src/handler.ts#sendMessage': 1 });
+    expect(keyed(r)).toEqual(['unauthorized-call:src/handler.ts:sendMessage']);
+  });
+});

@@ -71,6 +71,109 @@ A suppressed/no-delivery scenario may then pass; a stored delivery without a
 capture still fails reconciliation. Incomplete evidence never hides a known
 duplicate/retry violation. Fully accounted ambiguity remains `unknown`.
 
+## Follow-up review repair of B-2 and B-3
+
+A follow-up review of the repairs above at
+`f356c847eb549006ba1d82230f92953be7864caa` found six counterexamples. Each
+now has a regression that failed with an assertion against the unchanged
+verifiers. B-1 code and tests, the eight ORACLE fixtures and
+`capture-ledgers-v1.json` are unchanged. No production `src/` file changed.
+Where this section is stricter than the sections above, it states the
+current semantics.
+
+### Namespace origin tracking (EG-19 to EG-30)
+
+The scan now tracks abstract origins (a checker type, an object literal or a
+boundary primitive) instead of only the declared type of a destructured
+initializer. Origins flow through these forms:
+
+- parentheses, `as`, `satisfies`, `<T>` assertions, `!` and `await`;
+- conditional, `??`, `||`, `&&` and comma expressions;
+- identifier initializers;
+- identifier assignments, including `=`, `??=`, `||=` and `&&=`, collected
+  across the program;
+- import aliases;
+- object literal properties, shorthand properties and spreads;
+- nested object binding patterns;
+- property access and element access.
+
+Typed parameters and direct initializer casts resolve as before. Assignment
+cycles terminate: a node already on the resolution stack contributes nothing,
+and only results computed without such a cut are memoized. Property lookup
+also tracks the object-spread path, retaining other reachable properties when
+a spread revisits an object. EG-27/28 cover guarded and unrelated spread cycles.
+EG-30 resolves the value symbol of a shorthand property, so an erased alias
+retains its origin when placed in a shorthand object and destructured later.
+
+Property keys resolve only from syntactic constants: string, numeric and
+no-substitution template literals, assertions over them and initialized
+`const` bindings. An asserted literal type is never trusted as a key. On a
+guarded namespace, an unresolved element-access key, computed binding key or
+rest binding fails closed as `unresolved-boundary-extraction`. A guarded
+namespace that leaves the tracked graph also fails closed. That covers a
+call or `new` argument, array element, return, throw, yield, arrow body,
+default export, spread, or assignment to a non-identifier target, including
+destructuring assignment.
+
+`export * as ns from` the boundary and a local `export { api as alias }` of a
+boundary namespace, including an erased local alias (EG-29), are
+`unauthorized-reexport`. Each extraction is counted
+once: a binding element, a `namespace.export` access, a constant-key element
+access, or a direct identifier reference. Later calls through the extracted
+local are not recounted. Classified helpers and reads, unrelated namespaces,
+local objects and the egress module stay clean. The ten production baseline
+references are unchanged.
+
+### Marker identity, explaining outcomes and retry authorization (B3-09 to B3-14)
+
+A stored `fixtureMarker` maps to an expected identity only if three
+conditions hold. Its fixture must match. Its bounds must satisfy
+`1 <= index <= count`. Its full parsed identity, including the segment count,
+must equal the expected identity. Otherwise it is `unexpected-delivery`. The
+same check selects the identity in capture reconciliation.
+
+`validCaptureRecord` (`test/oracle/capture-inventory.mjs`) requires these
+typed fields:
+
+- nonempty string `fixture`, `run`, `kind`, `occurrence`, `senderUid`,
+  `incarnation`, `clientMsgNo` and `target.channelId`;
+- integer `requestOrdinal`, `ordinal` and `target.channelType`;
+- integer `index` and `count` with `1 <= index <= count`;
+- a 64-character lowercase hex `requestBodyHash`;
+- a null or valid `serverNormalizedPayloadHash`;
+- a known `transportOutcome` (`response`, `prewrite-failure`, `disconnect`,
+  `timeout` or `reset`).
+
+Only a `response` carries an integer HTTP status from 100 to 599 and a
+nullable nonempty message ID. Other outcomes must have null status and ID.
+`clientMsgNo` is now a required capture field. A malformed record makes the
+capture inventory incomplete.
+
+A committed delivery can be explained only by a valid matching capture whose
+outcome may have committed:
+
+- a 2xx `response`;
+- a documented ambiguity: `timeout`, `disconnect`, `reset` or a 5xx response.
+
+1xx, 3xx and 4xx responses (including 403 and 429), pre-write failures and
+malformed records cannot explain a delivery, so it is `uncaptured-delivery`.
+A nonnull response message ID must equal the read-back message ID. Ambiguity
+keeps its documented verdicts. ORACLE-04 stays `unknown` and ORACLE-05 still
+fails retry-after-ambiguity.
+
+Before two attempts are compared as a retry, both must be valid records.
+Otherwise the pair is `unverifiable-retry`, a failing violation. A missing,
+null, empty or malformed retry key, body hash, incarnation, outcome or status
+therefore never permits a retry. Deleting both `clientMsgNo` fields from
+ORACLE-06 now fails instead of passing. Valid controls still pass with one
+permitted retry: the original 429 retry, matching normalized hashes and a
+pre-write failure retry. Tests evaluate altered captures against the
+unchanged sealed ledger and assert that the ledger was not rewritten.
+
+Pre-commit evidence for this follow-up is in `artifacts/b23-precommit/red`
+and `artifacts/b23-precommit/green`. That directory is git-ignored. Clean-head
+gate, mutation and binary runs are left to the integrating executor.
+
 ## Evidence qualifications and integration
 
 Original mutation M07 may be killed by ENOENT when the injected wrong nonce
