@@ -1,0 +1,451 @@
+{
+  "source": "Independent tester-declared synthetic proxy windows; no live collection or authenticity attestation is claimed.",
+  "fixtures": {
+    "ORACLE-01": {
+      "trace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx01",
+        "sealed": true,
+        "declaredAttemptCount": 3,
+        "declaredPageCount": 1,
+        "firstCursor": "fx01:trace:0",
+        "windows": [
+          {
+            "run": "run1",
+            "incarnation": "inc-1",
+            "firstOrdinal": 1,
+            "lastOrdinal": 3,
+            "attemptCount": 3
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx01:trace:0",
+            "next": null,
+            "requestOrdinals": [
+              1,
+              2,
+              3
+            ]
+          }
+        ]
+      }
+    },
+    "ORACLE-02": {
+      "trace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx02",
+        "sealed": true,
+        "declaredAttemptCount": 3,
+        "declaredPageCount": 1,
+        "firstCursor": "fx02:trace:0",
+        "windows": [
+          {
+            "run": "run2",
+            "incarnation": "inc-1",
+            "firstOrdinal": 4,
+            "lastOrdinal": 6,
+            "attemptCount": 3
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx02:trace:0",
+            "next": null,
+            "requestOrdinals": [
+              4,
+              5,
+              6
+            ]
+          }
+        ]
+      },
+      "controlTrace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx02",
+        "sealed": true,
+        "declaredAttemptCount": 3,
+        "declaredPageCount": 1,
+        "firstCursor": "fx02:controlTrace:0",
+        "windows": [
+          {
+            "run": "run2",
+            "incarnation": "inc-1",
+            "firstOrdinal": 4,
+            "lastOrdinal": 6,
+            "attemptCount": 3
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx02:controlTrace:0",
+            "next": null,
+            "requestOrdinals": [
+              4,
+              5,
+              6
+            ]
+          }
+        ]
+      }
+    },
+    "ORACLE-03": {
+      "trace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx03",
+        "sealed": true,
+        "declaredAttemptCount": 2,
+        "declaredPageCount": 1,
+        "firstCursor": "fx03:trace:0",
+        "windows": [
+          {
+            "run": "run3",
+            "incarnation": "inc-1",
+            "firstOrdinal": 7,
+            "lastOrdinal": 8,
+            "attemptCount": 2
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx03:trace:0",
+            "next": null,
+            "requestOrdinals": [
+              7,
+              8
+            ]
+          }
+        ]
+      },
+      "controlTrace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx03",
+        "sealed": true,
+        "declaredAttemptCount": 2,
+        "declaredPageCount": 1,
+        "firstCursor": "fx03:controlTrace:0",
+        "windows": [
+          {
+            "run": "run3",
+            "incarnation": "inc-1",
+            "firstOrdinal": 7,
+            "lastOrdinal": 8,
+            "attemptCount": 2
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx03:controlTrace:0",
+            "next": null,
+            "requestOrdinals": [
+              7,
+              8
+            ]
+          }
+        ]
+      }
+    },
+    "ORACLE-04": {
+      "trace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx04",
+        "sealed": true,
+        "declaredAttemptCount": 2,
+        "declaredPageCount": 1,
+        "firstCursor": "fx04:trace:0",
+        "windows": [
+          {
+            "run": "run4",
+            "incarnation": "inc-1",
+            "firstOrdinal": 9,
+            "lastOrdinal": 10,
+            "attemptCount": 2
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx04:trace:0",
+            "next": null,
+            "requestOrdinals": [
+              9,
+              10
+            ]
+          }
+        ]
+      },
+      "observed-once": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx04",
+        "sealed": true,
+        "declaredAttemptCount": 2,
+        "declaredPageCount": 1,
+        "firstCursor": "fx04:observed-once:0",
+        "windows": [
+          {
+            "run": "run4",
+            "incarnation": "inc-1",
+            "firstOrdinal": 9,
+            "lastOrdinal": 10,
+            "attemptCount": 2
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx04:observed-once:0",
+            "next": null,
+            "requestOrdinals": [
+              9,
+              10
+            ]
+          }
+        ]
+      },
+      "observed-twice": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx04",
+        "sealed": true,
+        "declaredAttemptCount": 2,
+        "declaredPageCount": 1,
+        "firstCursor": "fx04:observed-twice:0",
+        "windows": [
+          {
+            "run": "run4",
+            "incarnation": "inc-1",
+            "firstOrdinal": 9,
+            "lastOrdinal": 10,
+            "attemptCount": 2
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx04:observed-twice:0",
+            "next": null,
+            "requestOrdinals": [
+              9,
+              10
+            ]
+          }
+        ]
+      }
+    },
+    "ORACLE-05": {
+      "trace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx05",
+        "sealed": true,
+        "declaredAttemptCount": 2,
+        "declaredPageCount": 1,
+        "firstCursor": "fx05:trace:0",
+        "windows": [
+          {
+            "run": "run5",
+            "incarnation": "inc-1",
+            "firstOrdinal": 11,
+            "lastOrdinal": 11,
+            "attemptCount": 1
+          },
+          {
+            "run": "run5",
+            "incarnation": "inc-2",
+            "firstOrdinal": 12,
+            "lastOrdinal": 12,
+            "attemptCount": 1
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx05:trace:0",
+            "next": null,
+            "requestOrdinals": [
+              11,
+              12
+            ]
+          }
+        ]
+      },
+      "controlTrace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx05",
+        "sealed": true,
+        "declaredAttemptCount": 1,
+        "declaredPageCount": 1,
+        "firstCursor": "fx05:controlTrace:0",
+        "windows": [
+          {
+            "run": "run5",
+            "incarnation": "inc-1",
+            "firstOrdinal": 13,
+            "lastOrdinal": 13,
+            "attemptCount": 1
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx05:controlTrace:0",
+            "next": null,
+            "requestOrdinals": [
+              13
+            ]
+          }
+        ]
+      }
+    },
+    "ORACLE-06": {
+      "trace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx06",
+        "sealed": true,
+        "declaredAttemptCount": 2,
+        "declaredPageCount": 1,
+        "firstCursor": "fx06:trace:0",
+        "windows": [
+          {
+            "run": "run6",
+            "incarnation": "inc-1",
+            "firstOrdinal": 14,
+            "lastOrdinal": 15,
+            "attemptCount": 2
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx06:trace:0",
+            "next": null,
+            "requestOrdinals": [
+              14,
+              15
+            ]
+          }
+        ]
+      }
+    },
+    "ORACLE-07": {
+      "trace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx07",
+        "sealed": true,
+        "declaredAttemptCount": 2,
+        "declaredPageCount": 1,
+        "firstCursor": "fx07:trace:0",
+        "windows": [
+          {
+            "run": "run7",
+            "incarnation": "inc-1",
+            "firstOrdinal": 17,
+            "lastOrdinal": 18,
+            "attemptCount": 2
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx07:trace:0",
+            "next": null,
+            "requestOrdinals": [
+              17,
+              18
+            ]
+          }
+        ]
+      },
+      "controlTrace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx07",
+        "sealed": true,
+        "declaredAttemptCount": 1,
+        "declaredPageCount": 1,
+        "firstCursor": "fx07:controlTrace:0",
+        "windows": [
+          {
+            "run": "run7",
+            "incarnation": "inc-1",
+            "firstOrdinal": 16,
+            "lastOrdinal": 16,
+            "attemptCount": 1
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx07:controlTrace:0",
+            "next": null,
+            "requestOrdinals": [
+              16
+            ]
+          }
+        ]
+      }
+    },
+    "ORACLE-08": {
+      "trace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx08",
+        "sealed": true,
+        "declaredAttemptCount": 3,
+        "declaredPageCount": 1,
+        "firstCursor": "fx08:trace:0",
+        "windows": [
+          {
+            "run": "run8",
+            "incarnation": "inc-1",
+            "firstOrdinal": 19,
+            "lastOrdinal": 21,
+            "attemptCount": 3
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx08:trace:0",
+            "next": null,
+            "requestOrdinals": [
+              19,
+              20,
+              21
+            ]
+          }
+        ]
+      },
+      "controlTrace": {
+        "version": "capture-inventory-v1",
+        "source": "independent-tester-synthetic",
+        "fixture": "fx08",
+        "sealed": true,
+        "declaredAttemptCount": 3,
+        "declaredPageCount": 1,
+        "firstCursor": "fx08:controlTrace:0",
+        "windows": [
+          {
+            "run": "run8",
+            "incarnation": "inc-1",
+            "firstOrdinal": 19,
+            "lastOrdinal": 21,
+            "attemptCount": 3
+          }
+        ],
+        "pages": [
+          {
+            "cursor": "fx08:controlTrace:0",
+            "next": null,
+            "requestOrdinals": [
+              19,
+              20,
+              21
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

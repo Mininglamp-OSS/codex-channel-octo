@@ -6,9 +6,12 @@
  * messages from complete paginated channel read-back. Host receipts are ignored
  * for selection (they may be reconciled afterwards, never trusted).
  *
- *   evaluateDelivery({ fixture, expected, captures, inventory }) → report
+ *   evaluateDelivery({ fixture, expected, captures, inventory }, captureInventory) → report
+ * The separate inventory is sealed by the independent collector, never inferred
+ * from captures. Missing or inconsistent collection evidence cannot pass.
  */
 import { createHash } from 'node:crypto';
+import { reconcileCaptureInventory } from './capture-inventory.mjs';
 
 const MARKER_RE = /^\[DLY f=(\S+) o=(\S+) r=(\S+) k=(\S+) m=(\d{6}) s=(\d{6})\/(\d{6})\]/;
 const AMBIGUOUS = new Set(['disconnect', 'timeout', 'reset']);
@@ -28,7 +31,7 @@ export const sha256 = (s) => createHash('sha256').update(String(s), 'utf8').dige
 const identityKey = (i) => [i.fixture, i.occurrence, i.run, i.kind, i.ordinal, i.index].join('|');
 const sameTarget = (a, b) => a && b && a.channelId === b.channelId && a.channelType === b.channelType;
 
-export function evaluateDelivery(trace) {
+export function evaluateDelivery(trace, captureInventory) {
   const violations = [];
   const counts = {
     permittedNetworkRetries: 0, duplicateLogicalAttempts: 0, duplicateCommittedIdentities: 0,
@@ -36,6 +39,7 @@ export function evaluateDelivery(trace) {
   };
   const v = (code, detail) => violations.push({ code, ...detail });
   const expected = new Map(trace.expected.map((e) => [identityKey({ fixture: trace.fixture, ...e.identity }), e]));
+  const captureCompleteness = reconcileCaptureInventory(trace, captureInventory);
 
   // 1. Inventory completeness: unbroken cursor chain, declared page count, no overlap.
   const inv = trace.inventory;
@@ -78,6 +82,24 @@ export function evaluateDelivery(trace) {
     if (!attempts.has(k)) attempts.set(k, []);
     attempts.get(k).push(c);
   }
+  // A complete read-back is not a complete attempt log. Independently sealed
+  // counts/cursors/windows must reconcile, and stored deliveries need matching
+  // capture identity, sender, target, segment count and payload evidence.
+  const matches = (c, e) => sameTarget(c.target, e.target) && c.senderUid === e.senderUid
+    && c.count === e.identity.count && (c.serverNormalizedPayloadHash ?? c.requestBodyHash) === sha256(e.body);
+  for (const [key, list] of attempts) for (const c of list) {
+    if (!matches(c, expected.get(key))) v('attempt-mismatch', { requestOrdinal: c.requestOrdinal });
+  }
+  for (const r of records) {
+    const marker = parseMarker(r.fixtureMarker);
+    const key = marker && identityKey(marker);
+    const e = expected.get(key);
+    if (!e || !sameTarget(e.target, r) || e.senderUid !== r.senderUid || sha256(e.body) !== r.payloadHash) continue;
+    const captured = (attempts.get(key) ?? []).some(c => matches(c, e)
+      && c.transportOutcome !== 'prewrite-failure' && c.httpStatus !== 429
+      && (c.responseMessageId == null || c.responseMessageId === r.messageId));
+    if (!captured) v('uncaptured-delivery', { identity: key, messageId: r.messageId });
+  }
   for (const [k, list] of attempts) {
     const e = expected.get(k);
     if (e.outcome === 'suppressed') { v('unexpected-attempt', { identity: k }); continue; }
@@ -98,7 +120,8 @@ export function evaluateDelivery(trace) {
   }
 
   if (!complete) violations.push({ code: 'incomplete-inventory' });
-  const failing = violations.filter((x) => x.code !== 'incomplete-inventory');
-  const verdict = failing.length > 0 ? 'fail' : !complete ? 'pending' : counts.unresolvedUnknowns > 0 ? 'unknown' : 'pass';
-  return { verdict, violations, counts };
+  if (!captureCompleteness.complete) violations.push({ code: 'incomplete-capture-inventory', reasons: captureCompleteness.reasons });
+  const failing = violations.filter(x => x.code !== 'incomplete-inventory' && x.code !== 'incomplete-capture-inventory');
+  const verdict = failing.length > 0 ? 'fail' : !complete || !captureCompleteness.complete ? 'pending' : counts.unresolvedUnknowns > 0 ? 'unknown' : 'pass';
+  return { verdict, violations, counts, captureCompleteness };
 }

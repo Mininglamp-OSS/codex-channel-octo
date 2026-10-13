@@ -98,3 +98,68 @@ describe('egress bypass scan: negative controls', () => {
     expect(codes('infra')).toEqual([]);
   });
 });
+
+describe('egress bypass scan: namespace destructuring (B-2)', () => {
+  type Usage = { file: string; symbol: string; via: string };
+  type Violation = { code: string; file: string; symbol: string; observed?: number; baseline?: number };
+  const scan = (name: string, baseline?: Array<{ file: string; symbol: string; count: number }>) =>
+    scanEgress(fixtureConfig(name, baseline)) as { usages: Usage[]; violations: Violation[] };
+  const keyed = (r: { violations: Violation[] }) => r.violations.map((v) => `${v.code}:${v.file}:${v.symbol}`).sort();
+  const tally = (r: { usages: Usage[] }) => r.usages.reduce<Record<string, number>>((acc, u) => {
+    const k = `${u.file}#${u.symbol}`; acc[k] = (acc[k] ?? 0) + 1; return acc;
+  }, {});
+
+  it('EG-13: same-name shorthand destructuring of the boundary namespace keeps its origin (variable and parameter patterns)', () => {
+    const r = scan('namespace-shorthand');
+    expect(keyed(r)).toEqual([
+      'unauthorized-call:src/handler.ts:sendMessage',
+      'unauthorized-call:src/mixed.ts:sendRichTextMessage',
+      'unauthorized-call:src/param.ts:sendTyping',
+    ]);
+    // One extraction site per binding, exactly like renamed destructuring and `const f = api.f`:
+    // the declaration identifier is counted once, later calls through the local are not recounted.
+    expect(tally(r)).toEqual({ 'src/handler.ts#sendMessage': 1, 'src/mixed.ts#sendRichTextMessage': 1, 'src/param.ts#sendTyping': 1 });
+  });
+
+  it('EG-14: shorthand and renamed destructuring account identically', () => {
+    const renamed = scan('namespace-renamed');
+    expect(keyed(renamed)).toEqual(['unauthorized-call:src/handler.ts:sendMessage']);
+    expect(tally(renamed)).toEqual({ 'src/handler.ts#sendMessage': 1 });
+    expect(tally(scan('namespace-shorthand'))['src/handler.ts#sendMessage']).toBe(tally(renamed)['src/handler.ts#sendMessage']);
+  });
+
+  it('EG-15: shorthand destructuring baselines exactly — matching count passes, an over-stated count is stale', () => {
+    const base = [
+      { file: 'src/handler.ts', symbol: 'sendMessage', count: 1 },
+      { file: 'src/mixed.ts', symbol: 'sendRichTextMessage', count: 1 },
+      { file: 'src/param.ts', symbol: 'sendTyping', count: 1 },
+    ];
+    expect(keyed(scan('namespace-shorthand', base))).toEqual([]);
+    expect(keyed(scan('namespace-shorthand', base.map((b) => (b.file === 'src/handler.ts' ? { ...b, count: 2 } : b)))))
+      .toEqual(['stale-baseline:src/handler.ts:sendMessage']);
+    expect(keyed(scan('namespace-renamed', [{ file: 'src/handler.ts', symbol: 'sendMessage', count: 1 }]))).toEqual([]);
+  });
+
+  it('EG-16: shorthand destructuring of a re-exporting namespace resolves through one- and two-hop alias chains', () => {
+    expect(keyed(scan('namespace-chain'))).toEqual([
+      'unauthorized-call:src/consumer.ts:sendMessage',
+      'unauthorized-call:src/consumer2.ts:sendMessage',
+      'unauthorized-reexport:src/barrel.ts:sendMessage',
+      'unauthorized-reexport:src/barrel2.ts:sendMessage',
+    ]);
+  });
+
+  it('EG-17: no false positives — egress module, classified infrastructure/reads, unrelated namespaces and same-named locals', () => {
+    const r = scan('namespace-negative');
+    expect(r.violations).toEqual([]);
+    expect(r.usages).toEqual([]);
+  });
+
+  it('EG-18: rest and non-literal computed extraction from the boundary namespace fail closed; literal computed keys resolve', () => {
+    const got = keyed(scan('namespace-unresolved'));
+    expect(got).toContain('unresolved-boundary-extraction:src/rest.ts:...rest');
+    expect(got).toContain('unresolved-boundary-extraction:src/computed.ts:[key]');
+    expect(got).toContain('unauthorized-call:src/computed.ts:sendTyping');
+    expect(got).toContain('unauthorized-call:src/cast.ts:sendMessage');
+  });
+});
