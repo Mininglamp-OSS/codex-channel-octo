@@ -63,7 +63,11 @@ describe('CI provenance', () => {
     const checkouts = steps.filter(({ s }) => String(s.uses ?? '').startsWith('actions/checkout@'));
     const candidate = checkouts.filter(({ s }) => !s.with?.repository);
     expect(candidate.length).toBe(Object.keys(wf.jobs).length);
-    for (const { job, s } of candidate) expect(s.with?.ref, job).toBe(HEAD_REF);
+    for (const { job, s } of candidate) {
+      expect(s.with?.ref, job).toBe(HEAD_REF);
+      // Default unit tests archive the pinned parent and compare src against it.
+      expect(s.with?.['fetch-depth'], `${job}: pinned parent must be available`).toBe(0);
+    }
     const pinned = Object.fromEntries(checkouts.filter(({ s }) => s.with?.repository).map(({ s }) => [s.with!.repository, s.with!.ref]));
     expect(pinned).toEqual({ 'Mininglamp-OSS/openclaw-channel-octo': pins.B, 'openclaw/openclaw': pins.OC });
   });
