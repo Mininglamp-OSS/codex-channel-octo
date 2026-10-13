@@ -1,0 +1,390 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="goldens">
+  <testsuite name="goldens" tests="24" failures="0" skipped="1">
+    <testcase classname="test/goldens/b-wire.golden.test.ts" name="B golden provenance &gt; GB-00: golden bytes match the committed sha256 and the pinned B source" time="0.001">
+    <properties>
+      <property name="caseId" value="GB-00"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="B golden provenance &gt; GB-00: golden bytes match the committed sha256 and the pinned B source"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.943Z"/>
+      <property name="end" value="2026-10-13T14:10:26.944Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/b-wire.golden.test.ts" name="T1/T2/T3: A Encoder/Decoder vs B &gt; GB-01: A Encoder produces the B bytes for every primitive vector (incl. CJK, emoji, empty, int64)" time="0.000">
+    <properties>
+      <property name="caseId" value="GB-01"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="T1/T2/T3: A Encoder/Decoder vs B &gt; GB-01: A Encoder produces the B bytes for every primitive vector (incl. CJK, emoji, empty, int64)"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.945Z"/>
+      <property name="end" value="2026-10-13T14:10:26.945Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/b-wire.golden.test.ts" name="T1/T2/T3: A Encoder/Decoder vs B &gt; GB-02: A Decoder reads back the encoded primitives" time="0.000">
+    <properties>
+      <property name="caseId" value="GB-02"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="T1/T2/T3: A Encoder/Decoder vs B &gt; GB-02: A Decoder reads back the encoded primitives"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.945Z"/>
+      <property name="end" value="2026-10-13T14:10:26.945Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/b-wire.golden.test.ts" name="T1/T2/T3: A Encoder/Decoder vs B &gt; GB-03 (BX-2): B silently over-reads truncated input; A raises a typed bounds error instead" time="0.000">
+    <properties>
+      <property name="caseId" value="GB-03"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="T1/T2/T3: A Encoder/Decoder vs B &gt; GB-03 (BX-2): B silently over-reads truncated input; A raises a typed bounds error instead"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.945Z"/>
+      <property name="end" value="2026-10-13T14:10:26.945Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/b-wire.golden.test.ts" name="P1 handshake and AES vs B (production WKSocket through the fake server) &gt; GB-04 (T1/T3/T5): A CONNECT equals the B CONNECT frame byte-for-byte for identical inputs" time="0.028">
+    <properties>
+      <property name="caseId" value="GB-04"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="P1 handshake and AES vs B (production WKSocket through the fake server) &gt; GB-04 (T1/T3/T5): A CONNECT equals the B CONNECT frame byte-for-byte for identical inputs"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.946Z"/>
+      <property name="end" value="2026-10-13T14:10:26.974Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/b-wire.golden.test.ts" name="P1 handshake and AES vs B (production WKSocket through the fake server) &gt; GB-05 (T6): the B AES key/IV/ciphertext vectors satisfy the P1 derivation independently" time="0.003">
+    <properties>
+      <property name="caseId" value="GB-05"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="P1 handshake and AES vs B (production WKSocket through the fake server) &gt; GB-05 (T6): the B AES key/IV/ciphertext vectors satisfy the P1 derivation independently"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.974Z"/>
+      <property name="end" value="2026-10-13T14:10:26.977Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/b-wire.golden.test.ts" name="P1 handshake and AES vs B (production WKSocket through the fake server) &gt; GB-06 (T9/T10/BX-1): A decodes every B RECV vector to the B message and ACKs with the B RECVACK bytes only after decrypt" time="0.176">
+    <properties>
+      <property name="caseId" value="GB-06"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="P1 handshake and AES vs B (production WKSocket through the fake server) &gt; GB-06 (T9/T10/BX-1): A decodes every B RECV vector to the B message and ACKs with the B RECVACK bytes only after decrypt"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.978Z"/>
+      <property name="end" value="2026-10-13T14:10:27.154Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/b-wire.golden.test.ts" name="P1 handshake and AES vs B (production WKSocket through the fake server) &gt; GB-07: the fake codec reproduces the B-verified CONNACK/RECV frames and parses the B RECVACK" time="0.001">
+    <properties>
+      <property name="caseId" value="GB-07"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="P1 handshake and AES vs B (production WKSocket through the fake server) &gt; GB-07: the fake codec reproduces the B-verified CONNACK/RECV frames and parses the B RECVACK"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:27.155Z"/>
+      <property name="end" value="2026-10-13T14:10:27.156Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="OC schedule golden provenance &gt; GOC-00: golden bytes match the committed sha256, pinned OC source and croner 10.0.1" time="0.001">
+    <properties>
+      <property name="caseId" value="GOC-00"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="OC schedule golden provenance &gt; GOC-00: golden bytes match the committed sha256, pinned OC source and croner 10.0.1"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.907Z"/>
+      <property name="end" value="2026-10-13T14:10:26.908Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'lord-howe-repeated-half-hour'" time="0.000">
+    <properties>
+      <property name="caseId" value="test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'lord-howe-repeated-half-hour'"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'lord-howe-repeated-half-hour'"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.908Z"/>
+      <property name="end" value="2026-10-13T14:10:26.908Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'ny-last-valid-second-before-gap'" time="0.000">
+    <properties>
+      <property name="caseId" value="test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'ny-last-valid-second-before-gap'"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'ny-last-valid-second-before-gap'"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.909Z"/>
+      <property name="end" value="2026-10-13T14:10:26.909Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'oslo-skips-nonexistent-reminder'" time="0.000">
+    <properties>
+      <property name="caseId" value="test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'oslo-skips-nonexistent-reminder'"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'oslo-skips-nonexistent-reminder'"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.909Z"/>
+      <property name="end" value="2026-10-13T14:10:26.909Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'ny-sun2-future-nonexistent'" time="0.000">
+    <properties>
+      <property name="caseId" value="test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'ny-sun2-future-nonexistent'"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'ny-sun2-future-nonexistent'"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.909Z"/>
+      <property name="end" value="2026-10-13T14:10:26.909Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'year-limited-nonexistent'" time="0.000">
+    <properties>
+      <property name="caseId" value="test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'year-limited-nonexistent'"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'year-limited-nonexistent'"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.909Z"/>
+      <property name="end" value="2026-10-13T14:10:26.909Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'year-limited-repeated-hour'" time="0.000">
+    <properties>
+      <property name="caseId" value="test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'year-limited-repeated-hour'"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'year-limited-repeated-hour'"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.909Z"/>
+      <property name="end" value="2026-10-13T14:10:26.909Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'retry-rejects-real-gap-a'" time="0.000">
+    <properties>
+      <property name="caseId" value="test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'retry-rejects-real-gap-a'"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'retry-rejects-real-gap-a'"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.909Z"/>
+      <property name="end" value="2026-10-13T14:10:26.909Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'retry-rejects-real-gap-b'" time="0.000">
+    <properties>
+      <property name="caseId" value="test/goldens/oc-schedule.golden.test.ts#CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'retry-rejects-real-gap-b'"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="CR-2.3 DST contract: generated values equal the R8 §3.4.6 verbatim table &gt; GOC-01 'retry-rejects-real-gap-b'"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.909Z"/>
+      <property name="end" value="2026-10-13T14:10:26.909Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="SF-4 fixed-instant DST cases (generated, never hand-computed) &gt; GOC-02: London, New York and Shanghai cron cases plus an every-schedule are all present" time="0.000">
+    <properties>
+      <property name="caseId" value="GOC-02"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="SF-4 fixed-instant DST cases (generated, never hand-computed) &gt; GOC-02: London, New York and Shanghai cron cases plus an every-schedule are all present"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.909Z"/>
+      <property name="end" value="2026-10-13T14:10:26.909Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="SF-4 fixed-instant DST cases (generated, never hand-computed) &gt; GOC-03: every generated cron instant lands on the expression wall time (gap skipped, never the transition instant)" time="0.010">
+    <properties>
+      <property name="caseId" value="GOC-03"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="SF-4 fixed-instant DST cases (generated, never hand-computed) &gt; GOC-03: every generated cron instant lands on the expression wall time (gap skipped, never the transition instant)"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.910Z"/>
+      <property name="end" value="2026-10-13T14:10:26.920Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="SF-4 fixed-instant DST cases (generated, never hand-computed) &gt; GOC-04: every schedules are pure UTC arithmetic across a DST transition" time="0.000">
+    <properties>
+      <property name="caseId" value="GOC-04"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="SF-4 fixed-instant DST cases (generated, never hand-computed) &gt; GOC-04: every schedules are pure UTC arithmetic across a DST transition"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.920Z"/>
+      <property name="end" value="2026-10-13T14:10:26.920Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.6 effective stagger (R8 §3.4.8) &gt; GOC-05 (STAG arithmetic): j7f3k2q/300000 → 253353 via uint32BE of the first four digest bytes, not the whole digest" time="0.000">
+    <properties>
+      <property name="caseId" value="GOC-05"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="CR-2.6 effective stagger (R8 §3.4.8) &gt; GOC-05 (STAG arithmetic): j7f3k2q/300000 → 253353 via uint32BE of the first four digest bytes, not the whole digest"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.920Z"/>
+      <property name="end" value="2026-10-13T14:10:26.920Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.6 effective stagger (R8 §3.4.8) &gt; GOC-06: default-width normalization matches R8 examples (top-of-hour wildcard → 300000; fixed daily 09:00 → 0)" time="0.000">
+    <properties>
+      <property name="caseId" value="GOC-06"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="CR-2.6 effective stagger (R8 §3.4.8) &gt; GOC-06: default-width normalization matches R8 examples (top-of-hour wildcard → 300000; fixed daily 09:00 → 0)"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.920Z"/>
+      <property name="end" value="2026-10-13T14:10:26.920Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.6 effective stagger (R8 §3.4.8) &gt; GOC-07: the R8 §3.4.8 boundary walk-through is reproduced by the pinned effective wrappers" time="0.000">
+    <properties>
+      <property name="caseId" value="GOC-07"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="CR-2.6 effective stagger (R8 §3.4.8) &gt; GOC-07: the R8 §3.4.8 boundary walk-through is reproduced by the pinned effective wrappers"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:26.920Z"/>
+      <property name="end" value="2026-10-13T14:10:26.920Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/goldens/oc-schedule.golden.test.ts" name="CR-2.6 effective stagger (R8 §3.4.8) &gt; DEV-09: the codex-buddy schedule port reproduces every OC golden row (pending: no port exists at DEV-01)" time="0">
+    <properties>
+      <property name="caseId" value="DEV-09"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;goldens&quot;}"/>
+      <property name="preconditions" value="R8 §10.9"/>
+      <property name="steps" value="Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it."/>
+      <property name="expected" value="Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending."/>
+      <property name="actual" value="null"/>
+      <property name="start" value="null"/>
+      <property name="end" value="null"/>
+      <property name="status" value="pending"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+      <skipped/>
+    </testcase>
+  </testsuite>
+</testsuites>

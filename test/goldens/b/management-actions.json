@@ -1,0 +1,45 @@
+{
+  "generator": "scripts/goldens/gen-b.mjs",
+  "source": {
+    "repo": "Mininglamp-OSS/openclaw-channel-octo",
+    "commit": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+    "file": "src/agent-tools.ts",
+    "sha256": "bf549838a2995094fcf95514e081317c8b35820979b661a1d3615409e75cbf06"
+  },
+  "messageSource": {
+    "file": "src/channel.ts",
+    "sha256": "c18771187069feda3ee4212978b6da4ebb2c39da8a704ec548e97cbfd85bca4c"
+  },
+  "actions": [
+    "list-groups",
+    "group-info",
+    "group-members",
+    "group-md-read",
+    "group-md-update",
+    "search-members",
+    "resolve",
+    "create-group",
+    "update-group",
+    "add-members",
+    "remove-members",
+    "create-thread",
+    "list-threads",
+    "get-thread",
+    "delete-thread",
+    "list-thread-members",
+    "join-thread",
+    "leave-thread",
+    "thread-md-read",
+    "thread-md-update",
+    "voice-context-read",
+    "voice-context-update",
+    "voice-context-delete",
+    "write-secret"
+  ],
+  "messageActions": [
+    "send",
+    "read",
+    "search"
+  ],
+  "note": "octo_management action enum as found in source. R8 §4 O24/§9 DEV-14 state 27 management actions; the pinned source has these entries plus the separate message-tool actions. Source-backed R8 amendment pending."
+}

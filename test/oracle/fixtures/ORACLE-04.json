@@ -1,0 +1,404 @@
+{
+  "id": "ORACLE-04",
+  "description": "unknown final segment observed 0 times stays unknown (never passed)",
+  "expectedVerdict": "unknown",
+  "expectedViolations": [],
+  "expectedCounts": {
+    "unresolvedUnknowns": 1
+  },
+  "trace": {
+    "fixture": "fx04",
+    "expected": [
+      {
+        "identity": {
+          "occurrence": "oc4",
+          "run": "run4",
+          "kind": "cron.result",
+          "ordinal": 0,
+          "index": 1,
+          "count": 2
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000001/000002]\nfirst",
+        "outcome": "confirmed"
+      },
+      {
+        "identity": {
+          "occurrence": "oc4",
+          "run": "run4",
+          "kind": "cron.result",
+          "ordinal": 0,
+          "index": 2,
+          "count": 2
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000002/000002]\nfinal",
+        "outcome": "unknown"
+      }
+    ],
+    "captures": [
+      {
+        "fixture": "fx04",
+        "logicalIdentity": "oc4/run4/cron.result/0/1",
+        "kind": "cron.result",
+        "occurrence": "oc4",
+        "run": "run4",
+        "ordinal": 0,
+        "index": 1,
+        "count": 2,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 9,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "df6efc72aa4efe5357b1bc86f4b01fcb78abdc5d7a70f59bd1902c259960a598",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run4-1",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      },
+      {
+        "fixture": "fx04",
+        "logicalIdentity": "oc4/run4/cron.result/0/2",
+        "kind": "cron.result",
+        "occurrence": "oc4",
+        "run": "run4",
+        "ordinal": 0,
+        "index": 2,
+        "count": 2,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 10,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "527512551370ddd3225c0f1f1bd5524b6faa910fd4946a4187eb86076624befa",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run4-2",
+        "httpStatus": null,
+        "responseMessageId": null,
+        "responseAt": null,
+        "transportOutcome": "timeout",
+        "incarnation": "inc-1"
+      }
+    ],
+    "inventory": {
+      "complete": true,
+      "declaredPageCount": 1,
+      "pages": [
+        {
+          "cursor": "c0",
+          "next": null,
+          "records": [
+            {
+              "messageId": "900000000000000010",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000001/000002]",
+              "payloadHash": "df6efc72aa4efe5357b1bc86f4b01fcb78abdc5d7a70f59bd1902c259960a598",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "variants": [
+    {
+      "name": "observed-once",
+      "expectedVerdict": "unknown",
+      "expectedViolations": [],
+      "trace": {
+        "fixture": "fx04",
+        "expected": [
+          {
+            "identity": {
+              "occurrence": "oc4",
+              "run": "run4",
+              "kind": "cron.result",
+              "ordinal": 0,
+              "index": 1,
+              "count": 2
+            },
+            "target": {
+              "channelId": "g_oracle",
+              "channelType": 2
+            },
+            "senderUid": "u_bot_oracle",
+            "body": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000001/000002]\nfirst",
+            "outcome": "confirmed"
+          },
+          {
+            "identity": {
+              "occurrence": "oc4",
+              "run": "run4",
+              "kind": "cron.result",
+              "ordinal": 0,
+              "index": 2,
+              "count": 2
+            },
+            "target": {
+              "channelId": "g_oracle",
+              "channelType": 2
+            },
+            "senderUid": "u_bot_oracle",
+            "body": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000002/000002]\nfinal",
+            "outcome": "unknown"
+          }
+        ],
+        "captures": [
+          {
+            "fixture": "fx04",
+            "logicalIdentity": "oc4/run4/cron.result/0/1",
+            "kind": "cron.result",
+            "occurrence": "oc4",
+            "run": "run4",
+            "ordinal": 0,
+            "index": 1,
+            "count": 2,
+            "senderUid": "u_bot_oracle",
+            "target": {
+              "channelId": "g_oracle",
+              "channelType": 2
+            },
+            "requestOrdinal": 9,
+            "requestAt": "2026-10-13T00:00:00Z",
+            "requestBodyHash": "df6efc72aa4efe5357b1bc86f4b01fcb78abdc5d7a70f59bd1902c259960a598",
+            "serverNormalizedPayloadHash": null,
+            "normalizationFixtureVersion": null,
+            "clientMsgNo": "cmn-run4-1",
+            "httpStatus": 200,
+            "responseMessageId": null,
+            "responseAt": "2026-10-13T00:00:01Z",
+            "transportOutcome": "response",
+            "incarnation": "inc-1"
+          },
+          {
+            "fixture": "fx04",
+            "logicalIdentity": "oc4/run4/cron.result/0/2",
+            "kind": "cron.result",
+            "occurrence": "oc4",
+            "run": "run4",
+            "ordinal": 0,
+            "index": 2,
+            "count": 2,
+            "senderUid": "u_bot_oracle",
+            "target": {
+              "channelId": "g_oracle",
+              "channelType": 2
+            },
+            "requestOrdinal": 10,
+            "requestAt": "2026-10-13T00:00:00Z",
+            "requestBodyHash": "527512551370ddd3225c0f1f1bd5524b6faa910fd4946a4187eb86076624befa",
+            "serverNormalizedPayloadHash": null,
+            "normalizationFixtureVersion": null,
+            "clientMsgNo": "cmn-run4-2",
+            "httpStatus": null,
+            "responseMessageId": null,
+            "responseAt": null,
+            "transportOutcome": "timeout",
+            "incarnation": "inc-1"
+          }
+        ],
+        "inventory": {
+          "complete": true,
+          "declaredPageCount": 1,
+          "pages": [
+            {
+              "cursor": "c0",
+              "next": null,
+              "records": [
+                {
+                  "messageId": "900000000000000011",
+                  "channelId": "g_oracle",
+                  "channelType": 2,
+                  "senderUid": "u_bot_oracle",
+                  "serverTimestamp": 1791900000,
+                  "fixtureMarker": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000001/000002]",
+                  "payloadHash": "df6efc72aa4efe5357b1bc86f4b01fcb78abdc5d7a70f59bd1902c259960a598",
+                  "serverNormalizedPayloadHash": null,
+                  "normalizationFixtureVersion": null
+                },
+                {
+                  "messageId": "900000000000000012",
+                  "channelId": "g_oracle",
+                  "channelType": 2,
+                  "senderUid": "u_bot_oracle",
+                  "serverTimestamp": 1791900000,
+                  "fixtureMarker": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000002/000002]",
+                  "payloadHash": "527512551370ddd3225c0f1f1bd5524b6faa910fd4946a4187eb86076624befa",
+                  "serverNormalizedPayloadHash": null,
+                  "normalizationFixtureVersion": null
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "observed-twice",
+      "expectedVerdict": "fail",
+      "expectedViolations": [
+        "duplicate-committed"
+      ],
+      "trace": {
+        "fixture": "fx04",
+        "expected": [
+          {
+            "identity": {
+              "occurrence": "oc4",
+              "run": "run4",
+              "kind": "cron.result",
+              "ordinal": 0,
+              "index": 1,
+              "count": 2
+            },
+            "target": {
+              "channelId": "g_oracle",
+              "channelType": 2
+            },
+            "senderUid": "u_bot_oracle",
+            "body": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000001/000002]\nfirst",
+            "outcome": "confirmed"
+          },
+          {
+            "identity": {
+              "occurrence": "oc4",
+              "run": "run4",
+              "kind": "cron.result",
+              "ordinal": 0,
+              "index": 2,
+              "count": 2
+            },
+            "target": {
+              "channelId": "g_oracle",
+              "channelType": 2
+            },
+            "senderUid": "u_bot_oracle",
+            "body": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000002/000002]\nfinal",
+            "outcome": "unknown"
+          }
+        ],
+        "captures": [
+          {
+            "fixture": "fx04",
+            "logicalIdentity": "oc4/run4/cron.result/0/1",
+            "kind": "cron.result",
+            "occurrence": "oc4",
+            "run": "run4",
+            "ordinal": 0,
+            "index": 1,
+            "count": 2,
+            "senderUid": "u_bot_oracle",
+            "target": {
+              "channelId": "g_oracle",
+              "channelType": 2
+            },
+            "requestOrdinal": 9,
+            "requestAt": "2026-10-13T00:00:00Z",
+            "requestBodyHash": "df6efc72aa4efe5357b1bc86f4b01fcb78abdc5d7a70f59bd1902c259960a598",
+            "serverNormalizedPayloadHash": null,
+            "normalizationFixtureVersion": null,
+            "clientMsgNo": "cmn-run4-1",
+            "httpStatus": 200,
+            "responseMessageId": null,
+            "responseAt": "2026-10-13T00:00:01Z",
+            "transportOutcome": "response",
+            "incarnation": "inc-1"
+          },
+          {
+            "fixture": "fx04",
+            "logicalIdentity": "oc4/run4/cron.result/0/2",
+            "kind": "cron.result",
+            "occurrence": "oc4",
+            "run": "run4",
+            "ordinal": 0,
+            "index": 2,
+            "count": 2,
+            "senderUid": "u_bot_oracle",
+            "target": {
+              "channelId": "g_oracle",
+              "channelType": 2
+            },
+            "requestOrdinal": 10,
+            "requestAt": "2026-10-13T00:00:00Z",
+            "requestBodyHash": "527512551370ddd3225c0f1f1bd5524b6faa910fd4946a4187eb86076624befa",
+            "serverNormalizedPayloadHash": null,
+            "normalizationFixtureVersion": null,
+            "clientMsgNo": "cmn-run4-2",
+            "httpStatus": null,
+            "responseMessageId": null,
+            "responseAt": null,
+            "transportOutcome": "timeout",
+            "incarnation": "inc-1"
+          }
+        ],
+        "inventory": {
+          "complete": true,
+          "declaredPageCount": 1,
+          "pages": [
+            {
+              "cursor": "c0",
+              "next": null,
+              "records": [
+                {
+                  "messageId": "900000000000000013",
+                  "channelId": "g_oracle",
+                  "channelType": 2,
+                  "senderUid": "u_bot_oracle",
+                  "serverTimestamp": 1791900000,
+                  "fixtureMarker": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000001/000002]",
+                  "payloadHash": "df6efc72aa4efe5357b1bc86f4b01fcb78abdc5d7a70f59bd1902c259960a598",
+                  "serverNormalizedPayloadHash": null,
+                  "normalizationFixtureVersion": null
+                },
+                {
+                  "messageId": "900000000000000014",
+                  "channelId": "g_oracle",
+                  "channelType": 2,
+                  "senderUid": "u_bot_oracle",
+                  "serverTimestamp": 1791900000,
+                  "fixtureMarker": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000002/000002]",
+                  "payloadHash": "527512551370ddd3225c0f1f1bd5524b6faa910fd4946a4187eb86076624befa",
+                  "serverNormalizedPayloadHash": null,
+                  "normalizationFixtureVersion": null
+                },
+                {
+                  "messageId": "900000000000000015",
+                  "channelId": "g_oracle",
+                  "channelType": 2,
+                  "senderUid": "u_bot_oracle",
+                  "serverTimestamp": 1791900000,
+                  "fixtureMarker": "[DLY f=fx04 o=oc4 r=run4 k=cron.result m=000000 s=000002/000002]",
+                  "payloadHash": "527512551370ddd3225c0f1f1bd5524b6faa910fd4946a4187eb86076624befa",
+                  "serverNormalizedPayloadHash": null,
+                  "normalizationFixtureVersion": null
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

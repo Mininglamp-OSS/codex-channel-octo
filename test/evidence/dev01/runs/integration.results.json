@@ -1,0 +1,1174 @@
+{
+  "runner": "integration",
+  "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+  "environment": {
+    "node": "v26.5.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "ci": false,
+    "runner": "integration"
+  },
+  "generatedAt": "2026-10-13T14:10:30.947Z",
+  "records": [
+    {
+      "caseId": "CR-01",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "case records > CR-01: every record carries every R8 §10.1 field",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.280Z",
+      "end": "2026-10-13T14:10:28.281Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/case-reporter.test.ts",
+      "title": "case records > CR-01: every record carries every R8 §10.1 field"
+    },
+    {
+      "caseId": "CR-02",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "case records > CR-02: case IDs come from the title prefix, else file#full-title; catalog metadata and test meta are merged",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.281Z",
+      "end": "2026-10-13T14:10:28.281Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/case-reporter.test.ts",
+      "title": "case records > CR-02: case IDs come from the title prefix, else file#full-title; catalog metadata and test meta are merged"
+    },
+    {
+      "caseId": "CR-03",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "case records > CR-03: failures are failed; todo and skipped are pending — never passed",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.282Z",
+      "end": "2026-10-13T14:10:28.282Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/case-reporter.test.ts",
+      "title": "case records > CR-03: failures are failed; todo and skipped are pending — never passed"
+    },
+    {
+      "caseId": "CR-04",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "case records > CR-04: JUnit output escapes XML, marks failures and skipped, and embeds the record as properties",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.282Z",
+      "end": "2026-10-13T14:10:28.282Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/case-reporter.test.ts",
+      "title": "case records > CR-04: JUnit output escapes XML, marks failures and skipped, and embeds the record as properties"
+    },
+    {
+      "caseId": "FAS-01",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake App Server > FAS-01 (SB-01 parity): rejects requests before initialize and a second initialize with -32600",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.294Z",
+      "end": "2026-10-13T14:10:28.324Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/fake-app-server.test.ts",
+      "title": "fake App Server > FAS-01 (SB-01 parity): rejects requests before initialize and a second initialize with -32600"
+    },
+    {
+      "caseId": "FAS-02",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake App Server > FAS-02: a basic turn has the same normalized notification shape as the pinned 0.142.3 binary capture",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.325Z",
+      "end": "2026-10-13T14:10:28.370Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/fake-app-server.test.ts",
+      "title": "fake App Server > FAS-02: a basic turn has the same normalized notification shape as the pinned 0.142.3 binary capture"
+    },
+    {
+      "caseId": "FAS-03",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake App Server > FAS-03: a turn/start on an active thread is recorded as a steering violation",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.370Z",
+      "end": "2026-10-13T14:10:28.826Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/fake-app-server.test.ts",
+      "title": "fake App Server > FAS-03: a turn/start on an active thread is recorded as a steering violation"
+    },
+    {
+      "caseId": "FAS-04",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake App Server > FAS-04: runtime.dropInterruptResponse withholds the interrupt response but still terminates the turn",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.826Z",
+      "end": "2026-10-13T14:10:29.483Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/fake-app-server.test.ts",
+      "title": "fake App Server > FAS-04: runtime.dropInterruptResponse withholds the interrupt response but still terminates the turn"
+    },
+    {
+      "caseId": "FAS-05",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake App Server > FAS-05: runtime.dropTurnCompleted answers the interrupt but never emits turn/completed",
+      "actual": null,
+      "start": "2026-10-13T14:10:29.484Z",
+      "end": "2026-10-13T14:10:30.036Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/fake-app-server.test.ts",
+      "title": "fake App Server > FAS-05: runtime.dropTurnCompleted answers the interrupt but never emits turn/completed"
+    },
+    {
+      "caseId": "FAS-06",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake App Server > FAS-06: runtime.failUnsubscribe makes thread/unsubscribe fail",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.037Z",
+      "end": "2026-10-13T14:10:30.084Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/fake-app-server.test.ts",
+      "title": "fake App Server > FAS-06: runtime.failUnsubscribe makes thread/unsubscribe fail"
+    },
+    {
+      "caseId": "FAS-07",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake App Server > FAS-07: runtime.killChild exits the process mid-turn with no terminal event",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.084Z",
+      "end": "2026-10-13T14:10:30.115Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/fake-app-server.test.ts",
+      "title": "fake App Server > FAS-07: runtime.killChild exits the process mid-turn with no terminal event"
+    },
+    {
+      "caseId": "FAS-08",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake App Server > FAS-08: server requests are tracked; an unanswered one is reported as a violation at shutdown",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.116Z",
+      "end": "2026-10-13T14:10:30.156Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/fake-app-server.test.ts",
+      "title": "fake App Server > FAS-08: server requests are tracked; an unanswered one is reported as a violation at shutdown"
+    },
+    {
+      "caseId": "FAS-09",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake App Server > FAS-09: an answered server request lets the scripted turn complete and is not a violation",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.156Z",
+      "end": "2026-10-13T14:10:30.195Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/fake-app-server.test.ts",
+      "title": "fake App Server > FAS-09: an answered server request lets the scripted turn complete and is not a violation"
+    },
+    {
+      "caseId": "FAS-10",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake App Server > FAS-10: unknown fault point names are rejected at start-up (typo guard)",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.195Z",
+      "end": "2026-10-13T14:10:30.220Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/harness/fake-app-server.test.ts",
+      "title": "fake App Server > FAS-10: unknown fault point names are rejected at start-up (typo guard)"
+    },
+    {
+      "caseId": "FO-01",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo WS: production WKSocket handshake and delivery > FO-01: register + CONNECT carry the pinned protocol fields and the bot identity",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.348Z",
+      "end": "2026-10-13T14:10:28.380Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo WS: production WKSocket handshake and delivery > FO-01: register + CONNECT carry the pinned protocol fields and the bot identity"
+    },
+    {
+      "caseId": "FO-02",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo WS: production WKSocket handshake and delivery > FO-02: RECV is decrypted, delivered with full int64 precision, and ACKed only after a successful parse",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.380Z",
+      "end": "2026-10-13T14:10:28.396Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo WS: production WKSocket handshake and delivery > FO-02: RECV is decrypted, delivered with full int64 precision, and ACKed only after a successful parse"
+    },
+    {
+      "caseId": "FO-03",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo WS: production WKSocket handshake and delivery > FO-03: a poison payload is not ACKed until the third delivery and never reaches the handler",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.397Z",
+      "end": "2026-10-13T14:10:28.653Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo WS: production WKSocket handshake and delivery > FO-03: a poison payload is not ACKed until the third delivery and never reaches the handler"
+    },
+    {
+      "caseId": "FO-04",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo WS: production WKSocket handshake and delivery > FO-04: a CONNACK salt shorter than 16 bytes fails the handshake (client closes, nothing delivered)",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.653Z",
+      "end": "2026-10-13T14:10:30.677Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo WS: production WKSocket handshake and delivery > FO-04: a CONNACK salt shorter than 16 bytes fails the handshake (client closes, nothing delivered)"
+    },
+    {
+      "caseId": "FO-05",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo WS: production WKSocket handshake and delivery > FO-05: DISCONNECT triggers the existing kick → force_refresh re-register → reconnect path",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.678Z",
+      "end": "2026-10-13T14:10:30.704Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo WS: production WKSocket handshake and delivery > FO-05: DISCONNECT triggers the existing kick → force_refresh re-register → reconnect path"
+    },
+    {
+      "caseId": "FO-06",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo WS: production WKSocket handshake and delivery > FO-06: transport.dropConnack leaves the client unconnected and is recorded as a consumed fault",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.704Z",
+      "end": "2026-10-13T14:10:30.866Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo WS: production WKSocket handshake and delivery > FO-06: transport.dropConnack leaves the client unconnected and is recorded as a consumed fault"
+    },
+    {
+      "caseId": "FO-07",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo WS: production WKSocket handshake and delivery > FO-07: api.forceStatus(register,503) fails register() and releases the per-bot lock",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.867Z",
+      "end": "2026-10-13T14:10:30.881Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo WS: production WKSocket handshake and delivery > FO-07: api.forceStatus(register,503) fails register() and releases the per-bot lock"
+    },
+    {
+      "caseId": "EP-03.send",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-03.send: sendMessage posts type-1 payload, mention block and a fresh client_msg_no",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.882Z",
+      "end": "2026-10-13T14:10:30.890Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-03.send: sendMessage posts type-1 payload, mention block and a fresh client_msg_no"
+    },
+    {
+      "caseId": "test/integration/fake-octo-transport.test.ts#fake Octo REST: endpoint wire inventory for existing A endpoints > EP-02/EP-09/EP-10: heartbeat, typing and read receipt wire shapes",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-02/EP-09/EP-10: heartbeat, typing and read receipt wire shapes",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.891Z",
+      "end": "2026-10-13T14:10:30.897Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-02/EP-09/EP-10: heartbeat, typing and read receipt wire shapes"
+    },
+    {
+      "caseId": "EP-19.get",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-19.get: user/info encodes the uid, maps 200 and returns null on 404",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.898Z",
+      "end": "2026-10-13T14:10:30.901Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-19.get: user/info encodes the uid, maps 200 and returns null on 404"
+    },
+    {
+      "caseId": "test/integration/fake-octo-transport.test.ts#fake Octo REST: endpoint wire inventory for existing A endpoints > EP-13.get / EP-14.get / EP-15.get / EP-16.get: group reads encode path segments",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-13.get / EP-14.get / EP-15.get / EP-16.get: group reads encode path segments",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.901Z",
+      "end": "2026-10-13T14:10:30.906Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-13.get / EP-14.get / EP-15.get / EP-16.get: group reads encode path segments"
+    },
+    {
+      "caseId": "EP-11.sync",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-11.sync: messages/sync request body and base64 payload decoding",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.906Z",
+      "end": "2026-10-13T14:10:30.907Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-11.sync: messages/sync request body and base64 payload decoding"
+    },
+    {
+      "caseId": "EP-21.get",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-21.get: upload/credentials encodes the filename and scrubs Bearer tokens from error text",
+      "actual": null,
+      "start": "2026-10-13T14:10:30.908Z",
+      "end": "2026-10-13T14:10:30.909Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo REST: endpoint wire inventory for existing A endpoints > EP-21.get: upload/credentials encodes the filename and scrubs Bearer tokens from error text"
+    },
+    {
+      "caseId": "SEAM-CLOCK-01",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "Clock seam > SEAM-CLOCK-01: systemClock tracks wall time and a monotonic source",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.301Z",
+      "end": "2026-10-13T14:10:28.306Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "Clock seam > SEAM-CLOCK-01: systemClock tracks wall time and a monotonic source"
+    },
+    {
+      "caseId": "SEAM-CLOCK-02",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "Clock seam > SEAM-CLOCK-02: systemClock.clearTimeout cancels a pending timer",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.307Z",
+      "end": "2026-10-13T14:10:28.317Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "Clock seam > SEAM-CLOCK-02: systemClock.clearTimeout cancels a pending timer"
+    },
+    {
+      "caseId": "SEAM-CLOCK-03",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "Clock seam > SEAM-CLOCK-03: FakeClock fires timers in deadline order and only when advanced",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.317Z",
+      "end": "2026-10-13T14:10:28.317Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "Clock seam > SEAM-CLOCK-03: FakeClock fires timers in deadline order and only when advanced"
+    },
+    {
+      "caseId": "SEAM-CLOCK-04",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "Clock seam > SEAM-CLOCK-04: FakeClock runs timers scheduled from inside a callback within the same advance window",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.318Z",
+      "end": "2026-10-13T14:10:28.318Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "Clock seam > SEAM-CLOCK-04: FakeClock runs timers scheduled from inside a callback within the same advance window"
+    },
+    {
+      "caseId": "SEAM-CLOCK-05",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "Clock seam > SEAM-CLOCK-05: a wall-clock jump moves now() but never fires or skips monotonic timers",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.318Z",
+      "end": "2026-10-13T14:10:28.318Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "Clock seam > SEAM-CLOCK-05: a wall-clock jump moves now() but never fires or skips monotonic timers"
+    },
+    {
+      "caseId": "SEAM-CLOCK-06",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "Clock seam > SEAM-CLOCK-06: FakeClock.clearTimeout removes a pending timer and rejects negative advance",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.318Z",
+      "end": "2026-10-13T14:10:28.318Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "Clock seam > SEAM-CLOCK-06: FakeClock.clearTimeout removes a pending timer and rejects negative advance"
+    },
+    {
+      "caseId": "SEAM-FAULT-01",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "FaultPlan seam > SEAM-FAULT-01: the named fault points are exactly the R8 §10.4 list",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.319Z",
+      "end": "2026-10-13T14:10:28.319Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "FaultPlan seam > SEAM-FAULT-01: the named fault points are exactly the R8 §10.4 list"
+    },
+    {
+      "caseId": "SEAM-FAULT-02",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "FaultPlan seam > SEAM-FAULT-02: parameterized points render stable keys",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.319Z",
+      "end": "2026-10-13T14:10:28.319Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "FaultPlan seam > SEAM-FAULT-02: parameterized points render stable keys"
+    },
+    {
+      "caseId": "SEAM-FAULT-03",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "FaultPlan seam > SEAM-FAULT-03: NO_FAULTS always proceeds",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.319Z",
+      "end": "2026-10-13T14:10:28.319Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "FaultPlan seam > SEAM-FAULT-03: NO_FAULTS always proceeds"
+    },
+    {
+      "caseId": "SEAM-FAULT-04",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "FaultPlan seam > SEAM-FAULT-04: ScriptedFaultPlan fires an armed point exactly the armed number of times and logs hits",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.319Z",
+      "end": "2026-10-13T14:10:28.319Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "FaultPlan seam > SEAM-FAULT-04: ScriptedFaultPlan fires an armed point exactly the armed number of times and logs hits"
+    },
+    {
+      "caseId": "SEAM-FAULT-05",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "FaultPlan seam > SEAM-FAULT-05: segment-scoped points only match their own segment index",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.319Z",
+      "end": "2026-10-13T14:10:28.319Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "FaultPlan seam > SEAM-FAULT-05: segment-scoped points only match their own segment index"
+    },
+    {
+      "caseId": "SEAM-FAULT-06",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "FaultPlan seam > SEAM-FAULT-06: arming an unknown point name is rejected (typo guard)",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.319Z",
+      "end": "2026-10-13T14:10:28.319Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "FaultPlan seam > SEAM-FAULT-06: arming an unknown point name is rejected (typo guard)"
+    },
+    {
+      "caseId": "SEAM-FAULT-07",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v26.5.0",
+        "platform": "darwin",
+        "arch": "arm64",
+        "ci": false,
+        "runner": "integration"
+      },
+      "preconditions": null,
+      "steps": null,
+      "expected": "FaultPlan seam > SEAM-FAULT-07: unconsumed() reports armed faults that never fired",
+      "actual": null,
+      "start": "2026-10-13T14:10:28.319Z",
+      "end": "2026-10-13T14:10:28.319Z",
+      "status": "passed",
+      "evidencePaths": [],
+      "file": "test/seams/seams.test.ts",
+      "title": "FaultPlan seam > SEAM-FAULT-07: unconsumed() reports armed faults that never fired"
+    }
+  ]
+}

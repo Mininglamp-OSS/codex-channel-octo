@@ -1,0 +1,349 @@
+{
+  "generator": "scripts/goldens/gen-oc-schedule.mjs",
+  "source": {
+    "repo": "openclaw/openclaw",
+    "commit": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+    "files": {
+      "src/cron/schedule.ts": "a20d754a4e74aa1cde0c0da37a62851285b77d717205459b7046ecec909cfb26",
+      "src/cron/stagger.ts": "a4f9236ea2571076932df830fe9d64be1675dfb0241f2a33d9cc97c2ac5e782d",
+      "src/cron/service/jobs-scheduling.ts": "8f13e8f7f4cc848f2eab48b8b811038a5a708023384c4439513923342b246b86"
+    }
+  },
+  "croner": "10.0.1",
+  "runtime": {
+    "node": "v26.5.0",
+    "tz": "2026a",
+    "icu": "78.3"
+  },
+  "method": "OC sources bundled unmodified by esbuild (export statement appended to jobs-scheduling.ts); @openclaw/normalization-core resolved to the pinned workspace sources; croner from the exact devDependency",
+  "stubbedHostImports": [
+    "@openclaw/fs-safe/advanced",
+    "@openclaw/fs-safe/errors",
+    "@openclaw/fs-safe/path",
+    "chalk",
+    "string-width",
+    "tslog",
+    "typebox",
+    "typebox/value"
+  ],
+  "stubCallsDuringModuleInit": 151,
+  "stubCallsDuringVectors": 0,
+  "ocVerbatim": [
+    {
+      "id": "lord-howe-repeated-half-hour",
+      "tz": "Australia/Lord_Howe",
+      "expr": "* * * * * *",
+      "now": "2026-04-04T15:10:00.000Z",
+      "next": "2026-04-04T15:30:00.000Z",
+      "previous": "2026-04-04T14:59:59.000Z"
+    },
+    {
+      "id": "ny-last-valid-second-before-gap",
+      "tz": "America/New_York",
+      "expr": "59 59 1,2 * * *",
+      "now": "2027-03-14T07:05:00.000Z",
+      "next": "2027-03-15T05:59:59.000Z",
+      "previous": "2027-03-14T06:59:59.000Z"
+    },
+    {
+      "id": "oslo-skips-nonexistent-reminder",
+      "tz": "Europe/Oslo",
+      "expr": "30 2 * * *",
+      "now": "2026-03-29T00:45:00.000Z",
+      "next": "2026-03-30T00:30:00.000Z",
+      "previous": "2026-03-28T01:30:00.000Z"
+    },
+    {
+      "id": "ny-sun2-future-nonexistent",
+      "tz": "America/New_York",
+      "expr": "30 2 * 3 SUN#2",
+      "now": "2026-01-01T00:00:00.000Z",
+      "next": null,
+      "previous": "2006-03-12T07:30:00.000Z"
+    },
+    {
+      "id": "year-limited-nonexistent",
+      "tz": "America/New_York",
+      "expr": "0 30 2 14 3 * 2027",
+      "now": "2026-07-01T00:00:00.000Z",
+      "next": null,
+      "previous": null
+    },
+    {
+      "id": "year-limited-repeated-hour",
+      "tz": "America/New_York",
+      "expr": "0 30 1 1 11 * 2026",
+      "now": "2026-11-01T06:15:00.000Z",
+      "next": null,
+      "previous": "2026-11-01T05:30:00.000Z"
+    },
+    {
+      "id": "retry-rejects-real-gap-a",
+      "tz": "America/New_York",
+      "expr": "30 2 * * *",
+      "now": "2027-03-14T06:45:00.000Z",
+      "next": "2027-03-15T06:30:00.000Z",
+      "previous": "2027-03-13T07:30:00.000Z"
+    },
+    {
+      "id": "retry-rejects-real-gap-b",
+      "tz": "America/New_York",
+      "expr": "30 2 * * *",
+      "now": "2027-03-13T23:45:00.000Z",
+      "next": "2027-03-15T06:30:00.000Z",
+      "previous": "2027-03-13T07:30:00.000Z"
+    }
+  ],
+  "fixedInstant": [
+    {
+      "id": "london-0130-before-spring",
+      "tz": "Europe/London",
+      "expr": "30 1 * * *",
+      "now": "2026-03-28T12:00:00.000Z",
+      "next": "2026-03-30T00:30:00.000Z",
+      "previous": "2026-03-28T01:30:00.000Z"
+    },
+    {
+      "id": "london-0130-in-spring-gap-day",
+      "tz": "Europe/London",
+      "expr": "30 1 * * *",
+      "now": "2026-03-29T00:15:00.000Z",
+      "next": "2026-03-30T00:30:00.000Z",
+      "previous": "2026-03-28T01:30:00.000Z"
+    },
+    {
+      "id": "london-0130-before-fall",
+      "tz": "Europe/London",
+      "expr": "30 1 * * *",
+      "now": "2026-10-24T12:00:00.000Z",
+      "next": "2026-10-25T00:30:00.000Z",
+      "previous": "2026-10-24T00:30:00.000Z"
+    },
+    {
+      "id": "london-0130-in-fall-repeat",
+      "tz": "Europe/London",
+      "expr": "30 1 * * *",
+      "now": "2026-10-25T00:45:00.000Z",
+      "next": "2026-10-26T01:30:00.000Z",
+      "previous": "2026-10-25T00:30:00.000Z"
+    },
+    {
+      "id": "ny-0230-before-spring",
+      "tz": "America/New_York",
+      "expr": "30 2 * * *",
+      "now": "2026-03-07T12:00:00.000Z",
+      "next": "2026-03-09T06:30:00.000Z",
+      "previous": "2026-03-07T07:30:00.000Z"
+    },
+    {
+      "id": "ny-0230-on-spring-gap-day",
+      "tz": "America/New_York",
+      "expr": "30 2 * * *",
+      "now": "2026-03-08T06:00:00.000Z",
+      "next": "2026-03-09T06:30:00.000Z",
+      "previous": "2026-03-07T07:30:00.000Z"
+    },
+    {
+      "id": "ny-0130-before-fall",
+      "tz": "America/New_York",
+      "expr": "30 1 * * *",
+      "now": "2026-10-31T12:00:00.000Z",
+      "next": "2026-11-01T05:30:00.000Z",
+      "previous": "2026-10-31T05:30:00.000Z"
+    },
+    {
+      "id": "ny-0130-in-fall-repeat",
+      "tz": "America/New_York",
+      "expr": "30 1 * * *",
+      "now": "2026-11-01T05:45:00.000Z",
+      "next": "2026-11-02T06:30:00.000Z",
+      "previous": "2026-11-01T05:30:00.000Z"
+    },
+    {
+      "id": "shanghai-0230-control",
+      "tz": "Asia/Shanghai",
+      "expr": "30 2 * * *",
+      "now": "2026-03-07T12:00:00.000Z",
+      "next": "2026-03-07T18:30:00.000Z",
+      "previous": "2026-03-06T18:30:00.000Z"
+    },
+    {
+      "id": "shanghai-0230-control-fall",
+      "tz": "Asia/Shanghai",
+      "expr": "30 2 * * *",
+      "now": "2026-11-01T05:45:00.000Z",
+      "next": "2026-11-01T18:30:00.000Z",
+      "previous": "2026-10-31T18:30:00.000Z"
+    },
+    {
+      "id": "every-1h-across-london-spring",
+      "tz": "UTC",
+      "everyMs": 3600000,
+      "anchorMs": 1774738800000,
+      "now": "2026-03-29T00:30:00.000Z",
+      "next": "2026-03-29T01:00:00.000Z",
+      "previous": null
+    },
+    {
+      "id": "every-90m-across-ny-fall",
+      "tz": "UTC",
+      "everyMs": 5400000,
+      "anchorMs": 1793491200000,
+      "now": "2026-11-01T06:10:00.000Z",
+      "next": "2026-11-01T07:30:00.000Z",
+      "previous": null
+    }
+  ],
+  "stagger": {
+    "offsets": [
+      {
+        "jobId": "j7f3k2q",
+        "staggerMs": 300000,
+        "offsetMs": 253353,
+        "wholeDigestModulo": "293489"
+      },
+      {
+        "jobId": "j2abc9z",
+        "staggerMs": 300000,
+        "offsetMs": 261727,
+        "wholeDigestModulo": "209087"
+      },
+      {
+        "jobId": "jzzzzzz",
+        "staggerMs": 1000,
+        "offsetMs": 300,
+        "wholeDigestModulo": "971"
+      },
+      {
+        "jobId": "j7f3k2q",
+        "staggerMs": 1,
+        "offsetMs": 0,
+        "wholeDigestModulo": "0"
+      }
+    ],
+    "defaults": [
+      {
+        "expr": "0 * * * *",
+        "resolvedStaggerMs": 300000
+      },
+      {
+        "expr": "0 0 * * * *",
+        "resolvedStaggerMs": 300000
+      },
+      {
+        "expr": "0 */2 * * *",
+        "resolvedStaggerMs": 300000
+      },
+      {
+        "expr": "0 9-17 * * *",
+        "resolvedStaggerMs": 0
+      },
+      {
+        "expr": "0 9 * * *",
+        "resolvedStaggerMs": 0
+      },
+      {
+        "expr": "30 * * * *",
+        "resolvedStaggerMs": 0
+      },
+      {
+        "expr": "0 0 9 * * *",
+        "resolvedStaggerMs": 0
+      },
+      {
+        "expr": "15 0 * * * *",
+        "resolvedStaggerMs": 0
+      },
+      {
+        "expr": "0 1,13 * * *",
+        "resolvedStaggerMs": 0
+      },
+      {
+        "expr": "0 *,3 * * *",
+        "resolvedStaggerMs": 300000
+      }
+    ],
+    "effective": [
+      {
+        "id": "before-boundary",
+        "jobId": "j7f3k2q",
+        "expr": "0 * * * *",
+        "tz": "UTC",
+        "staggerMs": 300000,
+        "now": "2026-10-13T10:04:13.352Z",
+        "next": "2026-10-13T10:04:13.353Z",
+        "previousInclusive": "2026-10-13T09:04:13.353Z"
+      },
+      {
+        "id": "at-boundary",
+        "jobId": "j7f3k2q",
+        "expr": "0 * * * *",
+        "tz": "UTC",
+        "staggerMs": 300000,
+        "now": "2026-10-13T10:04:13.353Z",
+        "next": "2026-10-13T11:04:13.353Z",
+        "previousInclusive": "2026-10-13T10:04:13.353Z"
+      },
+      {
+        "id": "after-boundary",
+        "jobId": "j7f3k2q",
+        "expr": "0 * * * *",
+        "tz": "UTC",
+        "staggerMs": 300000,
+        "now": "2026-10-13T10:04:13.354Z",
+        "next": "2026-10-13T11:04:13.353Z",
+        "previousInclusive": "2026-10-13T10:04:13.353Z"
+      },
+      {
+        "id": "restart-after-boundary",
+        "jobId": "j7f3k2q",
+        "expr": "0 * * * *",
+        "tz": "UTC",
+        "staggerMs": 300000,
+        "now": "2026-10-13T10:30:00.000Z",
+        "next": "2026-10-13T11:04:13.353Z",
+        "previousInclusive": "2026-10-13T10:04:13.353Z"
+      },
+      {
+        "id": "exact",
+        "jobId": "j7f3k2q",
+        "expr": "0 * * * *",
+        "tz": "UTC",
+        "staggerMs": 0,
+        "now": "2026-10-13T09:30:00.000Z",
+        "next": "2026-10-13T10:00:00.000Z",
+        "previousInclusive": "2026-10-13T09:00:00.000Z"
+      },
+      {
+        "id": "dst-offset-london-spring",
+        "jobId": "j7f3k2q",
+        "expr": "0 * * * *",
+        "tz": "Europe/London",
+        "staggerMs": 300000,
+        "now": "2026-03-29T00:30:00.000Z",
+        "next": "2026-03-29T01:04:13.353Z",
+        "previousInclusive": "2026-03-29T00:04:13.353Z"
+      },
+      {
+        "id": "dst-offset-ny-fall",
+        "jobId": "j7f3k2q",
+        "expr": "0 * * * *",
+        "tz": "America/New_York",
+        "staggerMs": 300000,
+        "now": "2026-11-01T05:30:00.000Z",
+        "next": "2026-11-01T07:04:13.353Z",
+        "previousInclusive": "2026-11-01T05:04:13.353Z"
+      },
+      {
+        "id": "activation-inside-offset-window",
+        "jobId": "j7f3k2q",
+        "expr": "0 * * * *",
+        "tz": "UTC",
+        "staggerMs": 300000,
+        "now": "2026-10-13T10:02:00.000Z",
+        "next": "2026-10-13T10:04:13.353Z",
+        "previousInclusive": "2026-10-13T09:04:13.353Z"
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "id": "M04-unencoded-group-path",
+  "rows": [
+    "BX-5",
+    "R6",
+    "EP-13"
+  ],
+  "file": "src/octo/api.ts",
+  "filter": "BX-5|EP-13",
+  "controlPassed": true,
+  "killed": true,
+  "executedFailures": [
+    {
+      "file": "-A0KM8Z/test/locks/bx-locks.test.ts",
+      "title": "BX locks (B defects not ported) BX-5: group numbers and short ids are percent-encoded in every ported path (no traversal)",
+      "status": "failed",
+      "failure": "AssertionError: expected [ '/v1/bot/admin', …(2) ] to deeply equal [ …(3) ]"
+    }
+  ],
+  "mutatedLoadErrors": [],
+  "controlCases": 28
+}

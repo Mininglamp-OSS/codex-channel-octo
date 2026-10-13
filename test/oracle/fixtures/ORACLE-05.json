@@ -1,0 +1,180 @@
+{
+  "id": "ORACLE-05",
+  "description": "a restart that resends an unknown segment fails even though one message is stored",
+  "expectedVerdict": "fail",
+  "expectedViolations": [
+    "resend-after-restart"
+  ],
+  "trace": {
+    "fixture": "fx05",
+    "expected": [
+      {
+        "identity": {
+          "occurrence": "oc5",
+          "run": "run5",
+          "kind": "cron.result",
+          "ordinal": 0,
+          "index": 1,
+          "count": 1
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx05 o=oc5 r=run5 k=cron.result m=000000 s=000001/000001]\nonly",
+        "outcome": "unknown"
+      }
+    ],
+    "captures": [
+      {
+        "fixture": "fx05",
+        "logicalIdentity": "oc5/run5/cron.result/0/1",
+        "kind": "cron.result",
+        "occurrence": "oc5",
+        "run": "run5",
+        "ordinal": 0,
+        "index": 1,
+        "count": 1,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 11,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "b96961da16f795f8e3d6d57b26e41277b9c768e0137193b711156d4ff6217151",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run5-1",
+        "httpStatus": null,
+        "responseMessageId": null,
+        "responseAt": null,
+        "transportOutcome": "disconnect",
+        "incarnation": "inc-1"
+      },
+      {
+        "fixture": "fx05",
+        "logicalIdentity": "oc5/run5/cron.result/0/1",
+        "kind": "cron.result",
+        "occurrence": "oc5",
+        "run": "run5",
+        "ordinal": 0,
+        "index": 1,
+        "count": 1,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 12,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "b96961da16f795f8e3d6d57b26e41277b9c768e0137193b711156d4ff6217151",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run5-1",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-2"
+      }
+    ],
+    "inventory": {
+      "complete": true,
+      "declaredPageCount": 1,
+      "pages": [
+        {
+          "cursor": "c0",
+          "next": null,
+          "records": [
+            {
+              "messageId": "900000000000000016",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx05 o=oc5 r=run5 k=cron.result m=000000 s=000001/000001]",
+              "payloadHash": "b96961da16f795f8e3d6d57b26e41277b9c768e0137193b711156d4ff6217151",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "controlTrace": {
+    "fixture": "fx05",
+    "expected": [
+      {
+        "identity": {
+          "occurrence": "oc5",
+          "run": "run5",
+          "kind": "cron.result",
+          "ordinal": 0,
+          "index": 1,
+          "count": 1
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx05 o=oc5 r=run5 k=cron.result m=000000 s=000001/000001]\nonly",
+        "outcome": "confirmed"
+      }
+    ],
+    "captures": [
+      {
+        "fixture": "fx05",
+        "logicalIdentity": "oc5/run5/cron.result/0/1",
+        "kind": "cron.result",
+        "occurrence": "oc5",
+        "run": "run5",
+        "ordinal": 0,
+        "index": 1,
+        "count": 1,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 13,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "b96961da16f795f8e3d6d57b26e41277b9c768e0137193b711156d4ff6217151",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run5-1",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      }
+    ],
+    "inventory": {
+      "complete": true,
+      "declaredPageCount": 1,
+      "pages": [
+        {
+          "cursor": "c0",
+          "next": null,
+          "records": [
+            {
+              "messageId": "900000000000000017",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx05 o=oc5 r=run5 k=cron.result m=000000 s=000001/000001]",
+              "payloadHash": "b96961da16f795f8e3d6d57b26e41277b9c768e0137193b711156d4ff6217151",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

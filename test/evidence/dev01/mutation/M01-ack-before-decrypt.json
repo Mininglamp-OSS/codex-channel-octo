@@ -1,0 +1,28 @@
+{
+  "id": "M01-ack-before-decrypt",
+  "rows": [
+    "BX-1",
+    "T10",
+    "INV-P3"
+  ],
+  "file": "src/octo/socket.ts",
+  "filter": "BX-1|FO-03",
+  "controlPassed": true,
+  "killed": true,
+  "executedFailures": [
+    {
+      "file": "-rJuckS/test/integration/fake-octo-transport.test.ts",
+      "title": "fake Octo WS: production WKSocket handshake and delivery FO-03: a poison payload is not ACKed until the third delivery and never reaches the handler",
+      "status": "failed",
+      "failure": "AssertionError: expected [ Array(1) ] to have a length of +0 but got 1"
+    },
+    {
+      "file": "-rJuckS/test/locks/bx-locks.test.ts",
+      "title": "BX locks (B defects not ported) BX-1: RECVACK is never written before a successful decrypt + parse",
+      "status": "failed",
+      "failure": "AssertionError: expected [ Array(1) ] to have a length of +0 but got 1"
+    }
+  ],
+  "mutatedLoadErrors": [],
+  "controlCases": 26
+}

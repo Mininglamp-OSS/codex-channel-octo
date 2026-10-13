@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="egress">
+  <testsuite name="egress" tests="12" failures="0" skipped="0">
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: repository at DEV-01 &gt; EG-01: every boundary export is classified; message/control writes are guarded primitives" time="0.001">
+    <properties>
+      <property name="caseId" value="EG-01"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: repository at DEV-01 &gt; EG-01: every boundary export is classified; message/control writes are guarded primitives"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:33.199Z"/>
+      <property name="end" value="2026-10-13T14:10:33.200Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: repository at DEV-01 &gt; EG-02: the observed outbound call sites equal the explicit baseline exactly (no new caller, no stale entry)" time="0.000">
+    <properties>
+      <property name="caseId" value="EG-02"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: repository at DEV-01 &gt; EG-02: the observed outbound call sites equal the explicit baseline exactly (no new caller, no stale entry)"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:33.200Z"/>
+      <property name="end" value="2026-10-13T14:10:33.200Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: repository at DEV-01 &gt; EG-03: the baseline records the R8 §0.3 bypass sites (router replySafe, command/progress/placeholder/error replies, StreamRelay)" time="0.000">
+    <properties>
+      <property name="caseId" value="EG-03"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: repository at DEV-01 &gt; EG-03: the baseline records the R8 §0.3 bypass sites (router replySafe, command/progress/placeholder/error replies, StreamRelay)"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:33.200Z"/>
+      <property name="end" value="2026-10-13T14:10:33.200Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: negative controls &gt; EG-04: the clean fixture (egress module only) passes" time="0.172">
+    <properties>
+      <property name="caseId" value="EG-04"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: negative controls &gt; EG-04: the clean fixture (egress module only) passes"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:33.200Z"/>
+      <property name="end" value="2026-10-13T14:10:33.372Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: negative controls &gt; EG-05: an unauthorized sendRichTextMessage call fails" time="0.167">
+    <properties>
+      <property name="caseId" value="EG-05"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: negative controls &gt; EG-05: an unauthorized sendRichTextMessage call fails"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:33.373Z"/>
+      <property name="end" value="2026-10-13T14:10:33.540Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: negative controls &gt; EG-06: an aliased import fails" time="0.157">
+    <properties>
+      <property name="caseId" value="EG-06"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: negative controls &gt; EG-06: an aliased import fails"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:33.541Z"/>
+      <property name="end" value="2026-10-13T14:10:33.698Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: negative controls &gt; EG-07: a namespace import fails (property and element access)" time="0.160">
+    <properties>
+      <property name="caseId" value="EG-07"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: negative controls &gt; EG-07: a namespace import fails (property and element access)"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:33.699Z"/>
+      <property name="end" value="2026-10-13T14:10:33.859Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: negative controls &gt; EG-08: a named re-export, a star re-export and a caller through the re-export chain all fail" time="0.161">
+    <properties>
+      <property name="caseId" value="EG-08"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: negative controls &gt; EG-08: a named re-export, a star re-export and a caller through the re-export chain all fail"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:33.859Z"/>
+      <property name="end" value="2026-10-13T14:10:34.020Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: negative controls &gt; EG-09: a dynamic import of the boundary module fails" time="0.153">
+    <properties>
+      <property name="caseId" value="EG-09"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: negative controls &gt; EG-09: a dynamic import of the boundary module fails"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:34.021Z"/>
+      <property name="end" value="2026-10-13T14:10:34.174Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: negative controls &gt; EG-10: a new unclassified boundary export is treated as guarded and reported" time="0.146">
+    <properties>
+      <property name="caseId" value="EG-10"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: negative controls &gt; EG-10: a new unclassified boundary export is treated as guarded and reported"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:34.174Z"/>
+      <property name="end" value="2026-10-13T14:10:34.320Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: negative controls &gt; EG-11: baseline accounting is exact — one extra call over a baselined count fails, a stale baseline entry fails" time="0.461">
+    <properties>
+      <property name="caseId" value="EG-11"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: negative controls &gt; EG-11: baseline accounting is exact — one extra call over a baselined count fails, a stale baseline entry fails"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:34.321Z"/>
+      <property name="end" value="2026-10-13T14:10:34.782Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+    <testcase classname="test/egress/egress-bypass-scan.test.ts" name="egress bypass scan: negative controls &gt; EG-12: classified infrastructure and reads stay permitted outside egress" time="0.145">
+    <properties>
+      <property name="caseId" value="EG-12"/>
+      <property name="pin" value="{&quot;A&quot;:&quot;dd1298083d014d8e82376c01edb38a2e6914366f&quot;,&quot;B&quot;:&quot;2e710e903fa43ac9440723746f7395d2f7b4347e&quot;,&quot;OC&quot;:&quot;f6065d67762f2c87fbdeff119f34f54266a95b87&quot;,&quot;codex&quot;:&quot;0.142.3&quot;,&quot;codexRust&quot;:&quot;e2b60462a7321517895dd94920661599303a7539&quot;,&quot;croner&quot;:&quot;10.0.1&quot;}"/>
+      <property name="head" value="dd1298083d014d8e82376c01edb38a2e6914366f+dirty"/>
+      <property name="environment" value="{&quot;node&quot;:&quot;v26.5.0&quot;,&quot;platform&quot;:&quot;darwin&quot;,&quot;arch&quot;:&quot;arm64&quot;,&quot;ci&quot;:false,&quot;runner&quot;:&quot;egress&quot;}"/>
+      <property name="preconditions" value="null"/>
+      <property name="steps" value="null"/>
+      <property name="expected" value="egress bypass scan: negative controls &gt; EG-12: classified infrastructure and reads stay permitted outside egress"/>
+      <property name="actual" value="null"/>
+      <property name="start" value="2026-10-13T14:10:34.782Z"/>
+      <property name="end" value="2026-10-13T14:10:34.927Z"/>
+      <property name="status" value="passed"/>
+      <property name="evidencePaths" value="[]"/>
+    </properties>
+    </testcase>
+  </testsuite>
+</testsuites>

@@ -1,0 +1,71 @@
+{
+  "runner": "pack-smoke",
+  "records": [
+    {
+      "caseId": "PACK-SMOKE",
+      "pin": {
+        "A": "dd1298083d014d8e82376c01edb38a2e6914366f",
+        "B": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+        "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
+        "codex": "0.142.3",
+        "codexRust": "e2b60462a7321517895dd94920661599303a7539",
+        "croner": "10.0.1"
+      },
+      "head": "dd1298083d014d8e82376c01edb38a2e6914366f+dirty",
+      "environment": {
+        "node": "v24.21.0",
+        "platform": "darwin",
+        "arch": "arm64"
+      },
+      "preconditions": "R8 §8.3/§10.2 pack-smoke",
+      "steps": [
+        "npm run build",
+        "npm run build:test",
+        "npm pack",
+        "inspect tarball",
+        "npm install <tgz> in a clean dir",
+        "load better-sqlite3",
+        "codex-channel-octo version"
+      ],
+      "expected": "all checks pass",
+      "actual": [
+        {
+          "name": "test hook module exists locally (built for test)",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "no dist-test / test hooks in tarball",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "no test/ or harness sources in tarball",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "no correlation marker or test-hook symbols in packaged JS",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "native better-sqlite3 loads from the installed package",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "name": "installed CLI `codex-channel-octo version` prints the package version",
+          "ok": true,
+          "detail": "0 0.1.0 "
+        }
+      ],
+      "start": "2026-10-13T14:05:50.428Z",
+      "end": "2026-10-13T14:05:54.751Z",
+      "status": "passed",
+      "evidencePaths": [
+        "test/evidence/dev01/runs/pack-smoke.results.json"
+      ]
+    }
+  ]
+}
