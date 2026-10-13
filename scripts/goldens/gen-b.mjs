@@ -8,8 +8,11 @@
  *   sha256 of every source file it executes or parses.
  * - Bundles B src/socket.ts unmodified with esbuild, appending only an export
  *   statement for module-private functions, then runs it with fixed inputs.
- * - Extracts the octo_management action enum (src/agent-tools.ts) and the
- *   message-tool action list (src/channel.ts) with the TypeScript AST.
+ * - Extracts with the TypeScript AST (R8 amendment A-R8-PM05-01): the
+ *   octo_management action enum (src/agent-tools.ts), the advertised
+ *   message-tool action list (src/channel.ts getAvailableActions), every
+ *   reachable handleOctoMessageAction route (src/actions.ts), and the
+ *   factory/registration/dispatcher ownership (file, symbol, lines, sha256).
  * - Writes test/goldens/b/*.json plus a `<file>.sha256` beside each output.
  *   --check regenerates into memory and fails if committed outputs differ.
  */
@@ -37,7 +40,7 @@ const fail = (m) => { console.error(`gen-b: ${m}`); process.exit(1); };
 
 const head = execFileSync('git', ['-C', B, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 if (head !== pins.B) fail(`B checkout HEAD ${head} != pinned ${pins.B}`);
-const dirty = execFileSync('git', ['-C', B, 'status', '--porcelain', '--', 'src/socket.ts', 'src/agent-tools.ts', 'src/channel.ts'], { encoding: 'utf8' }).trim();
+const dirty = execFileSync('git', ['-C', B, 'status', '--porcelain', '--', 'src/socket.ts', 'src/agent-tools.ts', 'src/channel.ts', 'src/actions.ts', 'index.ts'], { encoding: 'utf8' }).trim();
 if (dirty) fail(`B source files are modified:\n${dirty}`);
 
 const sources = {};
@@ -181,34 +184,109 @@ const wire = {
   vectors: { encoder: encoderVectors, truncatedDecode, connect, aes, session },
 };
 
-// ── action inventories via TypeScript AST ─────────────────────────────────
-function parse(rel) { return ts.createSourceFile(rel, readSource(rel), ts.ScriptTarget.Latest, true); }
+// ── action inventories via TypeScript AST (A-R8-PM05-01) ─────────────────
+const AMENDMENT = { id: 'A-R8-PM05-01', ratification: 'b57277b2-618e-4da2-8291-3dba7b0b1c5f', doc: 'docs/amendments/R8-AMD-01.md' };
+const parsed = {};
+function parse(rel) { return (parsed[rel] ??= ts.createSourceFile(rel, readSource(rel), ts.ScriptTarget.Latest, true)); }
 function stringArray(node) {
   return ts.isArrayLiteralExpression(node) && node.elements.every(ts.isStringLiteral) ? node.elements.map((e) => e.text) : null;
 }
-let management = null;
-(function walk(n) {
-  if (!management && ts.isPropertyAssignment(n) && n.name.getText() === 'action' && ts.isObjectLiteralExpression(n.initializer)) {
-    for (const p of n.initializer.properties) if (ts.isPropertyAssignment(p) && p.name.getText() === 'enum') management = stringArray(p.initializer);
+const lineOf = (sf, pos) => sf.getLineAndCharacterOfPosition(pos).line + 1;
+/** Ownership provenance for an AST node: file, symbol, 1-based lines, sha256 of the node text and of the file. */
+function provenance(rel, symbol, node, extra = {}) {
+  const sf = parse(rel);
+  return { file: rel, symbol, startLine: lineOf(sf, node.getStart(sf)), endLine: lineOf(sf, node.getEnd()), sha256: sha256(Buffer.from(node.getText(sf), 'utf8')), fileSha256: sources[rel], ...extra };
+}
+function find(root, pred) {
+  let hit = null;
+  (function walk(n) { if (!hit && pred(n)) hit = n; if (!hit) ts.forEachChild(n, walk); })(root);
+  return hit;
+}
+const findAll = (root, pred) => { const out = []; (function walk(n) { if (pred(n)) out.push(n); ts.forEachChild(n, walk); })(root); return out; };
+const unwrap = (n) => (n && (ts.isAsExpression(n) || ts.isParenthesizedExpression(n) || ts.isSatisfiesExpression?.(n)) ? unwrap(n.expression) : n);
+const prop = (obj, name) => obj.properties.find((p) => (ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p)) && p.name.getText() === name);
+const calls = (node, name) => findAll(node, (n) => ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name);
+
+// octo_management: factory, enum and plugin registration
+const tools = parse('src/agent-tools.ts');
+const factory = find(tools, (n) => ts.isFunctionDeclaration(n) && n.name?.text === 'createOctoManagementTools');
+if (!factory) fail('createOctoManagementTools not found in B src/agent-tools.ts');
+const actionProp = find(factory, (n) => ts.isPropertyAssignment(n) && n.name.getText() === 'action' && ts.isObjectLiteralExpression(n.initializer) && prop(n.initializer, 'enum'));
+const enumProp = actionProp && prop(actionProp.initializer, 'enum');
+const management = enumProp && stringArray(enumProp.initializer);
+if (!management) fail('octo_management action enum not found inside createOctoManagementTools');
+const index = parse('index.ts');
+const registerCall = find(index, (n) => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'registerTool'
+  && n.arguments.length === 2 && ts.isObjectLiteralExpression(n.arguments[1]) && stringArray(prop(n.arguments[1], 'names')?.initializer ?? ts.factory.createNull())?.includes('octo_management'));
+if (!registerCall || calls(registerCall.arguments[0], 'createOctoManagementTools').length !== 1) fail('api.registerTool(octo_management) → createOctoManagementTools not found in B index.ts');
+
+// advertised message actions: getAvailableActions, consumed by octoPlugin.actions.listActions/describeMessageTool
+const channel = parse('src/channel.ts');
+const advertiser = find(channel, (n) => ts.isFunctionDeclaration(n) && n.name?.text === 'getAvailableActions');
+const advertisedReturn = advertiser && find(advertiser, (n) => ts.isReturnStatement(n) && n.expression && stringArray(n.expression)?.length > 0);
+const messageActions = advertisedReturn && stringArray(advertisedReturn.expression);
+if (!messageActions) fail('getAvailableActions advertised action list not found in B src/channel.ts');
+const pluginDecl = find(channel, (n) => ts.isVariableDeclaration(n) && n.name.getText() === 'octoPlugin');
+const pluginObj = unwrap(pluginDecl?.initializer);
+const actionsProp = pluginObj && ts.isObjectLiteralExpression(pluginObj) ? prop(pluginObj, 'actions') : null;
+const actionsObj = unwrap(actionsProp?.initializer);
+if (!actionsObj || !ts.isObjectLiteralExpression(actionsObj)) fail('octoPlugin.actions not found in B src/channel.ts');
+const members = {};
+for (const m of ['listActions', 'describeMessageTool', 'handleAction']) {
+  const p = prop(actionsObj, m);
+  if (!p) fail(`octoPlugin.actions.${m} not found`);
+  members[m] = lineOf(channel, p.getStart(channel));
+  if (m !== 'handleAction' && calls(p, 'getAvailableActions').length !== 1) fail(`octoPlugin.actions.${m} does not advertise via getAvailableActions`);
+}
+const dispatchCalls = calls(prop(actionsObj, 'handleAction'), 'handleOctoMessageAction');
+if (dispatchCalls.length !== 1) fail('octoPlugin.actions.handleAction must call handleOctoMessageAction exactly once');
+
+// reachable message routes: the handleOctoMessageAction switch(action)
+const actionsSf = parse('src/actions.ts');
+const dispatcher = find(actionsSf, (n) => ts.isFunctionDeclaration(n) && n.name?.text === 'handleOctoMessageAction');
+const sw = dispatcher && find(dispatcher.body, (n) => ts.isSwitchStatement(n) && n.expression.getText() === 'action');
+if (!sw) fail('handleOctoMessageAction switch(action) not found in B src/actions.ts');
+const messageRoutes = [];
+let defaultRejectsUnknown = false;
+for (const clause of sw.caseBlock.clauses) {
+  if (ts.isDefaultClause(clause)) {
+    defaultRejectsUnknown = clause.statements.length === 1 && ts.isReturnStatement(clause.statements[0]) && /ok:\s*false/.test(clause.statements[0].getText()) && /Unknown action/.test(clause.statements[0].getText());
+    continue;
   }
-  ts.forEachChild(n, walk);
-})(parse('src/agent-tools.ts'));
-let messageActions = null;
-(function walk(n) {
-  if (!messageActions && ts.isReturnStatement(n) && n.expression) {
-    const a = stringArray(n.expression);
-    if (a && a.includes('send')) messageActions = a;
-  }
-  ts.forEachChild(n, walk);
-})(parse('src/channel.ts'));
-if (!management || !messageActions) fail('could not locate action enums in B source');
+  if (!ts.isStringLiteral(clause.expression)) fail(`non-literal case in handleOctoMessageAction: ${clause.expression.getText()}`);
+  const ret = clause.statements[0];
+  const call = ret && ts.isReturnStatement(ret) && ret.expression && ts.isCallExpression(ret.expression) ? ret.expression : null;
+  if (clause.statements.length !== 1 || !call || !ts.isIdentifier(call.expression)) fail(`case "${clause.expression.text}" is not a single handler return`);
+  const arg = call.arguments[0];
+  const handlerArgs = arg && ts.isObjectLiteralExpression(arg) ? arg.properties.map((p) => p.name.getText()) : [];
+  messageRoutes.push({
+    action: clause.expression.text, file: 'src/actions.ts', symbol: 'handleOctoMessageAction',
+    caseLine: lineOf(actionsSf, clause.getStart(actionsSf)), returnLine: lineOf(actionsSf, ret.getStart(actionsSf)),
+    handler: call.expression.text, handlerArgs, advertised: messageActions.includes(clause.expression.text),
+  });
+}
+if (new Set(messageRoutes.map((r) => r.action)).size !== messageRoutes.length) fail('duplicate handleOctoMessageAction case');
+for (const a of messageActions) if (!messageRoutes.some((r) => r.action === a)) fail(`advertised action ${a} has no dispatcher route`);
+for (const a of messageActions) if (management.includes(a)) fail(`advertised message action ${a} overlaps octo_management`);
+
 const actions = {
   generator: 'scripts/goldens/gen-b.mjs',
   source: { repo: 'Mininglamp-OSS/openclaw-channel-octo', commit: pins.B, file: 'src/agent-tools.ts', sha256: sources['src/agent-tools.ts'] },
   messageSource: { file: 'src/channel.ts', sha256: sources['src/channel.ts'] },
   actions: management,
   messageActions,
-  note: 'octo_management action enum as found in source. R8 §4 O24/§9 DEV-14 state 27 management actions; the pinned source has these entries plus the separate message-tool actions. Source-backed R8 amendment pending.',
+  amendment: AMENDMENT,
+  sources: Object.fromEntries(['index.ts', 'src/actions.ts', 'src/agent-tools.ts', 'src/channel.ts'].map((f) => [f, sources[f]])),
+  ownership: {
+    managementFactory: provenance('src/agent-tools.ts', 'createOctoManagementTools', factory),
+    managementEnum: provenance('src/agent-tools.ts', 'createOctoManagementTools > parameters.properties.action.enum', enumProp),
+    managementRegistration: provenance('index.ts', 'registerFull > api.registerTool(octo_management)', registerCall, { names: ['octo_management'], factoryCall: 'createOctoManagementTools' }),
+    messageAdvertisement: provenance('src/channel.ts', 'getAvailableActions', advertiser, { returnLine: lineOf(channel, advertisedReturn.getStart(channel)), actions: messageActions }),
+    messageRegistration: provenance('src/channel.ts', 'octoPlugin.actions', actionsProp, { members, dispatchCall: 'handleOctoMessageAction', dispatchCallLine: lineOf(channel, dispatchCalls[0].getStart(channel)) }),
+    messageDispatcher: provenance('src/actions.ts', 'handleOctoMessageAction', dispatcher, { defaultRejectsUnknown }),
+  },
+  messageRoutes,
+  note: 'Two disjoint public surfaces in the pinned source (A-R8-PM05-01): 24 octo_management actions and 3 advertised message actions (getAvailableActions). Message dispatch reaches 8 handleOctoMessageAction routes, including the advertised 3. R8 §4 O24/§9 DEV-14 originally stated 27 management actions.',
 };
 
 const outputs = { 'wire-aes-framing.json': wire, 'management-actions.json': actions };

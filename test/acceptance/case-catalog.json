@@ -649,8 +649,8 @@
         "M1"
       ],
       "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
-      "evidenceOracle": "Pass: Under `never`, a shell tool call yields a `commandExecution` item with no server request. Under `on-request` with escalation, the request has `id:0`; the parity error reply → item status `failed`, then `turn/completed status=completed`, then `serverRequest/resolved`",
-      "source": "R8 §6.3"
+      "evidenceOracle": "Pass (as amended by A-R8-SB07-01): Under `never`, a shell tool call yields a `commandExecution` item with no server request. Under `on-request` with escalation in a fresh process, the request has numeric `id:0`; exactly one same-typed host reply within 5000 ms with bytes `{\"id\":0,\"error\":{\"code\":-32000,\"message\":\"command execution approval is not supported in exec mode for thread `<threadId>`\"}}`; then `serverRequest/resolved` (same incarnation, threadId, requestId), then `item/completed` commandExecution status `failed` (same threadId/turnId/itemId; processId, aggregatedOutput, exitCode null), then `turn/completed status=completed` (same threadId/turn.id). Unrelated notifications may interleave; missing, duplicate, wrongly correlated, malformed or reordered required events fail",
+      "source": "R8 §6.3, amended by A-R8-SB07-01 (docs/amendments/R8-AMD-01.md)"
     },
     {
       "id": "SB-08",

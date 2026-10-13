@@ -23,7 +23,8 @@ rmSync(junitPath, { force: true }); // a stale file can never stand in for this 
 
 const unit = spawnSync(process.execPath, ['scripts/ci/run-runner.mjs', runner], { stdio: 'inherit', env: { ...process.env, DEV01_REPORT_DIR: reportDir } });
 const matrix = JSON.parse(readFileSync(join(root, 'test', 'parity-matrix.json'), 'utf8'));
-const structural = validateMatrix(matrix, { testIndex: buildTestIndex(root) });
+const managementGolden = JSON.parse(readFileSync(join(root, 'test', 'goldens', 'b', 'management-actions.json'), 'utf8'));
+const structural = validateMatrix(matrix, { testIndex: buildTestIndex(root), managementGolden });
 const fresh = existsSync(junitPath) ? readFileSync(junitPath, 'utf8') : null;
 const claims = fresh ? verifyAgainstJUnit(matrix, [fresh]) : { issues: [{ code: 'fresh-junit-missing', id: '*', detail: junitPath }], observed: 0 };
 const failedCases = fresh ? [...fresh.matchAll(/<testcase classname="([^"]*)" name="([^"]*)"[^>]*>(?:(?!<\/testcase>)[\s\S])*<failure/g)].map((m) => `${m[1]}#${m[2]}`.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&')) : [];

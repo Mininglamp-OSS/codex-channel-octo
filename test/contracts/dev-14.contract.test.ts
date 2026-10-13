@@ -6,7 +6,7 @@
 import { describe, it } from 'vitest';
 
 describe('DEV-14 pending contracts', () => {
-  it.todo('O24 (DEV-14): Agent tools (`octo_management` 27 actions, message send/read/search, write-secret)');
+  it.todo('O24 (DEV-14): Agent tools (`octo_management`: 24 enum actions including write-secret; separate advertised message actions: send/read/search)');
   it.todo('EP-12 (DEV-14): groups list/get');
   it.todo('EP-15 (DEV-14): group md GET/PUT');
   it.todo('EP-16 (DEV-14): thread md GET/PUT');
