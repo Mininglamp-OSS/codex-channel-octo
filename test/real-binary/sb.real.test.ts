@@ -22,6 +22,7 @@ import { startMockResponses } from '../harness/mock-responses/server.mjs';
 import { recordCase } from '../harness/report/case-meta.js';
 import { normalizeTranscript } from '../harness/app-server-normalize.js';
 import { classifySpT1, callable } from './sp-t1-classify.js';
+import { checkSb07RejectionPath } from '../harness/sb07/oracle.js';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const owned: Array<() => Promise<void> | void> = [];
@@ -161,7 +162,11 @@ describe('SB contract cases', () => {
     expect(execSawPrior).toBe(true);
   }, 120_000);
 
-  it('SB-07: never → commandExecution with no server request; on-request escalation → request id 0, parity reply, item failed, turn completed, then serverRequest/resolved', async (ctx) => {
+  // A-R8-SB07-01 (R8 amendment, owner-ratified): the pinned binary resolves the
+  // request before the item and turn complete. Strict correlated sequence:
+  // requestApproval → host error reply → serverRequest/resolved →
+  // item/completed:failed → turn/completed:completed (oracle: test/harness/sb07/).
+  it('SB-07: never → commandExecution with no server request; on-request escalation in a fresh process → request id 0, byte-exact parity reply ≤ 5 s, serverRequest/resolved, item failed, turn completed (A-R8-SB07-01)', async (ctx) => {
     const { env, mock } = await setup('SB-07', [
       { functionCall: { name: 'exec_command', arguments: { cmd: 'echo sb07-never' } } }, { text: 'done-never' },
       { functionCall: { name: 'exec_command', arguments: { cmd: 'echo sb07-esc', sandbox_permissions: 'require_escalated', justification: 'contract test' } } }, { text: 'done-escalated' },
@@ -174,26 +179,21 @@ describe('SB contract cases', () => {
     const neverItems = as.notifications().filter((n) => n.method === 'item/started' && (n.params as { item: { type: string } }).item.type === 'commandExecution');
     const neverRequests = as.serverRequests.length - before;
 
+    // The harness default answer is the exec-parity rejection under test.
     const t2 = await as.startThread({ cwd: env.cwd(), approvalPolicy: 'on-request' });
-    as.onServerRequest = (r) => ({ error: { code: -32000, message: `${r.method} is not supported in exec mode for thread \`${t2}\`` } });
-    const mark = as.transcript.length;
     await as.runTurn(t2, 'run escalated', { approvalPolicy: 'on-request' });
-    await as.waitForNotification((n) => n.method === 'serverRequest/resolved', 10_000).catch(() => undefined);
-    const after = as.transcript.slice(mark).filter((e) => e.dir === 'in');
-    const req = after.find((e) => e.message.method === 'item/commandExecution/requestApproval' && e.message.id !== undefined);
-    const order = after.map((e) => {
-      const msg = e.message as { method?: string; id?: unknown; params?: { item?: { type?: string; status?: string }; turn?: { status?: string } } };
-      if (msg.method === 'item/completed' && msg.params?.item?.type === 'commandExecution') return `item/completed:${msg.params.item.status}`;
-      if (msg.method === 'turn/completed') return `turn/completed:${msg.params?.turn?.status}`;
-      if (msg.method === 'serverRequest/resolved') return 'serverRequest/resolved';
-      if (msg.method === 'item/commandExecution/requestApproval') return 'requestApproval';
-      return null;
-    }).filter(Boolean);
-    recordCase(ctx, { neverCommandItems: neverItems.length, neverServerRequests: neverRequests, escalationRequestId: req?.message.id, order }, env.evidence(as));
+    const verdict = checkSb07RejectionPath(as.transcript, { threadId: t2, incarnation: as.incarnation });
+    const reply = as.transcript.filter((e) => e.dir === 'out' && e.message.method === undefined && e.message.id === 0);
+    const evidence = env.evidence(as);
+    recordCase(ctx, { neverCommandItems: neverItems.length, neverServerRequests: neverRequests, incarnation: as.incarnation, record: verdict.record, indices: verdict.indices, violations: verdict.violations, replyRaw: reply.map((e) => e.raw) }, evidence);
     expect(neverItems.length).toBeGreaterThan(0);
     expect(neverRequests).toBe(0);
-    expect(req?.message.id).toBe(0);
-    expect(order).toEqual(['requestApproval', 'item/completed:failed', 'turn/completed:completed', 'serverRequest/resolved']);
+    expect.soft(reply.map((e) => [e.raw, e.incarnation])).toEqual([[
+      `{"id":0,"error":{"code":-32000,"message":${JSON.stringify(`command execution approval is not supported in exec mode for thread \`${t2}\``)}}}`,
+      as.incarnation,
+    ]]);
+    expect.soft(verdict.violations).toEqual([]);
+    expect(verdict.ok).toBe(true);
   }, 120_000);
 
   it('SB-08: turn/interrupt → {} within 2 s, then turn/completed status=interrupted within 5 s', async (ctx) => {

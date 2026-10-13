@@ -8,8 +8,12 @@
  *  - steering detection: a turn/start on a thread with an active turn is
  *    recorded as a violation (the runtime must never steer);
  *  - server-request accounting: requests left unanswered at shutdown are
- *    recorded as violations.
- * Env: FAKE_AS_SCENARIO (JSON {turns:[{text?, delayMs?, hang?, serverRequest?}]}),
+ *    recorded as violations;
+ *  - commandApproval: the pinned binary's uninterrupted exec-parity rejection
+ *    path (A-R8-SB07-01): requestApproval → host reply → serverRequest/resolved
+ *    → item/completed (failed, never executed) → turn/completed. A reply that is
+ *    not the byte-level exec parity error is recorded as a violation.
+ * Env: FAKE_AS_SCENARIO (JSON {turns:[{text?, delayMs?, hang?, serverRequest?, commandApproval?}]}),
  *      FAKE_AS_FAULTS, FAKE_AS_LOG (JSONL report path).
  */
 import { appendFileSync } from 'node:fs';
@@ -41,7 +45,8 @@ let initialized = false;
 const threads = new Map(); // threadId → { active: turn | null }
 const turns = [...(scenario.turns ?? [])];
 let nextServerRequestId = 0;
-const pendingServerRequests = new Map(); // id → { resolve, method }
+const pendingServerRequests = new Map(); // id → { resolve, method, parity? }
+const parityMessage = (threadId) => `command execution approval is not supported in exec mode for thread \`${threadId}\``;
 
 const turnObj = (id, status) => ({ id, items: [], itemsView: 'notLoaded', status, error: null, startedAt: null, completedAt: null, durationMs: null });
 const threadObj = (id) => ({ id, sessionId: id, preview: '', ephemeral: false, modelProvider: 'openai', status: { type: 'idle' }, turns: [] });
@@ -69,6 +74,7 @@ async function runTurn(threadId, turn, script, input) {
     await answered;
     send({ method: 'serverRequest/resolved', params: { threadId, requestId: id } });
   }
+  if (script.commandApproval) await rejectedCommand(threadId, turn, script.commandApproval);
   if (script.hang) return; // only an interrupt ends this turn
   if (script.delayMs) await sleep(script.delayMs);
   if (turn.done) return;
@@ -78,10 +84,31 @@ async function runTurn(threadId, turn, script, input) {
   complete(threadId, turn, 'completed');
 }
 
-function handle(m) {
+async function rejectedCommand(threadId, turn, spec) {
+  const itemId = spec.itemId ?? `call_${randomUUID()}`;
+  const command = spec.command ?? 'true';
+  const item = (status) => ({ type: 'commandExecution', id: itemId, command, cwd: '/fake', processId: null, source: 'agent', status, commandActions: [{ type: 'unknown', command }], aggregatedOutput: null, exitCode: null, durationMs: null });
+  send({ method: 'thread/status/changed', params: { threadId, status: { type: 'active', activeFlags: ['waitingOnApproval'] } } });
+  send({ method: 'item/started', params: { item: item('inProgress'), threadId, turnId: turn.id } });
+  const id = nextServerRequestId++;
+  const answered = new Promise((resolve) => pendingServerRequests.set(id, { resolve, method: 'item/commandExecution/requestApproval', parity: { threadId } }));
+  send({ id, method: 'item/commandExecution/requestApproval', params: { threadId, turnId: turn.id, itemId, reason: spec.reason ?? null, command, cwd: '/fake' } });
+  await answered;
+  send({ method: 'serverRequest/resolved', params: { threadId, requestId: id } });
+  send({ method: 'item/completed', params: { item: item('failed'), threadId, turnId: turn.id } });
+  send({ method: 'thread/status/changed', params: { threadId, status: { type: 'active', activeFlags: [] } } });
+}
+
+function handle(m, line) {
   if (m.method === undefined && m.id !== undefined) { // response to a server request
     const p = pendingServerRequests.get(m.id);
-    if (p) { pendingServerRequests.delete(m.id); report({ kind: 'server-request-answered', id: m.id, method: p.method, error: m.error ?? null }); p.resolve(); }
+    if (p) {
+      pendingServerRequests.delete(m.id);
+      const parity = p.parity ? line === JSON.stringify({ id: m.id, error: { code: -32000, message: parityMessage(p.parity.threadId) } }) : undefined;
+      report({ kind: 'server-request-answered', id: m.id, method: p.method, error: m.error ?? null, ...(p.parity ? { parity } : {}) });
+      if (parity === false) report({ kind: 'violation', code: 'non-parity-reply', id: m.id, line });
+      p.resolve();
+    }
     return;
   }
   report({ kind: 'request', method: m.method, params: m.params });
@@ -144,7 +171,7 @@ process.stdin.on('data', (d) => {
     const line = buf.slice(0, i);
     buf = buf.slice(i + 1);
     if (!line.trim()) continue;
-    try { handle(JSON.parse(line)); } catch (e) { report({ kind: 'parse-error', message: String(e) }); }
+    try { handle(JSON.parse(line), line); } catch (e) { report({ kind: 'parse-error', message: String(e) }); }
   }
 });
 process.stdin.on('end', () => {

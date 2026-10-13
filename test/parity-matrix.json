@@ -4,13 +4,14 @@
   "currentStage": "DEV-01",
   "sources": {
     "r8": "R8 §§1.2, 4.1–4.8, 5.1–5.8, 7.1",
-    "managementActions": "test/goldens/b/management-actions.json (pinned B source)"
+    "managementActions": "test/goldens/b/management-actions.json (pinned B source: octo_management enum, advertised message actions, handleOctoMessageAction routes, ownership provenance)"
   },
   "blockers": [
     {
       "id": "R8-MGMT-27",
-      "status": "open",
-      "detail": "R8 §4 O24 / §9 DEV-14 state 27 octo_management actions. Pinned B src/agent-tools.ts (sha256 bf549838a2995094fcf95514e081317c8b35820979b661a1d3615409e75cbf06) defines 24 management actions; send/read/search are separate message-tool actions (src/channel.ts). The matrix records the source-backed 24 + 3; PM-05 stays failing until a source-backed R8 amendment."
+      "status": "resolved",
+      "detail": "R8 §4 O24 / §9 DEV-14 state 27 octo_management actions. Pinned B src/agent-tools.ts (sha256 bf549838a2995094fcf95514e081317c8b35820979b661a1d3615409e75cbf06) defines 24 management actions; send/read/search are separate message-tool actions (src/channel.ts). The matrix records the source-backed 24 + 3; PM-05 stays failing until a source-backed R8 amendment.",
+      "resolution": "Resolved by A-R8-PM05-01 (owner ratification b57277b2-618e-4da2-8291-3dba7b0b1c5f, docs/amendments/R8-AMD-01.md): 24 octo_management actions, 3 advertised message actions and 8 reachable message routes, recorded as three disjoint surfaces."
     }
   ],
   "fields": [
@@ -27,7 +28,10 @@
     "evidence",
     "executionStatus",
     "implementationStatus",
-    "gap"
+    "gap",
+    "surface",
+    "route",
+    "references"
   ],
   "rows": [
     {
@@ -2504,7 +2508,7 @@
     {
       "id": "O24",
       "kind": "capability",
-      "title": "Agent tools (`octo_management` 27 actions, message send/read/search, write-secret)",
+      "title": "Agent tools (`octo_management`: 24 enum actions including write-secret; separate advertised message actions: send/read/search)",
       "acceptance": "TIER-OD → REWRITE registration as dynamic tools (SP-T1); authority via TurnContext (§3.3.3); port `permission`, `target` and `actions` logic; write-secret Tier C",
       "disposition": "TIER-OD",
       "dispositionNote": "TIER-OD → REWRITE registration as dynamic tools (SP-T1); authority via TurnContext (§3.3.3); port `permission`, `target` and `actions` logic; write-secret Tier C",
@@ -2514,7 +2518,7 @@
       ],
       "tier": "B",
       "tests": [
-        "test/contracts/dev-14.contract.test.ts#DEV-14 pending contracts > O24 (DEV-14): Agent tools (`octo_management` 27 actions, message send/read/search, write-secret)"
+        "test/contracts/dev-14.contract.test.ts#DEV-14 pending contracts > O24 (DEV-14): Agent tools (`octo_management`: 24 enum actions including write-secret; separate advertised message actions: send/read/search)"
       ],
       "implementationStatus": "pending",
       "executionStatus": "not-run",
@@ -8671,7 +8675,12 @@
       ],
       "tier": "B",
       "tests": [
-        "test/contracts/dev-14.contract.test.ts#DEV-14 pending contracts > O24.msg.send (DEV-14): message tool action send (separate from octo_management)"
+        "test/contracts/dev-14.contract.test.ts#DEV-14 pending contracts > O24.msg.send (DEV-14): message tool action send (separate from octo_management)",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.send (DEV-14): authorization — send (advertised) runs only for the TurnContext principal; external task sessions are gated before dispatch",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.send (DEV-14): target resolution — send resolves its target from args and the trusted current channel, never from an attacker-supplied account",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.send (DEV-14): result envelope — send returns the ok/error tool result shape with the B error texts",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.send (DEV-14): cache — send: reads memberMap/uidToNameMap for mention resolution; never writes caches of other accounts",
+        "test/parity/pm05-routes.test.ts#PM05-F1: source-backed Octo tool surfaces (A-R8-PM05-01) > PM05-F1-03: handleOctoMessageAction reaches exactly 8 routes, AST-captured with case line, handler and provenance"
       ],
       "implementationStatus": "pending",
       "executionStatus": "not-run",
@@ -8680,7 +8689,14 @@
       "fixture": "",
       "evidence": "",
       "decision": "",
-      "gap": "pending DEV-14"
+      "gap": "pending DEV-14",
+      "surface": "advertised",
+      "route": {
+        "file": "src/actions.ts",
+        "symbol": "handleOctoMessageAction",
+        "caseLine": 189,
+        "sha256": "928312349952a5f3697ee46ef51742aae5d7d528dd08add595fc7d3f6d5d7002"
+      }
     },
     {
       "id": "O24.msg.read",
@@ -8695,7 +8711,12 @@
       ],
       "tier": "B",
       "tests": [
-        "test/contracts/dev-14.contract.test.ts#DEV-14 pending contracts > O24.msg.read (DEV-14): message tool action read (separate from octo_management)"
+        "test/contracts/dev-14.contract.test.ts#DEV-14 pending contracts > O24.msg.read (DEV-14): message tool action read (separate from octo_management)",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.read (DEV-14): authorization — read (advertised) runs only for the TurnContext principal; external task sessions are gated before dispatch",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.read (DEV-14): target resolution — read resolves its target from args and the trusted current channel, never from an attacker-supplied account",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.read (DEV-14): result envelope — read returns the ok/error tool result shape with the B error texts",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.read (DEV-14): cache — read: reads uidToNameMap for sender names; requester-scoped results are never cached",
+        "test/parity/pm05-routes.test.ts#PM05-F1: source-backed Octo tool surfaces (A-R8-PM05-01) > PM05-F1-03: handleOctoMessageAction reaches exactly 8 routes, AST-captured with case line, handler and provenance"
       ],
       "implementationStatus": "pending",
       "executionStatus": "not-run",
@@ -8704,7 +8725,14 @@
       "fixture": "",
       "evidence": "",
       "decision": "",
-      "gap": "pending DEV-14"
+      "gap": "pending DEV-14",
+      "surface": "advertised",
+      "route": {
+        "file": "src/actions.ts",
+        "symbol": "handleOctoMessageAction",
+        "caseLine": 191,
+        "sha256": "928312349952a5f3697ee46ef51742aae5d7d528dd08add595fc7d3f6d5d7002"
+      }
     },
     {
       "id": "O24.msg.search",
@@ -8719,7 +8747,58 @@
       ],
       "tier": "B",
       "tests": [
-        "test/contracts/dev-14.contract.test.ts#DEV-14 pending contracts > O24.msg.search (DEV-14): message tool action search (separate from octo_management)"
+        "test/contracts/dev-14.contract.test.ts#DEV-14 pending contracts > O24.msg.search (DEV-14): message tool action search (separate from octo_management)",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.search (DEV-14): authorization — search (advertised) runs only for the TurnContext principal; external task sessions are gated before dispatch",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.search (DEV-14): target resolution — search resolves its target from args and the trusted current channel, never from an attacker-supplied account",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.search (DEV-14): result envelope — search returns the ok/error tool result shape with the B error texts",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg.search (DEV-14): cache — search: no route cache; requester-scoped results are never cached",
+        "test/parity/pm05-routes.test.ts#PM05-F1: source-backed Octo tool surfaces (A-R8-PM05-01) > PM05-F1-03: handleOctoMessageAction reaches exactly 8 routes, AST-captured with case line, handler and provenance"
+      ],
+      "implementationStatus": "pending",
+      "executionStatus": "not-run",
+      "owner": "backend-dev",
+      "layer": "unit/fake-server",
+      "fixture": "",
+      "evidence": "",
+      "decision": "",
+      "gap": "pending DEV-14",
+      "surface": "advertised",
+      "route": {
+        "file": "src/actions.ts",
+        "symbol": "handleOctoMessageAction",
+        "caseLine": 193,
+        "sha256": "928312349952a5f3697ee46ef51742aae5d7d528dd08add595fc7d3f6d5d7002"
+      }
+    },
+    {
+      "id": "O24.msg-route.member-info",
+      "kind": "message-route",
+      "title": "message dispatcher route member-info (reachable via handleOctoMessageAction; not advertised)",
+      "acceptance": "route-level authorization, target resolution, result envelope and cache contracts; stays unadvertised unless a later amendment adds it",
+      "disposition": "TIER-OD",
+      "dispositionNote": "TIER-OD → REWRITE as dynamic tools (DEV-14); reachable-only route per A-R8-PM05-01",
+      "aStatus": "missing in A",
+      "stage": [
+        "DEV-14"
+      ],
+      "tier": "B",
+      "surface": "reachable-only",
+      "route": {
+        "file": "src/actions.ts",
+        "symbol": "handleOctoMessageAction",
+        "caseLine": 195,
+        "sha256": "928312349952a5f3697ee46ef51742aae5d7d528dd08add595fc7d3f6d5d7002"
+      },
+      "references": {
+        "endpoint": "EP-13",
+        "management": "O24.mgmt.group-members"
+      },
+      "tests": [
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.member-info (DEV-14): authorization — member-info (reachable-only) runs only for the TurnContext principal; external task sessions are gated before dispatch",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.member-info (DEV-14): target resolution — member-info requires args.target; parseTarget channelId drives EP-13 getGroupMembers under the trusted account",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.member-info (DEV-14): result envelope — member-info returns ok/data members and count; missing target and caught getGroupMembers errors preserve B error texts",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.member-info (DEV-14): cache — member-info: no route cache; must not populate shared member caches",
+        "test/parity/pm05-routes.test.ts#PM05-F1: source-backed Octo tool surfaces (A-R8-PM05-01) > PM05-F1-03: handleOctoMessageAction reaches exactly 8 routes, AST-captured with case line, handler and provenance"
       ],
       "implementationStatus": "pending",
       "executionStatus": "not-run",
@@ -8729,6 +8808,178 @@
       "evidence": "",
       "decision": "",
       "gap": "pending DEV-14"
+    },
+    {
+      "id": "O24.msg-route.channel-list",
+      "kind": "message-route",
+      "title": "message dispatcher route channel-list (reachable via handleOctoMessageAction; not advertised)",
+      "acceptance": "route-level authorization, target resolution, result envelope and cache contracts; stays unadvertised unless a later amendment adds it",
+      "disposition": "TIER-OD",
+      "dispositionNote": "TIER-OD → REWRITE as dynamic tools (DEV-14); reachable-only route per A-R8-PM05-01",
+      "aStatus": "missing in A",
+      "stage": [
+        "DEV-14"
+      ],
+      "tier": "B",
+      "surface": "reachable-only",
+      "route": {
+        "file": "src/actions.ts",
+        "symbol": "handleOctoMessageAction",
+        "caseLine": 197,
+        "sha256": "928312349952a5f3697ee46ef51742aae5d7d528dd08add595fc7d3f6d5d7002"
+      },
+      "references": {
+        "endpoint": "EP-12",
+        "management": "O24.mgmt.list-groups"
+      },
+      "tests": [
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.channel-list (DEV-14): authorization — channel-list (reachable-only) runs only for the TurnContext principal; external task sessions are gated before dispatch",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.channel-list (DEV-14): target resolution — channel-list takes no target argument and calls EP-12 fetchBotGroups for the trusted account",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.channel-list (DEV-14): result envelope — channel-list returns ok/data groups and count; fetchBotGroups exception propagation preserves the adapter boundary",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.channel-list (DEV-14): cache — channel-list: no route cache; must not populate shared group caches",
+        "test/parity/pm05-routes.test.ts#PM05-F1: source-backed Octo tool surfaces (A-R8-PM05-01) > PM05-F1-03: handleOctoMessageAction reaches exactly 8 routes, AST-captured with case line, handler and provenance"
+      ],
+      "implementationStatus": "pending",
+      "executionStatus": "not-run",
+      "owner": "backend-dev",
+      "layer": "unit/fake-server",
+      "fixture": "",
+      "evidence": "",
+      "decision": "",
+      "gap": "pending DEV-14"
+    },
+    {
+      "id": "O24.msg-route.channel-info",
+      "kind": "message-route",
+      "title": "message dispatcher route channel-info (reachable via handleOctoMessageAction; not advertised)",
+      "acceptance": "route-level authorization, target resolution, result envelope and cache contracts; stays unadvertised unless a later amendment adds it",
+      "disposition": "TIER-OD",
+      "dispositionNote": "TIER-OD → REWRITE as dynamic tools (DEV-14); reachable-only route per A-R8-PM05-01",
+      "aStatus": "missing in A",
+      "stage": [
+        "DEV-14"
+      ],
+      "tier": "B",
+      "surface": "reachable-only",
+      "route": {
+        "file": "src/actions.ts",
+        "symbol": "handleOctoMessageAction",
+        "caseLine": 199,
+        "sha256": "928312349952a5f3697ee46ef51742aae5d7d528dd08add595fc7d3f6d5d7002"
+      },
+      "references": {
+        "endpoint": "EP-12",
+        "management": "O24.mgmt.group-info"
+      },
+      "tests": [
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.channel-info (DEV-14): authorization — channel-info (reachable-only) runs only for the TurnContext principal; external task sessions are gated before dispatch",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.channel-info (DEV-14): target resolution — channel-info requires args.target; parseTarget channelId drives EP-12 getGroupInfo under the trusted account",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.channel-info (DEV-14): result envelope — channel-info returns ok/data info; missing target and getGroupInfo exception propagation preserve B semantics",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.channel-info (DEV-14): cache — channel-info: no route cache; must not populate shared group caches",
+        "test/parity/pm05-routes.test.ts#PM05-F1: source-backed Octo tool surfaces (A-R8-PM05-01) > PM05-F1-03: handleOctoMessageAction reaches exactly 8 routes, AST-captured with case line, handler and provenance"
+      ],
+      "implementationStatus": "pending",
+      "executionStatus": "not-run",
+      "owner": "backend-dev",
+      "layer": "unit/fake-server",
+      "fixture": "",
+      "evidence": "",
+      "decision": "",
+      "gap": "pending DEV-14"
+    },
+    {
+      "id": "O24.msg-route.group-md-read",
+      "kind": "message-route",
+      "title": "message dispatcher route group-md-read (reachable via handleOctoMessageAction; not advertised)",
+      "acceptance": "route-level authorization, target resolution, result envelope and cache contracts; stays unadvertised unless a later amendment adds it",
+      "disposition": "TIER-OD",
+      "dispositionNote": "TIER-OD → REWRITE as dynamic tools (DEV-14); reachable-only route per A-R8-PM05-01",
+      "aStatus": "missing in A",
+      "stage": [
+        "DEV-14"
+      ],
+      "tier": "B",
+      "surface": "reachable-only",
+      "route": {
+        "file": "src/actions.ts",
+        "symbol": "handleOctoMessageAction",
+        "caseLine": 201,
+        "sha256": "928312349952a5f3697ee46ef51742aae5d7d528dd08add595fc7d3f6d5d7002"
+      },
+      "references": {
+        "endpoint": "EP-15",
+        "management": "O24.mgmt.group-md-read"
+      },
+      "tests": [
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.group-md-read (DEV-14): authorization — group-md-read (reachable-only) runs only for the TurnContext principal; external task sessions are gated before dispatch",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.group-md-read (DEV-14): target resolution — group-md-read resolves groupId ?? target ?? to after trim/prefix normalization, falling back only to trusted currentChannelId",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.group-md-read (DEV-14): result envelope — group-md-read returns content/version/source=cache on hit or content/version/updated_at/updated_by on fetch; missing group and caught read errors preserve B texts",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.group-md-read (DEV-14): cache — group-md-read: account-isolated groupMdCache is keyed by resolved group; hit bypasses API and successful nonempty fetch populates content/version",
+        "test/parity/pm05-routes.test.ts#PM05-F1: source-backed Octo tool surfaces (A-R8-PM05-01) > PM05-F1-03: handleOctoMessageAction reaches exactly 8 routes, AST-captured with case line, handler and provenance"
+      ],
+      "implementationStatus": "pending",
+      "executionStatus": "not-run",
+      "owner": "backend-dev",
+      "layer": "unit/fake-server",
+      "fixture": "",
+      "evidence": "",
+      "decision": "",
+      "gap": "pending DEV-14"
+    },
+    {
+      "id": "O24.msg-route.group-md-update",
+      "kind": "message-route",
+      "title": "message dispatcher route group-md-update (reachable via handleOctoMessageAction; not advertised)",
+      "acceptance": "route-level authorization, target resolution, result envelope and cache contracts; stays unadvertised unless a later amendment adds it",
+      "disposition": "TIER-OD",
+      "dispositionNote": "TIER-OD → REWRITE as dynamic tools (DEV-14); reachable-only route per A-R8-PM05-01",
+      "aStatus": "missing in A",
+      "stage": [
+        "DEV-14"
+      ],
+      "tier": "B",
+      "surface": "reachable-only",
+      "route": {
+        "file": "src/actions.ts",
+        "symbol": "handleOctoMessageAction",
+        "caseLine": 203,
+        "sha256": "928312349952a5f3697ee46ef51742aae5d7d528dd08add595fc7d3f6d5d7002"
+      },
+      "references": {
+        "endpoint": "EP-15",
+        "management": "O24.mgmt.group-md-update"
+      },
+      "tests": [
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.group-md-update (DEV-14): authorization — group-md-update (reachable-only) runs only for the TurnContext principal; external task sessions are gated before dispatch",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.group-md-update (DEV-14): target resolution — group-md-update resolves groupId ?? target ?? to with trusted currentChannelId fallback; content ?? message ?? topic ?? desc preserves empty content",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.group-md-update (DEV-14): result envelope — group-md-update returns ok/data version; missing group/content and caught update errors preserve B texts",
+        "test/contracts/dev-14.message-routes.contract.test.ts#DEV-14 pending message route contracts > O24.msg-route.group-md-update (DEV-14): cache — group-md-update: account-isolated groupMdCache replaces content/version for the resolved group only after successful write; failure leaves cache unchanged",
+        "test/parity/pm05-routes.test.ts#PM05-F1: source-backed Octo tool surfaces (A-R8-PM05-01) > PM05-F1-03: handleOctoMessageAction reaches exactly 8 routes, AST-captured with case line, handler and provenance"
+      ],
+      "implementationStatus": "pending",
+      "executionStatus": "not-run",
+      "owner": "backend-dev",
+      "layer": "unit/fake-server",
+      "fixture": "",
+      "evidence": "",
+      "decision": "",
+      "gap": "pending DEV-14"
+    }
+  ],
+  "amendments": [
+    {
+      "id": "A-R8-PM05-01",
+      "version": "R8-AMD-01",
+      "ratification": "b57277b2-618e-4da2-8291-3dba7b0b1c5f",
+      "doc": "docs/amendments/R8-AMD-01.md",
+      "scope": "O24 Octo tool surfaces: 24 octo_management / 3 advertised message / 8 reachable message routes"
+    },
+    {
+      "id": "A-R8-SB07-01",
+      "version": "R8-AMD-01",
+      "ratification": "b57277b2-618e-4da2-8291-3dba7b0b1c5f",
+      "doc": "docs/amendments/R8-AMD-01.md",
+      "scope": "SB-07 correlated exec-parity rejection sequence (real-binary case; no matrix row change)"
     }
   ]
 }

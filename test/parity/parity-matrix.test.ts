@@ -71,14 +71,17 @@ describe('parity matrix: complete R8 accounting', () => {
     }
   });
 
-  // R8 §4 O24/§9 DEV-14 state 27 octo_management actions. The pinned B source
-  // (src/agent-tools.ts sha256 bf549838…cbf06) has 24 management actions plus 3
-  // SEPARATE message-tool actions (send/read/search). PM-05 keeps the R8
-  // expectation and stays RED until a source-backed R8 amendment lands; the
-  // golden records the source as-is. Blocker: PjM amendment required.
-  it('PM-05: R8 requires 27 octo_management actions in the pinned B source (BLOCKED: source has 24)', () => {
-    const golden = JSON.parse(readFileSync(new URL('../goldens/b/management-actions.json', import.meta.url), 'utf8')) as { actions: string[] };
-    expect(golden.actions).toHaveLength(27);
+  // R8 §4 O24/§9 DEV-14 as amended by A-R8-PM05-01 (owner-ratified): the pinned
+  // B source (src/agent-tools.ts sha256 bf549838…cbf06) defines 24 octo_management
+  // actions; send/read/search are the SEPARATE advertised message surface and
+  // handleOctoMessageAction reaches 8 message routes. Full route checks:
+  // test/parity/pm05-routes.test.ts.
+  it('PM-05: octo_management has exactly the 24 source-backed actions (A-R8-PM05-01; R8 originally stated 27)', () => {
+    const golden = JSON.parse(readFileSync(new URL('../goldens/b/management-actions.json', import.meta.url), 'utf8')) as { actions: string[]; messageActions: string[]; messageRoutes?: Array<{ action: string }> };
+    expect(golden.actions).toHaveLength(24);
+    expect(new Set(golden.actions).size).toBe(24);
+    expect(golden.messageActions).toHaveLength(3);
+    expect(golden.messageRoutes?.map((r) => r.action)).toHaveLength(8);
   });
 
   it('PM-05b: management-action rows equal the source-captured octo_management enum; message-tool actions stay separate', () => {
@@ -102,7 +105,8 @@ describe('parity matrix: complete R8 accounting', () => {
 
 describe('parity matrix: no fake coverage or status claims', () => {
   const index = buildTestIndex(ROOT);
-  const issues = validateMatrix(matrix, { testIndex: index, root: ROOT });
+  const managementGolden = JSON.parse(readFileSync(new URL('../goldens/b/management-actions.json', import.meta.url), 'utf8')) as Record<string, unknown>;
+  const issues = validateMatrix(matrix, { testIndex: index, root: ROOT, managementGolden });
 
   it('PM-07: the validator reports zero issues for the checked-in matrix', () => {
     expect(issues).toEqual([]);

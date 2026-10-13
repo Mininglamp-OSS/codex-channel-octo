@@ -2,14 +2,27 @@
  * Test-only JSONL JSON-RPC client for App Server processes (the real binary or
  * the scripted fake). Records a full transcript, answers server requests via
  * onServerRequest (default: the exec-parity rejection) and never pauses stdout.
- * This is harness code, not the DEV-03 production client.
+ * Every transcript entry carries its raw line bytes and the process
+ * incarnation, so replies can be checked byte-for-byte per process
+ * (A-R8-SB07-01). This is harness code, not the DEV-03 production client.
  */
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 
 export interface RpcMessage { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { code: number; message: string; data?: unknown } }
-export interface TranscriptEntry { dir: 'in' | 'out'; at: number; message: RpcMessage }
+/**
+ * `raw` is the exact JSONL line (without the trailing LF) read or written;
+ * `incarnation` identifies the spawned process the entry belongs to.
+ * Both are optional so transcripts recorded before A-R8-SB07-01 still load.
+ */
+export interface TranscriptEntry { dir: 'in' | 'out'; at: number; message: RpcMessage; raw?: string; incarnation?: string }
 export interface ServerRequest { id: number | string; method: string; params: unknown }
 export type ServerRequestAnswer = { result: unknown } | { error: { code: number; message: string } } | undefined;
+
+/** Pinned 0.142.3 `codex exec` rejection text for a command approval (A-R8-SB07-01). */
+export const execModeCommandApprovalMessage = (threadId: string): string =>
+  `command execution approval is not supported in exec mode for thread \`${threadId}\``;
+
+let incarnations = 0;
 
 export class RpcError extends Error {
   constructor(readonly code: number, message: string, readonly data?: unknown) { super(message); }
@@ -20,9 +33,19 @@ export class JsonlRpcClient {
   readonly serverRequests: ServerRequest[] = [];
   stderr = '';
   readonly exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
-  onServerRequest: (r: ServerRequest) => ServerRequestAnswer = (r) => ({
-    error: { code: -32000, message: `${r.method} is not supported in exec mode for thread \`${(r.params as { threadId?: string })?.threadId ?? ''}\`` },
-  });
+  /** Unique per spawned process within this test run. */
+  readonly incarnation: string;
+  onServerRequest: (r: ServerRequest) => ServerRequestAnswer = (r) => {
+    const threadId = (r.params as { threadId?: string })?.threadId ?? '';
+    return {
+      error: {
+        code: -32000,
+        message: r.method === 'item/commandExecution/requestApproval'
+          ? execModeCommandApprovalMessage(threadId)
+          : `${r.method} is not supported in exec mode for thread \`${threadId}\``,
+      },
+    };
+  };
   private nextId = 1;
   private buf = '';
   private readonly pending = new Map<number | string, { resolve: (v: unknown) => void; reject: (e: unknown) => void; method: string }>();
@@ -30,6 +53,7 @@ export class JsonlRpcClient {
   private exitInfo: { code: number | null; signal: NodeJS.Signals | null } | undefined;
 
   private constructor(readonly child: ChildProcess) {
+    this.incarnation = `${process.pid}.${++incarnations}.${child.pid ?? 'nopid'}`;
     child.stdout!.setEncoding('utf8');
     child.stdout!.on('data', (d: string) => this.onData(d));
     child.stderr!.setEncoding('utf8');
@@ -58,7 +82,7 @@ export class JsonlRpcClient {
       if (!line.trim()) continue;
       let msg: RpcMessage;
       try { msg = JSON.parse(line) as RpcMessage; } catch { continue; }
-      this.transcript.push({ dir: 'in', at: performance.now(), message: msg });
+      this.transcript.push({ dir: 'in', at: performance.now(), message: msg, raw: line, incarnation: this.incarnation });
       if (msg.method !== undefined && msg.id !== undefined) {
         const req = { id: msg.id, method: msg.method, params: msg.params };
         this.serverRequests.push(req);
@@ -74,9 +98,10 @@ export class JsonlRpcClient {
   }
 
   private write(message: RpcMessage): void {
-    this.transcript.push({ dir: 'out', at: performance.now(), message });
+    const raw = JSON.stringify(message);
+    this.transcript.push({ dir: 'out', at: performance.now(), message, raw, incarnation: this.incarnation });
     if (this.exitInfo || !this.child.stdin!.writable) return;
-    this.child.stdin!.write(JSON.stringify(message) + '\n');
+    this.child.stdin!.write(raw + '\n');
   }
 
   request(method: string, params: unknown, opts: { timeoutMs?: number } = {}): Promise<unknown> {
