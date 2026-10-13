@@ -1,0 +1,4 @@
+
+> @mininglamp-oss/codex-channel-octo@0.1.0 type-check
+> tsc --noEmit
+

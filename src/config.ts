@@ -14,17 +14,45 @@
  * env overrides still apply to the shared/global layer.
  */
 
-import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, realpathSync, lstatSync } from 'node:fs';
 import { resolve as resolvePath, sep, dirname, join as pathJoin, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { isAllowedApiUrl } from './url-policy.js';
 
 /**
  * Default global config path: `~/.codex-channel-octo/config.json`. This is the
- * single, fixed production location (no env/CLI override). Tests pass an
- * explicit path, which also sets `baseDir` to that file's directory.
+ * fixed production location. Explicit library paths and the opt-in test-profile
+ * seam also set `baseDir` to the selected file's directory.
  */
 export const DEFAULT_CONFIG_PATH = pathJoin(homedir(), '.codex-channel-octo', 'config.json');
+
+/** Opt-in seam used only by the governed test-profile launcher. */
+export function runtimeConfigPath(): string {
+  const root = process.env.CODEX_OCTO_TEST_PROFILE_ROOT;
+  const path = process.env.CODEX_OCTO_TEST_CONFIG_PATH;
+  if (!root && !path) return DEFAULT_CONFIG_PATH;
+  if (!root || !path || !isAbsolute(root) || root.split(sep).includes('..') ||
+      path !== pathJoin(root, 'config', 'config.json')) {
+    throw new Error('Invalid test profile configuration: set both CODEX_OCTO_TEST_PROFILE_ROOT and CODEX_OCTO_TEST_CONFIG_PATH to the isolated config/config.json path');
+  }
+  if (typeof process.getuid !== 'function') throw new Error('Test profiles require a POSIX platform');
+  const shared = pathJoin(process.env.CODEX_OCTO_TEST_SHARED_HOME ?? homedir(), '.codex-channel-octo');
+  if (root === shared || isPathInside(root, shared) || isPathInside(shared, root)) {
+    throw new Error('Test profile overlaps shared configuration');
+  }
+  for (let cursor = path; ; cursor = dirname(cursor)) {
+    const st = lstatSync(cursor);
+    if (st.isSymbolicLink()) throw new Error('Test profile symlink refused');
+    if (cursor === path && (!st.isFile() || st.nlink !== 1 || st.uid !== process.getuid?.() || (st.mode & 0o777) !== 0o600)) {
+      throw new Error('Test profile config must be a 0600 regular file');
+    }
+    if (cursor !== path && (cursor === root || isPathInside(cursor, root))) {
+      if (!st.isDirectory() || st.uid !== process.getuid?.() || (st.mode & 0o777) !== 0o700) throw new Error('Test profile directories must be private 0700');
+    }
+    if (dirname(cursor) === cursor) break;
+  }
+  return path;
+}
 
 export interface Config {
   botToken: string;
@@ -362,7 +390,7 @@ function mergeConfig(base: Config, override: PartialConfig): Config {
  */
 
 export function loadConfig(configPath?: string): Config {
-  const path = configPath ?? DEFAULT_CONFIG_PATH;
+  const path = configPath ?? runtimeConfigPath();
   // Migration aid: if the fixed global config is missing but a legacy
   // ./config.json exists in the cwd, point the operator at the move rather than
   // failing later with a cryptic "Missing required config: apiUrl".

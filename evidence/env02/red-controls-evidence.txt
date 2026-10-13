@@ -1,0 +1,199 @@
+
+ RUN  v3.2.6 /Users/mlamp/octo-daemon_workspaces/620b900b-0dea-443e-b0da-9948b6aa6dcf/c93ea026/workdir/codex-channel-octo
+
+ ❯ src/__tests__/evidence-readback.test.ts (7 tests | 7 failed) 9ms
+   × traverses every page under the original high watermark and preserves int64 IDs 4ms
+     → expected [] to deeply equal [ 1, 2, 3, 4, 5 ]
+   × decodes payloads and sanitizes credentials without destroying body hashes 0ms
+     → Cannot read properties of undefined (reading 'payloadHash')
+   × refuses sequence gaps even when both bounds are present 2ms
+     → promise resolved "{ messages: [], …(5) }" instead of rejecting
+   × fails visibly if a server silently caps history before the lower bound 1ms
+     → promise resolved "{ messages: [], …(5) }" instead of rejecting
+   × rejects duplicate or non-progressing pages 0ms
+     → promise resolved "{ messages: [], …(5) }" instead of rejecting
+   × rejects a moving high watermark rather than mixing snapshots 0ms
+     → promise resolved "{ messages: [], …(5) }" instead of rejecting
+   × never converts HTTP failure into empty successful evidence 0ms
+     → promise resolved "{ messages: [], …(5) }" instead of rejecting
+
+ Test Files  1 failed (1)
+      Tests  7 failed (7)
+   Start at  21:38:56
+   Duration  283ms (transform 49ms, setup 0ms, collect 58ms, tests 9ms, environment 0ms, prepare 58ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > traverses every page under the original high watermark and preserves int64 IDs
+AssertionError: expected [] to deeply equal [ 1, 2, 3, 4, 5 ]
+
+- Expected
++ Received
+
+- [
+-   1,
+-   2,
+-   3,
+-   4,
+-   5,
+- ]
++ []
+
+ ❯ src/__tests__/evidence-readback.test.ts:19:51
+     17|     { messages: [row(3), row(2)] }, { messages: [row(1)] }]);
+     18|   const result = await readback({ ...options, pageSize: 2 });
+     19|   expect(result.messages.map(m => m.message_seq)).toEqual([1, 2, 3, 4,…
+       |                                                   ^
+     20|   expect(result.highWatermark).toBe(5);
+     21|   expect(result.pages).toBe(3);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > decodes payloads and sanitizes credentials without destroying body hashes
+TypeError: Cannot read properties of undefined (reading 'payloadHash')
+ ❯ src/__tests__/evidence-readback.test.ts:30:31
+     28|   expect(JSON.stringify(evidence)).not.toContain('fixture-token');
+     29|   expect(JSON.stringify(evidence)).not.toContain('other');
+     30|   expect(evidence.messages[0].payloadHash).toMatch(/^[a-f0-9]{64}$/);
+       |                               ^
+     31| });
+     32| it('refuses sequence gaps even when both bounds are present', async ()…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > refuses sequence gaps even when both bounds are present
+AssertionError: promise resolved "{ messages: [], …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "complete": true,
++   "cursors": [],
++   "highWatermark": 0,
++   "lowWatermark": 1,
++   "messages": [],
++   "pages": 0,
+  }
+
+ ❯ src/__tests__/evidence-readback.test.ts:34:33
+     32| it('refuses sequence gaps even when both bounds are present', async ()…
+     33|   mock([{ messages: [row(3)] }, { messages: [row(3), row(1)] }]);
+     34|   await expect(readback(options)).rejects.toThrow(/gap/i);
+       |                                 ^
+     35| });
+     36| it('fails visibly if a server silently caps history before the lower b…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > fails visibly if a server silently caps history before the lower bound
+AssertionError: promise resolved "{ messages: [], …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "complete": true,
++   "cursors": [],
++   "highWatermark": 0,
++   "lowWatermark": 1,
++   "messages": [],
++   "pages": 0,
+  }
+
+ ❯ src/__tests__/evidence-readback.test.ts:38:53
+     36| it('fails visibly if a server silently caps history before the lower b…
+     37|   mock([{ messages: [row(5)] }, { messages: [row(5), row(4)] }, { mess…
+     38|   await expect(readback({ ...options, pageSize: 2 })).rejects.toThrow(…
+       |                                                     ^
+     39| });
+     40| it('rejects duplicate or non-progressing pages', async () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > rejects duplicate or non-progressing pages
+AssertionError: promise resolved "{ messages: [], …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "complete": true,
++   "cursors": [],
++   "highWatermark": 0,
++   "lowWatermark": 1,
++   "messages": [],
++   "pages": 0,
+  }
+
+ ❯ src/__tests__/evidence-readback.test.ts:42:53
+     40| it('rejects duplicate or non-progressing pages', async () => {
+     41|   mock([{ messages: [row(4)] }, { messages: [row(4), row(3)] }, { mess…
+     42|   await expect(readback({ ...options, pageSize: 2 })).rejects.toThrow(…
+       |                                                     ^
+     43| });
+     44| it('rejects a moving high watermark rather than mixing snapshots', asy…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > rejects a moving high watermark rather than mixing snapshots
+AssertionError: promise resolved "{ messages: [], …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "complete": true,
++   "cursors": [],
++   "highWatermark": 0,
++   "lowWatermark": 1,
++   "messages": [],
++   "pages": 0,
+  }
+
+ ❯ src/__tests__/evidence-readback.test.ts:46:33
+     44| it('rejects a moving high watermark rather than mixing snapshots', asy…
+     45|   mock([{ messages: [row(4)] }, { messages: [row(5)] }]);
+     46|   await expect(readback(options)).rejects.toThrow(/watermark|cursor/i);
+       |                                 ^
+     47| });
+     48| it('never converts HTTP failure into empty successful evidence', async…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > never converts HTTP failure into empty successful evidence
+AssertionError: promise resolved "{ messages: [], …(5) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "complete": true,
++   "cursors": [],
++   "highWatermark": 0,
++   "lowWatermark": 1,
++   "messages": [],
++   "pages": 0,
+  }
+
+ ❯ src/__tests__/evidence-readback.test.ts:50:33
+     48| it('never converts HTTP failure into empty successful evidence', async…
+     49|   vi.stubGlobal('fetch', vi.fn(async () => new Response('Bearer fixtur…
+     50|   await expect(readback(options)).rejects.toThrow(/incomplete/i);
+       |                                 ^
+     51| });
+     52| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+

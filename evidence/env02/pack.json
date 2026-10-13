@@ -1,0 +1,506 @@
+[
+  {
+    "id": "@mininglamp-oss/codex-channel-octo@0.1.0",
+    "name": "@mininglamp-oss/codex-channel-octo",
+    "version": "0.1.0",
+    "size": 221552,
+    "unpackedSize": 798086,
+    "shasum": "679fe539429a01a34dc6f350591523ebcc264619",
+    "integrity": "sha512-4oHPYRL51B0aGAZVOY9ce719aC/NxG15mmJCHWjRxoXV6I14Arqp3gEM/xy2ZJ36+CVweQI6/wxmXKNpgnM7zg==",
+    "filename": "mininglamp-oss-codex-channel-octo-0.1.0.tgz",
+    "files": [
+      {
+        "path": "CHANGELOG.md",
+        "size": 4498,
+        "mode": 384
+      },
+      {
+        "path": "LICENSE",
+        "size": 10766,
+        "mode": 384
+      },
+      {
+        "path": "README.md",
+        "size": 10207,
+        "mode": 384
+      },
+      {
+        "path": "README.zh-CN.md",
+        "size": 8831,
+        "mode": 384
+      },
+      {
+        "path": "config.bot.docker.example.json",
+        "size": 593,
+        "mode": 384
+      },
+      {
+        "path": "config.bot.example.json",
+        "size": 1609,
+        "mode": 384
+      },
+      {
+        "path": "config.example.json",
+        "size": 3126,
+        "mode": 384
+      },
+      {
+        "path": "dist/agent-bridge.d.ts",
+        "size": 5805,
+        "mode": 384
+      },
+      {
+        "path": "dist/agent-bridge.js",
+        "size": 27636,
+        "mode": 384
+      },
+      {
+        "path": "dist/agent-bridge.js.map",
+        "size": 13909,
+        "mode": 384
+      },
+      {
+        "path": "dist/bot-manager.d.ts",
+        "size": 4864,
+        "mode": 384
+      },
+      {
+        "path": "dist/bot-manager.js",
+        "size": 7982,
+        "mode": 384
+      },
+      {
+        "path": "dist/bot-manager.js.map",
+        "size": 5106,
+        "mode": 384
+      },
+      {
+        "path": "dist/channel-id.d.ts",
+        "size": 154,
+        "mode": 384
+      },
+      {
+        "path": "dist/channel-id.js",
+        "size": 289,
+        "mode": 384
+      },
+      {
+        "path": "dist/channel-id.js.map",
+        "size": 284,
+        "mode": 384
+      },
+      {
+        "path": "dist/cli.d.ts",
+        "size": 5292,
+        "mode": 384
+      },
+      {
+        "path": "dist/cli.js",
+        "size": 17574,
+        "mode": 384
+      },
+      {
+        "path": "dist/cli.js.map",
+        "size": 13839,
+        "mode": 384
+      },
+      {
+        "path": "dist/commands.d.ts",
+        "size": 2773,
+        "mode": 384
+      },
+      {
+        "path": "dist/commands.js",
+        "size": 6266,
+        "mode": 384
+      },
+      {
+        "path": "dist/commands.js.map",
+        "size": 2525,
+        "mode": 384
+      },
+      {
+        "path": "dist/config-watcher.d.ts",
+        "size": 2266,
+        "mode": 384
+      },
+      {
+        "path": "dist/config-watcher.js",
+        "size": 5824,
+        "mode": 384
+      },
+      {
+        "path": "dist/config-watcher.js.map",
+        "size": 3352,
+        "mode": 384
+      },
+      {
+        "path": "dist/config.d.ts",
+        "size": 13858,
+        "mode": 384
+      },
+      {
+        "path": "dist/config.js",
+        "size": 24715,
+        "mode": 384
+      },
+      {
+        "path": "dist/config.js.map",
+        "size": 14123,
+        "mode": 384
+      },
+      {
+        "path": "dist/configure.d.ts",
+        "size": 405,
+        "mode": 384
+      },
+      {
+        "path": "dist/configure.js",
+        "size": 5148,
+        "mode": 384
+      },
+      {
+        "path": "dist/configure.js.map",
+        "size": 3222,
+        "mode": 384
+      },
+      {
+        "path": "dist/conversation-md.d.ts",
+        "size": 1163,
+        "mode": 384
+      },
+      {
+        "path": "dist/conversation-md.js",
+        "size": 7246,
+        "mode": 384
+      },
+      {
+        "path": "dist/conversation-md.js.map",
+        "size": 7568,
+        "mode": 384
+      },
+      {
+        "path": "dist/cron-fire-marker.d.ts",
+        "size": 1211,
+        "mode": 384
+      },
+      {
+        "path": "dist/cron-fire-marker.js",
+        "size": 1329,
+        "mode": 384
+      },
+      {
+        "path": "dist/cron-fire-marker.js.map",
+        "size": 473,
+        "mode": 384
+      },
+      {
+        "path": "dist/cwd-resolver.d.ts",
+        "size": 3742,
+        "mode": 384
+      },
+      {
+        "path": "dist/cwd-resolver.js",
+        "size": 8119,
+        "mode": 384
+      },
+      {
+        "path": "dist/cwd-resolver.js.map",
+        "size": 3268,
+        "mode": 384
+      },
+      {
+        "path": "dist/db-adapter.d.ts",
+        "size": 667,
+        "mode": 384
+      },
+      {
+        "path": "dist/db-adapter.js",
+        "size": 2379,
+        "mode": 384
+      },
+      {
+        "path": "dist/db-adapter.js.map",
+        "size": 1852,
+        "mode": 384
+      },
+      {
+        "path": "dist/file-inline-wrap.d.ts",
+        "size": 3761,
+        "mode": 384
+      },
+      {
+        "path": "dist/file-inline-wrap.js",
+        "size": 11340,
+        "mode": 384
+      },
+      {
+        "path": "dist/file-inline-wrap.js.map",
+        "size": 4938,
+        "mode": 384
+      },
+      {
+        "path": "dist/gateway.d.ts",
+        "size": 4600,
+        "mode": 384
+      },
+      {
+        "path": "dist/gateway.js",
+        "size": 18634,
+        "mode": 384
+      },
+      {
+        "path": "dist/gateway.js.map",
+        "size": 11203,
+        "mode": 384
+      },
+      {
+        "path": "dist/group-config.d.ts",
+        "size": 2305,
+        "mode": 384
+      },
+      {
+        "path": "dist/group-config.js",
+        "size": 5162,
+        "mode": 384
+      },
+      {
+        "path": "dist/group-config.js.map",
+        "size": 2212,
+        "mode": 384
+      },
+      {
+        "path": "dist/group-context.d.ts",
+        "size": 4185,
+        "mode": 384
+      },
+      {
+        "path": "dist/group-context.js",
+        "size": 22106,
+        "mode": 384
+      },
+      {
+        "path": "dist/group-context.js.map",
+        "size": 14653,
+        "mode": 384
+      },
+      {
+        "path": "dist/inbound.d.ts",
+        "size": 6188,
+        "mode": 384
+      },
+      {
+        "path": "dist/inbound.js",
+        "size": 30944,
+        "mode": 384
+      },
+      {
+        "path": "dist/inbound.js.map",
+        "size": 20242,
+        "mode": 384
+      },
+      {
+        "path": "dist/index.d.ts",
+        "size": 2943,
+        "mode": 384
+      },
+      {
+        "path": "dist/index.js",
+        "size": 52426,
+        "mode": 384
+      },
+      {
+        "path": "dist/index.js.map",
+        "size": 26552,
+        "mode": 384
+      },
+      {
+        "path": "dist/media-inbound.d.ts",
+        "size": 1659,
+        "mode": 384
+      },
+      {
+        "path": "dist/media-inbound.js",
+        "size": 5347,
+        "mode": 384
+      },
+      {
+        "path": "dist/media-inbound.js.map",
+        "size": 3904,
+        "mode": 384
+      },
+      {
+        "path": "dist/mention-prefs.d.ts",
+        "size": 496,
+        "mode": 384
+      },
+      {
+        "path": "dist/mention-prefs.js",
+        "size": 4234,
+        "mode": 384
+      },
+      {
+        "path": "dist/mention-prefs.js.map",
+        "size": 3561,
+        "mode": 384
+      },
+      {
+        "path": "dist/mention-utils.d.ts",
+        "size": 4571,
+        "mode": 384
+      },
+      {
+        "path": "dist/mention-utils.js",
+        "size": 8792,
+        "mode": 384
+      },
+      {
+        "path": "dist/mention-utils.js.map",
+        "size": 5027,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/api.d.ts",
+        "size": 5202,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/api.js",
+        "size": 16490,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/api.js.map",
+        "size": 12005,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/evidence.d.ts",
+        "size": 822,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/evidence.js",
+        "size": 5772,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/evidence.js.map",
+        "size": 5508,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/socket.d.ts",
+        "size": 3313,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/socket.js",
+        "size": 32135,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/socket.js.map",
+        "size": 24811,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/types.d.ts",
+        "size": 3631,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/types.js",
+        "size": 1829,
+        "mode": 384
+      },
+      {
+        "path": "dist/octo/types.js.map",
+        "size": 778,
+        "mode": 384
+      },
+      {
+        "path": "dist/prompt-safety.d.ts",
+        "size": 4428,
+        "mode": 384
+      },
+      {
+        "path": "dist/prompt-safety.js",
+        "size": 8388,
+        "mode": 384
+      },
+      {
+        "path": "dist/prompt-safety.js.map",
+        "size": 1682,
+        "mode": 384
+      },
+      {
+        "path": "dist/session-router.d.ts",
+        "size": 7873,
+        "mode": 384
+      },
+      {
+        "path": "dist/session-router.js",
+        "size": 25474,
+        "mode": 384
+      },
+      {
+        "path": "dist/session-router.js.map",
+        "size": 14087,
+        "mode": 384
+      },
+      {
+        "path": "dist/session-store.d.ts",
+        "size": 4496,
+        "mode": 384
+      },
+      {
+        "path": "dist/session-store.js",
+        "size": 15282,
+        "mode": 384
+      },
+      {
+        "path": "dist/session-store.js.map",
+        "size": 8118,
+        "mode": 384
+      },
+      {
+        "path": "dist/stream-relay.d.ts",
+        "size": 1956,
+        "mode": 384
+      },
+      {
+        "path": "dist/stream-relay.js",
+        "size": 12741,
+        "mode": 384
+      },
+      {
+        "path": "dist/stream-relay.js.map",
+        "size": 6636,
+        "mode": 384
+      },
+      {
+        "path": "dist/url-policy.d.ts",
+        "size": 4944,
+        "mode": 384
+      },
+      {
+        "path": "dist/url-policy.js",
+        "size": 12561,
+        "mode": 384
+      },
+      {
+        "path": "dist/url-policy.js.map",
+        "size": 7529,
+        "mode": 384
+      },
+      {
+        "path": "package.json",
+        "size": 1752,
+        "mode": 384
+      }
+    ],
+    "entryCount": 98,
+    "bundled": []
+  }
+]

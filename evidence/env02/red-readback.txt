@@ -1,0 +1,139 @@
+
+ RUN  v3.2.6 /Users/mlamp/octo-daemon_workspaces/620b900b-0dea-443e-b0da-9948b6aa6dcf/c93ea026/workdir/codex-channel-octo
+
+ ❯ src/__tests__/evidence-readback.test.ts (5 tests | 5 failed) 8ms
+   × traverses every page under the original high watermark and preserves int64 IDs 4ms
+     → expected [] to deeply equal [ 1, 2, 3, 4, 5 ]
+   × fails visibly if a server silently caps history before the lower bound 1ms
+     → promise resolved "{ messages: [], …(2) }" instead of rejecting
+   × rejects duplicate or non-progressing pages 0ms
+     → promise resolved "{ messages: [], …(2) }" instead of rejecting
+   × rejects a moving high watermark rather than mixing snapshots 0ms
+     → promise resolved "{ messages: [], …(2) }" instead of rejecting
+   × never converts HTTP failure into empty successful evidence 1ms
+     → expected [Function] to throw error matching /incomplete/i but got 'Octo API /v1/bot/messages/sync failed…'
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > traverses every page under the original high watermark and preserves int64 IDs
+AssertionError: expected [] to deeply equal [ 1, 2, 3, 4, 5 ]
+
+- Expected
++ Received
+
+- [
+-   1,
+-   2,
+-   3,
+-   4,
+-   5,
+- ]
++ []
+
+ ❯ src/__tests__/evidence-readback.test.ts:18:51
+     16|     { messages: [row(3), row(2)] }, { messages: [row(1)] }]);
+     17|   const result = await readback({ ...options, pageSize: 2 });
+     18|   expect(result.messages.map(m => m.message_seq)).toEqual([1, 2, 3, 4,…
+       |                                                   ^
+     19|   expect(result.highWatermark).toBe(5);
+     20|   expect(result.pages).toBe(3);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > fails visibly if a server silently caps history before the lower bound
+AssertionError: promise resolved "{ messages: [], …(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "highWatermark": 0,
++   "messages": [],
++   "pages": 0,
+  }
+
+ ❯ src/__tests__/evidence-readback.test.ts:25:53
+     23| it('fails visibly if a server silently caps history before the lower b…
+     24|   mock([{ messages: [row(5)] }, { messages: [row(5), row(4)] }, { mess…
+     25|   await expect(readback({ ...options, pageSize: 2 })).rejects.toThrow(…
+       |                                                     ^
+     26| });
+     27| it('rejects duplicate or non-progressing pages', async () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > rejects duplicate or non-progressing pages
+AssertionError: promise resolved "{ messages: [], …(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "highWatermark": 0,
++   "messages": [],
++   "pages": 0,
+  }
+
+ ❯ src/__tests__/evidence-readback.test.ts:29:53
+     27| it('rejects duplicate or non-progressing pages', async () => {
+     28|   mock([{ messages: [row(4)] }, { messages: [row(4), row(3)] }, { mess…
+     29|   await expect(readback({ ...options, pageSize: 2 })).rejects.toThrow(…
+       |                                                     ^
+     30| });
+     31| it('rejects a moving high watermark rather than mixing snapshots', asy…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > rejects a moving high watermark rather than mixing snapshots
+AssertionError: promise resolved "{ messages: [], …(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "highWatermark": 0,
++   "messages": [],
++   "pages": 0,
+  }
+
+ ❯ src/__tests__/evidence-readback.test.ts:33:33
+     31| it('rejects a moving high watermark rather than mixing snapshots', asy…
+     32|   mock([{ messages: [row(4)] }, { messages: [row(5)] }]);
+     33|   await expect(readback(options)).rejects.toThrow(/watermark|cursor/i);
+       |                                 ^
+     34| });
+     35| it('never converts HTTP failure into empty successful evidence', async…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  src/__tests__/evidence-readback.test.ts > never converts HTTP failure into empty successful evidence
+AssertionError: expected [Function] to throw error matching /incomplete/i but got 'Octo API /v1/bot/messages/sync failed…'
+
+- Expected: 
+/incomplete/i
+
++ Received: 
+"Octo API /v1/bot/messages/sync failed (503): Bearer fixture-token"
+
+ ❯ src/__tests__/evidence-readback.test.ts:37:3
+     35| it('never converts HTTP failure into empty successful evidence', async…
+     36|   vi.stubGlobal('fetch', vi.fn(async () => new Response('Bearer fixtur…
+     37|   await expect(readback(options)).rejects.toThrow(/incomplete/i);
+       |   ^
+     38| });
+     39| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed (5)
+   Start at  21:22:00
+   Duration  194ms (transform 29ms, setup 0ms, collect 30ms, tests 8ms, environment 0ms, prepare 28ms)
+

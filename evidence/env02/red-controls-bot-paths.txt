@@ -1,0 +1,13 @@
+..F.....
+======================================================================
+FAIL: test_per_bot_paths_are_private_and_credential_overrides_are_refused (__main__.IsolationTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/mlamp/octo-daemon_workspaces/620b900b-0dea-443e-b0da-9948b6aa6dcf/c93ea026/workdir/codex-channel-octo/scripts/test_profile_test.py", line 96, in test_per_bot_paths_are_private_and_credential_overrides_are_refused
+    profile.prepare_gateway(p)
+AssertionError: ValueError not raised
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.008s
+
+FAILED (failures=1)

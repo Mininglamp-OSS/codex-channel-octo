@@ -1,0 +1,5 @@
+numeric-success: {"captureSessionId":"0cf945f700db2bbfc5bc6ef693ec4a12","event":"outcome","requestOrdinal":1,"transportOutcome":"confirmed","httpStatus":200,"responseAt":1791900473851,"responseMessageId":"123","responseBodyHash":"426e300c10d7662bec2fc1df418fcb1fc5ad6aa146d4799ac2373c5e69589a61","bytesForwarded":40}
+malformed-edit: {"captureSessionId":"0cf945f700db2bbfc5bc6ef693ec4a12","event":"outcome","requestOrdinal":2,"transportOutcome":"unknown","httpStatus":200,"responseAt":1791900473855,"responseBodyHash":"0c21a879c732a67910d80988df4919d794f6a070aab610ef865032a28046b021","bytesForwarded":40}
+registration-credential-persisted: false
+request-credential-persisted: false
+registrations-with-false-empty-attestation: 0
