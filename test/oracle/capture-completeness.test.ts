@@ -83,3 +83,211 @@ describe('B-3 independent capture completeness', () => {
     expect(evaluate(trace).verdict).toBe('pending');
   });
 });
+
+describe('B-3 review repair: identity, explaining outcome and retry authorization', () => {
+  const pristine = (id: string, key: string) => clone(ledgers[id][key]);
+  const evaluateSealed = (id: string, key: string, trace: any) => {
+    const ledger = pristine(id, key);
+    const r = evaluate(trace, ledger);
+    // The independent ledger is never derived from or rewritten by the altered captures.
+    expect(ledger).toEqual(ledgers[id][key]);
+    return r;
+  };
+  const ORIGINAL_MARKER = '[DLY f=fx07 o=oc7 r=run7 k=cron.alert m=000001 s=000001/000001]';
+  const HASH_06 = 'eb8688b110faa6757c3ef4db228843160de15c365d8e88aaa3986c2cbd8fcf52';
+
+  it('B3-09: a stored marker with a changed segment count cannot reconcile to the expected identity', () => {
+    const trace = clone(fixtures('ORACLE-07').controlTrace);
+    expect(trace.inventory.pages[0].records[0].fixtureMarker).toBe(ORIGINAL_MARKER);
+    trace.inventory.pages[0].records[0].fixtureMarker = ORIGINAL_MARKER.replace('/000001]', '/999999]');
+    const r = evaluateSealed('ORACLE-07', 'controlTrace', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('unexpected-delivery');
+  });
+
+  it.each([
+    ['count zero', 's=000001/000000]'],
+    ['index zero', 's=000000/000001]'],
+    ['index out of bounds', 's=000002/000001]'],
+    ['larger count', 's=000001/000002]'],
+  ])('B3-10: stored marker %s is not a permitted identity', (_name, suffix) => {
+    const trace = clone(fixtures('ORACLE-07').controlTrace);
+    trace.inventory.pages[0].records[0].fixtureMarker = ORIGINAL_MARKER.replace('s=000001/000001]', suffix);
+    const r = evaluateSealed('ORACLE-07', 'controlTrace', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('unexpected-delivery');
+  });
+
+  it.each([
+    ['fixture', 'f=fx07', 'f=fx99'],
+    ['occurrence', 'o=oc7', 'o=oc8'],
+    ['run', 'r=run7', 'r=run8'],
+    ['kind', 'k=cron.alert', 'k=cron.result'],
+    ['ordinal', 'm=000001', 'm=000002'],
+    ['width', 'm=000001', 'm=1'],
+  ])('B3-10: stored marker %s variation is not a permitted identity', (_name, from, to) => {
+    const trace = clone(fixtures('ORACLE-07').controlTrace);
+    trace.inventory.pages[0].records[0].fixtureMarker = ORIGINAL_MARKER.replace(from, to);
+    expect(evaluateSealed('ORACLE-07', 'controlTrace', trace).verdict).toBe('fail');
+  });
+
+  it.each([
+    ['count zero', { count: 0 }],
+    ['index zero', { index: 0 }],
+    ['index out of bounds', { index: 2 }],
+    ['non-integer count', { count: 1.5 }],
+  ])('B3-10: captured identity with %s is malformed and cannot explain the delivery', (_name, patch) => {
+    const trace = clone(fixtures('ORACLE-07').controlTrace);
+    Object.assign(trace.captures[0], patch);
+    const r = evaluateSealed('ORACLE-07', 'controlTrace', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('incomplete-capture-inventory');
+  });
+
+  it('B3-10: the unchanged control and original fixture marker still pass', () => {
+    expect(evaluateSealed('ORACLE-07', 'controlTrace', clone(fixtures('ORACLE-07').controlTrace)).verdict).toBe('pass');
+    expect(fixtures('ORACLE-07').controlTrace.inventory.pages[0].records[0].fixtureMarker).toBe(ORIGINAL_MARKER);
+  });
+
+  it('B3-11: a rejected 403 response cannot explain a committed delivery', () => {
+    const trace = clone(fixtures('ORACLE-07').controlTrace);
+    expect(trace.captures).toHaveLength(1);
+    trace.captures[0].httpStatus = 403;
+    expect(trace.captures[0].transportOutcome).toBe('response');
+    expect(trace.captures[0].responseMessageId).toBeNull();
+    const r = evaluateSealed('ORACLE-07', 'controlTrace', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('uncaptured-delivery');
+  });
+
+  it.each([
+    ['400 response', { httpStatus: 400 }],
+    ['404 response', { httpStatus: 404 }],
+    ['409 response', { httpStatus: 409 }],
+    ['429 response', { httpStatus: 429 }],
+    ['302 response', { httpStatus: 302 }],
+    ['101 response', { httpStatus: 101 }],
+    ['pre-write failure', { httpStatus: null, transportOutcome: 'prewrite-failure' }],
+  ])('B3-11: %s cannot explain a committed delivery', (_name, patch) => {
+    const trace = clone(fixtures('ORACLE-07').controlTrace);
+    Object.assign(trace.captures[0], patch);
+    const r = evaluateSealed('ORACLE-07', 'controlTrace', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('uncaptured-delivery');
+  });
+
+  it.each([
+    ['unknown transport outcome', { httpStatus: null, transportOutcome: 'rejected' }],
+    ['response without status', { httpStatus: null }],
+    ['timeout with status', { httpStatus: 200, transportOutcome: 'timeout' }],
+    ['string status', { httpStatus: '200' }],
+    ['timeout with response id', { httpStatus: null, transportOutcome: 'timeout', responseMessageId: '900000000000000019' }],
+  ])('B3-11: malformed outcome (%s) cannot explain a committed delivery', (_name, patch) => {
+    const trace = clone(fixtures('ORACLE-07').controlTrace);
+    Object.assign(trace.captures[0], patch);
+    const r = evaluateSealed('ORACLE-07', 'controlTrace', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('uncaptured-delivery');
+    expect(codes(r)).toContain('incomplete-capture-inventory');
+  });
+
+  it.each([
+    ['unchanged 200 success', {}],
+    ['201 success', { httpStatus: 201 }],
+    ['success with matching response id', { responseMessageId: '900000000000000019' }],
+    ['timeout ambiguity', { httpStatus: null, transportOutcome: 'timeout' }],
+    ['disconnect ambiguity', { httpStatus: null, transportOutcome: 'disconnect' }],
+    ['reset ambiguity', { httpStatus: null, transportOutcome: 'reset' }],
+    ['503 ambiguity', { httpStatus: 503 }],
+    ['503 ambiguity with matching response id', { httpStatus: 503, responseMessageId: '900000000000000019' }],
+  ])('B3-11: %s can explain a committed delivery', (_name, patch) => {
+    const trace = clone(fixtures('ORACLE-07').controlTrace);
+    Object.assign(trace.captures[0], patch);
+    expect(evaluateSealed('ORACLE-07', 'controlTrace', trace).verdict).toBe('pass');
+  });
+
+  it.each([
+    ['success', {}],
+    ['503 ambiguity', { httpStatus: 503 }],
+  ])('B3-11: %s with a different response id cannot explain the delivery', (_name, patch) => {
+    const trace = clone(fixtures('ORACLE-07').controlTrace);
+    Object.assign(trace.captures[0], patch, { responseMessageId: '900000000000000099' });
+    const r = evaluateSealed('ORACLE-07', 'controlTrace', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('uncaptured-delivery');
+  });
+
+  it('B3-11: ambiguity on an unknown segment keeps its documented unknown verdict', () => {
+    const f = fixtures('ORACLE-04');
+    expect(evaluate(f.trace, ledgers['ORACLE-04'].trace).verdict).toBe('unknown');
+    const once = f.variants.find((v: { name: string }) => v.name === 'observed-once');
+    expect(evaluate(once.trace, ledgers['ORACLE-04']['observed-once']).verdict).toBe('unknown');
+    expect(evaluate(fixtures('ORACLE-05').trace, ledgers['ORACLE-05'].trace).verdict).toBe('fail');
+  });
+
+  it('B3-12: removing both retry keys cannot authorize the ORACLE-06 retry', () => {
+    const changed = clone(fixtures('ORACLE-06').trace);
+    changed.captures[1].clientMsgNo = 'cmn-run6-2';
+    const changedResult = evaluateSealed('ORACLE-06', 'trace', changed);
+    expect(changedResult.verdict).toBe('fail');
+    expect(codes(changedResult)).toContain('changed-retry-payload');
+
+    const deleted = clone(fixtures('ORACLE-06').trace);
+    for (const c of deleted.captures) delete c.clientMsgNo;
+    const r = evaluateSealed('ORACLE-06', 'trace', deleted);
+    expect(r.verdict).not.toBe('pass');
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('unverifiable-retry');
+    expect(codes(r)).toContain('incomplete-capture-inventory');
+  });
+
+  const retryDefects: Array<[string, (c: any, i: number) => void]> = [
+    ['null retry key', c => { c.clientMsgNo = null; }],
+    ['empty retry key', c => { c.clientMsgNo = ''; }],
+    ['numeric retry key', c => { c.clientMsgNo = 6; }],
+    ['missing body hash', c => { delete c.requestBodyHash; c.serverNormalizedPayloadHash = HASH_06; }],
+    ['empty body hash', c => { c.requestBodyHash = ''; c.serverNormalizedPayloadHash = HASH_06; }],
+    ['malformed body hash', c => { c.requestBodyHash = 'not-a-hash'; c.serverNormalizedPayloadHash = HASH_06; }],
+    ['uppercase body hash', c => { c.requestBodyHash = HASH_06.toUpperCase(); c.serverNormalizedPayloadHash = HASH_06; }],
+    ['malformed normalized hash', c => { c.serverNormalizedPayloadHash = 'zz'; }],
+    ['missing incarnation', c => { delete c.incarnation; }],
+    ['empty incarnation', c => { c.incarnation = ''; }],
+    ['numeric incarnation', c => { c.incarnation = 1; }],
+    ['missing first transport outcome', (c, i) => { if (i === 0) delete c.transportOutcome; }],
+    ['429 status on a timeout', (c, i) => { if (i === 0) c.transportOutcome = 'timeout'; }],
+    ['string 429 status', (c, i) => { if (i === 0) c.httpStatus = '429'; }],
+    ['non-integer status', (c, i) => { if (i === 0) c.httpStatus = 429.5; }],
+  ];
+  it.each(retryDefects)('B3-13: %s never permits a retry', (_name, mutate) => {
+    const trace = clone(fixtures('ORACLE-06').trace);
+    trace.captures.forEach((c: any, i: number) => mutate(c, i));
+    const r = evaluateSealed('ORACLE-06', 'trace', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('incomplete-capture-inventory');
+  });
+
+  it.each([
+    ['unchanged 429 retry', () => {}],
+    ['matching normalized hashes', (c: any) => { c.serverNormalizedPayloadHash = HASH_06; }],
+    ['pre-write failure retry', (c: any, i: number) => { if (i === 0) { c.httpStatus = null; c.transportOutcome = 'prewrite-failure'; } }],
+  ])('B3-13: valid retry control (%s) still passes', (_name, mutate: (c: any, i: number) => void) => {
+    const trace = clone(fixtures('ORACLE-06').trace);
+    trace.captures.forEach((c: any, i: number) => mutate(c, i));
+    const r = evaluateSealed('ORACLE-06', 'trace', trace) as ReturnType<typeof evaluate> & { counts: Record<string, number> };
+    expect(r.verdict).toBe('pass');
+    expect(r.counts.permittedNetworkRetries).toBe(1);
+  });
+
+  it('B3-14: every original fixture trace, control and variant still reconciles to its sealed ledger', () => {
+    for (const id of Object.keys(ledgers)) {
+      const f = fixtures(id);
+      const traces: Array<[string, any]> = [['trace', f.trace], ['controlTrace', f.controlTrace],
+        ...(f.variants ?? []).map((v: { name: string; trace: any }) => [v.name, v.trace] as [string, any])];
+      for (const [key, trace] of traces) {
+        if (!trace) continue;
+        const r = evaluate(trace, ledgers[id][key]) as ReturnType<typeof evaluate> & { captureCompleteness: { complete: boolean; reasons: string[] } };
+        expect(r.captureCompleteness, `${id}/${key}`).toEqual(expect.objectContaining({ complete: true, reasons: [] }));
+      }
+    }
+  });
+});

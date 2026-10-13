@@ -11,7 +11,7 @@
  * from captures. Missing or inconsistent collection evidence cannot pass.
  */
 import { createHash } from 'node:crypto';
-import { reconcileCaptureInventory } from './capture-inventory.mjs';
+import { reconcileCaptureInventory, validCaptureRecord } from './capture-inventory.mjs';
 
 const MARKER_RE = /^\[DLY f=(\S+) o=(\S+) r=(\S+) k=(\S+) m=(\d{6}) s=(\d{6})\/(\d{6})\]/;
 const AMBIGUOUS = new Set(['disconnect', 'timeout', 'reset']);
@@ -39,6 +39,15 @@ export function evaluateDelivery(trace, captureInventory) {
   };
   const v = (code, detail) => violations.push({ code, ...detail });
   const expected = new Map(trace.expected.map((e) => [identityKey({ fixture: trace.fixture, ...e.identity }), e]));
+  // A stored marker names a permitted identity only when its full parsed
+  // identity, including the segment count, is in bounds and equals it.
+  const expectedFor = (r) => {
+    const m = parseMarker(r.fixtureMarker);
+    if (!m || m.fixture !== trace.fixture || m.index < 1 || m.count < 1 || m.index > m.count) return {};
+    const key = identityKey(m);
+    const e = expected.get(key);
+    return e && e.identity.count === m.count ? { key, e } : {};
+  };
   const captureCompleteness = reconcileCaptureInventory(trace, captureInventory);
 
   // 1. Inventory completeness: unbroken cursor chain, declared page count, no overlap.
@@ -54,13 +63,11 @@ export function evaluateDelivery(trace, captureInventory) {
   // 2. Every stored message maps to exactly one permitted identity with the right target/sender/body.
   const stored = new Map();
   for (const r of records) {
-    const marker = parseMarker(r.fixtureMarker);
-    const e = marker && marker.fixture === trace.fixture ? expected.get(identityKey(marker)) : undefined;
+    const { key: k, e } = expectedFor(r);
     if (!e) { v('unexpected-delivery', { messageId: r.messageId }); counts.unexpectedTargetOrBody++; continue; }
     if (!sameTarget(e.target, { channelId: r.channelId, channelType: r.channelType })) { v('wrong-target', { messageId: r.messageId }); counts.unexpectedTargetOrBody++; continue; }
     if (e.senderUid !== r.senderUid) { v('wrong-sender', { messageId: r.messageId }); counts.unexpectedTargetOrBody++; continue; }
     if (sha256(e.body) !== r.payloadHash) { v('unexpected-body', { messageId: r.messageId }); counts.unexpectedTargetOrBody++; continue; }
-    const k = identityKey(marker);
     stored.set(k, (stored.get(k) ?? 0) + 1);
   }
 
@@ -90,14 +97,17 @@ export function evaluateDelivery(trace, captureInventory) {
   for (const [key, list] of attempts) for (const c of list) {
     if (!matches(c, expected.get(key))) v('attempt-mismatch', { requestOrdinal: c.requestOrdinal });
   }
+  // Only a success or a documented ambiguity (timeout/disconnect/reset/5xx)
+  // can have committed; 1xx/3xx/4xx, pre-write failures and malformed records
+  // cannot. A response message ID, when present, must match read-back.
+  const mayHaveCommitted = (c) => (c.transportOutcome === 'response'
+    ? (c.httpStatus >= 200 && c.httpStatus < 300) || c.httpStatus >= 500
+    : AMBIGUOUS.has(c.transportOutcome));
   for (const r of records) {
-    const marker = parseMarker(r.fixtureMarker);
-    const key = marker && identityKey(marker);
-    const e = expected.get(key);
+    const { key, e } = expectedFor(r);
     if (!e || !sameTarget(e.target, r) || e.senderUid !== r.senderUid || sha256(e.body) !== r.payloadHash) continue;
-    const captured = (attempts.get(key) ?? []).some(c => matches(c, e)
-      && c.transportOutcome !== 'prewrite-failure' && c.httpStatus !== 429
-      && (c.responseMessageId == null || c.responseMessageId === r.messageId));
+    const captured = (attempts.get(key) ?? []).some(c => matches(c, e) && validCaptureRecord(c)
+      && mayHaveCommitted(c) && (c.responseMessageId === null || c.responseMessageId === r.messageId));
     if (!captured) v('uncaptured-delivery', { identity: key, messageId: r.messageId });
   }
   for (const [k, list] of attempts) {
@@ -109,6 +119,8 @@ export function evaluateDelivery(trace, captureInventory) {
     for (let i = 1; i < list.length; i++) {
       const prev = list[i - 1];
       const cur = list[i];
+      // Missing, empty or malformed keys, hashes, incarnation or outcome never authorize a retry.
+      if (!validCaptureRecord(prev) || !validCaptureRecord(cur)) { v('unverifiable-retry', { identity: k, requestOrdinal: cur.requestOrdinal }); continue; }
       if (cur.incarnation !== list[0].incarnation) { v('resend-after-restart', { identity: k, requestOrdinal: cur.requestOrdinal }); continue; }
       if (cur.requestBodyHash !== prev.requestBodyHash || cur.clientMsgNo !== prev.clientMsgNo) { v('changed-retry-payload', { identity: k, requestOrdinal: cur.requestOrdinal }); continue; }
       if (prev.httpStatus === 429 && r429 < 2) { r429++; counts.permittedNetworkRetries++; continue; }
