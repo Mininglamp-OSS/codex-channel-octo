@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { evaluateDelivery } from './oracle.mjs';
+import { evaluateDelivery, sha256 } from './oracle.mjs';
 
 const fixtures = (id: string) => JSON.parse(readFileSync(new URL(`./fixtures/${id}.json`, import.meta.url), 'utf8'));
 const ledgers = JSON.parse(readFileSync(new URL('./capture-ledgers-v1.json', import.meta.url), 'utf8')).fixtures;
@@ -289,5 +289,183 @@ describe('B-3 review repair: identity, explaining outcome and retry authorizatio
         expect(r.captureCompleteness, `${id}/${key}`).toEqual(expect.objectContaining({ complete: true, reasons: [] }));
       }
     }
+  });
+});
+
+describe('B-3 deep repair: injective identity encoding and full-field reconciliation', () => {
+  type Identity = { occurrence: string; run: string; kind: string };
+  // Independently declared synthetic seals, one per delimiter-bearing run. They are
+  // written here, never derived from the (possibly mutated) captures under test.
+  const SEALS: Record<string, object> = {
+    run1: {
+      version: 'capture-inventory-v1', source: 'independent-tester-synthetic', fixture: 'fx07', sealed: true,
+      declaredAttemptCount: 1, declaredPageCount: 1, firstCursor: 'fx07:delimiter-run1:0',
+      windows: [{ run: 'run1', incarnation: 'inc-1', firstOrdinal: 16, lastOrdinal: 16, attemptCount: 1 }],
+      pages: [{ cursor: 'fx07:delimiter-run1:0', next: null, requestOrdinals: [16] }],
+    },
+    'run1|cron': {
+      version: 'capture-inventory-v1', source: 'independent-tester-synthetic', fixture: 'fx07', sealed: true,
+      declaredAttemptCount: 1, declaredPageCount: 1, firstCursor: 'fx07:delimiter-run1-cron:0',
+      windows: [{ run: 'run1|cron', incarnation: 'inc-1', firstOrdinal: 16, lastOrdinal: 16, attemptCount: 1 }],
+      pages: [{ cursor: 'fx07:delimiter-run1-cron:0', next: null, requestOrdinals: [16] }],
+    },
+    'run","1': {
+      version: 'capture-inventory-v1', source: 'independent-tester-synthetic', fixture: 'fx07', sealed: true,
+      declaredAttemptCount: 1, declaredPageCount: 1, firstCursor: 'fx07:delimiter-json:0',
+      windows: [{ run: 'run","1', incarnation: 'inc-1', firstOrdinal: 16, lastOrdinal: 16, attemptCount: 1 }],
+      pages: [{ cursor: 'fx07:delimiter-json:0', next: null, requestOrdinals: [16] }],
+    },
+  };
+  const OCC_RUN: Identity = { occurrence: 'oc|extra', run: 'run1', kind: 'cron.alert' };
+  const RUN_KIND: Identity = { occurrence: 'oc', run: 'run1|cron', kind: 'alert' };
+  const JSON_CHARS: Identity = { occurrence: 'oc|x', run: 'run","1', kind: 'cron[1]\\alert' };
+  const markerOf = (i: Identity, fixture = 'fx07') => `[DLY f=${fixture} o=${i.occurrence} r=${i.run} k=${i.kind} m=000001 s=000001/000001]`;
+  // A genuine valid trace cloned from the ORACLE-07 control with a delimiter-bearing identity.
+  const control = (i: Identity) => {
+    const trace = clone(fixtures('ORACLE-07').controlTrace);
+    const body = `${markerOf(i)}\nalert`;
+    Object.assign(trace.expected[0].identity, i);
+    trace.expected[0].body = body;
+    Object.assign(trace.captures[0], i, {
+      logicalIdentity: `${i.occurrence}/${i.run}/${i.kind}/1/1`, requestBodyHash: sha256(body), clientMsgNo: `cmn-${i.run}-1`,
+    });
+    Object.assign(trace.inventory.pages[0].records[0], { fixtureMarker: markerOf(i), payloadHash: sha256(body) });
+    return trace;
+  };
+  const evaluateSealed = (id: string, key: string, trace: any) => {
+    const ledger = clone(ledgers[id][key]);
+    const r = evaluate(trace, ledger);
+    expect(ledger).toEqual(ledgers[id][key]);
+    return r;
+  };
+  const sealed = (run: string, trace: any) => {
+    const seal = clone(SEALS[run]);
+    const r = evaluate(trace, seal) as ReturnType<typeof evaluate> & { captureCompleteness: { complete: boolean; reasons: string[] } };
+    expect(seal).toEqual(SEALS[run]);
+    return r;
+  };
+
+  it.each([
+    ['occurrence/run', OCC_RUN],
+    ['run/kind', RUN_KIND],
+    ['JSON metacharacters', JSON_CHARS],
+  ])('B3-15: a valid %s delimiter-bearing identity is a genuine positive control', (_name, identity) => {
+    const trace = control(identity);
+    expect(trace.inventory.pages[0].records[0].payloadHash).toBe(sha256(trace.expected[0].body));
+    expect(trace.captures[0].requestBodyHash).toBe(sha256(trace.expected[0].body));
+    const r = sealed(identity.run, trace);
+    expect(r.violations).toEqual([]);
+    expect(r.verdict).toBe('pass');
+    expect(r.captureCompleteness).toEqual(expect.objectContaining({ complete: true, reasons: [] }));
+  });
+
+  it('B3-16: shifting the delimiter across the stored occurrence/run boundary is an unexpected delivery', () => {
+    const trace = control(OCC_RUN);
+    const before = clone(trace);
+    trace.inventory.pages[0].records[0].fixtureMarker = '[DLY f=fx07 o=oc r=extra|run1 k=cron.alert m=000001 s=000001/000001]';
+    // Only the stored marker changed: expected, capture, hashes and seal are untouched.
+    expect({ ...trace, inventory: before.inventory }).toEqual(before);
+    const r = sealed('run1', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('unexpected-delivery');
+  });
+
+  it.each([
+    ['run/kind', RUN_KIND, '[DLY f=fx07 o=oc r=run1 k=cron|alert m=000001 s=000001/000001]'],
+    ['occurrence/run (reverse)', RUN_KIND, '[DLY f=fx07 o=oc|run1 r=cron k=alert m=000001 s=000001/000001]'],
+    ['fixture/occurrence', OCC_RUN, '[DLY f=fx07|oc o=extra r=run1 k=cron.alert m=000001 s=000001/000001]'],
+    ['JSON metacharacters', JSON_CHARS, '[DLY f=fx07 o=oc r=x|run","1 k=cron[1]\\alert m=000001 s=000001/000001]'],
+  ])('B3-16: a stored %s delimiter shift is an unexpected delivery', (_name, identity, marker) => {
+    const trace = control(identity);
+    trace.inventory.pages[0].records[0].fixtureMarker = marker;
+    const r = sealed(identity.run, trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('unexpected-delivery');
+  });
+
+  it.each([
+    ['ordinal', '[DLY f=fx07 o=oc|extra r=run1 k=cron.alert m=000001|1 s=000001/000001]'],
+    ['index', '[DLY f=fx07 o=oc|extra r=run1 k=cron.alert m=000001 s=000001|1/000001]'],
+    ['kind/ordinal', '[DLY f=fx07 o=oc|extra r=run1 k=cron.alert|000001 s=000001/000001]'],
+    ['empty occurrence', '[DLY f=fx07 o= r=extra|run1 k=cron.alert m=000001 s=000001/000001]'],
+  ])('B3-16: a stored %s delimiter shift is grammar-invalid and cannot reconcile', (_name, marker) => {
+    const trace = control(OCC_RUN);
+    trace.inventory.pages[0].records[0].fixtureMarker = marker;
+    const r = sealed('run1', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('unexpected-delivery');
+  });
+
+  it.each([
+    ['occurrence/run', OCC_RUN, { occurrence: 'oc', run: 'extra|run1' }],
+    ['run/kind', RUN_KIND, { run: 'run1', kind: 'cron|alert' }],
+    ['fixture/occurrence', OCC_RUN, { fixture: 'fx07|oc', occurrence: 'extra' }],
+  ])('B3-17: a captured %s delimiter shift cannot explain the delivery', (_name, identity, patch) => {
+    const trace = control(identity);
+    Object.assign(trace.captures[0], patch);
+    const r = sealed(identity.run, trace);
+    expect(r.verdict).not.toBe('pass');
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('unexpected-attempt');
+    expect(codes(r)).toContain('uncaptured-delivery');
+  });
+
+  it('B3-17: a stored and captured collision together cannot satisfy a delimiter-bearing expectation', () => {
+    const trace = control(OCC_RUN);
+    trace.inventory.pages[0].records[0].fixtureMarker = '[DLY f=fx07 o=oc r=extra|run1 k=cron.alert m=000001 s=000001/000001]';
+    Object.assign(trace.captures[0], { occurrence: 'oc', run: 'extra|run1' });
+    const r = sealed('run1', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toEqual(expect.arrayContaining(['unexpected-delivery', 'unexpected-attempt', 'missing-confirmed-segment']));
+  });
+
+  it.each([
+    ['string ordinal', { ordinal: '1' }],
+    ['string index', { index: '1' }],
+    ['delimiter ordinal', { ordinal: '1|1' }],
+    ['delimiter index', { index: '1|1' }],
+    ['delimiter kind with ordinal', { kind: 'cron.alert|1' }],
+    ['empty occurrence', { occurrence: '' }],
+    ['empty run', { run: '' }],
+    ['missing kind', { kind: undefined }],
+    ['changed count', { count: 2 }],
+    ['string count', { count: '1' }],
+  ])('B3-18: a captured identity with %s cannot pass', (_name, patch) => {
+    const trace = control(OCC_RUN);
+    Object.assign(trace.captures[0], patch);
+    const r = sealed('run1', trace);
+    expect(r.verdict).toBe('fail');
+  });
+
+  it.each([
+    ['string ordinal', { ordinal: '1' }],
+    ['string index', { index: '1' }],
+    ['string count', { count: '1' }],
+    ['empty occurrence', { occurrence: '' }],
+    ['missing run', { run: undefined }],
+    ['zero index', { index: 0 }],
+  ])('B3-18: an expected identity with %s cannot pass', (_name, patch) => {
+    const trace = control(OCC_RUN);
+    Object.assign(trace.expected[0].identity, patch);
+    const r = sealed('run1', trace);
+    expect(r.verdict).toBe('fail');
+  });
+
+  it('B3-18: a changed stored segment count on a delimiter-bearing identity cannot reconcile', () => {
+    const trace = control(OCC_RUN);
+    trace.inventory.pages[0].records[0].fixtureMarker = markerOf(OCC_RUN).replace('/000001]', '/000002]');
+    const r = sealed('run1', trace);
+    expect(r.verdict).toBe('fail');
+    expect(codes(r)).toContain('unexpected-delivery');
+  });
+
+  it('B3-19: the original sealed ledgers are not inferred from or rewritten by delimiter mutations', () => {
+    const trace = control(OCC_RUN);
+    Object.assign(trace.captures[0], { occurrence: 'oc', run: 'extra|run1' });
+    // The original ORACLE-07 seal declares run7 and cannot be borrowed for run1.
+    const r = evaluateSealed('ORACLE-07', 'controlTrace', trace) as ReturnType<typeof evaluate> & { captureCompleteness: { complete: boolean } };
+    expect(r.verdict).toBe('fail');
+    expect(r.captureCompleteness.complete).toBe(false);
+    expect(evaluateSealed('ORACLE-07', 'controlTrace', clone(fixtures('ORACLE-07').controlTrace)).verdict).toBe('pass');
   });
 });

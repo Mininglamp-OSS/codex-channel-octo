@@ -122,10 +122,12 @@ export function scanEgress(cfg) {
     const type = node && checker.getTypeAtLocation(node);
     return type && !(type.flags & opaque) ? [{ type }] : [];
   };
+  const indexValues = (type, key) => [ts.IndexKind.String, ...(/^\d+$/.test(key) ? [ts.IndexKind.Number] : [])]
+    .map((kind) => checker.getIndexTypeOfType(type, kind)).filter((t) => t && !(t.flags & opaque)).map((t) => ({ type: t }));
   const propertyValues = (values, key, seen = new Set()) => values.flatMap((v) => {
     if (v.type) {
       const prop = checker.getPropertyOfType(v.type, key);
-      if (!prop) return [];
+      if (!prop) return indexValues(v.type, key);
       const name = primitiveOf(prop);
       if (name) return [{ primitive: name }];
       const type = checker.getTypeOfSymbol(prop);
@@ -196,10 +198,87 @@ export function scanEgress(cfg) {
     return values;
   }
   const primitivesIn = (values) => [...new Set(values.filter((v) => v.primitive).map((v) => v.primitive))];
-  // A value is a guarded namespace when it exposes a boundary primitive as a
-  // property (directly or through an object literal holding such a namespace).
+  // A checker type reaches a guarded namespace when a boundary primitive is its
+  // property, or is reachable through union/intersection members, index
+  // signatures, type arguments, or the property types of user-declared and
+  // mapped object types. Library types hold user types only through type
+  // arguments, so their own members are not walked. A type already on the path
+  // is a cycle. Type-argument, union and alias edges descend into finite
+  // structure; a member edge reaching a symbol already three times on the path
+  // is an expanding instantiation (Nest<T> { next: Nest<T[]> }). Its finite
+  // declaration graph is checked before cutting, so later conditional branches
+  // cannot silently hide a guarded namespace. Only uncut negatives are memoized.
+  const reachMemo = new Map();
+  const reachPath = [];
+  let reachCuts = 0;
+  const userDeclared = (type) => {
+    const decls = type.symbol?.declarations;
+    return !decls?.length || decls.some((d) => !program.isSourceFileDefaultLibrary(d.getSourceFile()));
+  };
+  const declarationPath = new Set();
+  const declarationReaches = (type) => {
+    const visit = (node) => {
+      if (ts.isFunctionTypeNode(node) || ts.isConstructorTypeNode(node) || ts.isMethodSignature(node)
+        || ts.isCallSignatureDeclaration(node) || ts.isConstructSignatureDeclaration(node)) return false;
+      if (ts.isTypeReferenceNode(node) || ts.isTypeQueryNode(node) || ts.isImportTypeNode(node)) {
+        const resolved = checker.getTypeAtLocation(node);
+        // A resolved mapped selection exposes only its selected properties;
+        // traversing its syntactic arguments would reintroduce omitted writes.
+        if (ts.getObjectFlags(resolved) & ts.ObjectFlags.Mapped) return typeReaches(resolved);
+        if (!(resolved.flags & opaque) && typeReaches(resolved)) return true;
+        const name = ts.isTypeReferenceNode(node) ? node.typeName : ts.isTypeQueryNode(node) ? node.exprName : node.qualifier;
+        const symbol = name && checker.getSymbolAtLocation(name);
+        const target = symbol?.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+        if ((target?.declarations ?? []).some(walk)) return true;
+      }
+      return ts.forEachChild(node, child => visit(child) || undefined) === true;
+    };
+    const walk = (declaration) => {
+      if (declarationPath.has(declaration) || program.isSourceFileDefaultLibrary(declaration.getSourceFile())
+        || !(ts.isTypeAliasDeclaration(declaration) || ts.isInterfaceDeclaration(declaration)
+          || ts.isTypeLiteralNode(declaration))) return false;
+      declarationPath.add(declaration);
+      const found = visit(declaration);
+      declarationPath.delete(declaration);
+      return found;
+    };
+    return [type.symbol, type.aliasSymbol].some(symbol => (symbol?.declarations ?? []).some(walk));
+  };
+  const typeReaches = (type, member = false) => {
+    if (reachMemo.has(type)) return reachMemo.get(type);
+    if (reachPath.includes(type)) {
+      reachCuts++;
+      return false;
+    }
+    if (member && type.symbol && reachPath.filter((t) => t.symbol === type.symbol).length >= 3) {
+      reachCuts++;
+      return declarationReaches(type);
+    }
+    reachPath.push(type);
+    const before = reachCuts;
+    const next = ts.getObjectFlags(type) & ts.ObjectFlags.Mapped ? [] : [...(type.aliasTypeArguments ?? [])];
+    const members = [];
+    let found = false;
+    if (type.isUnionOrIntersection()) next.push(...type.types);
+    else if (type.flags & ts.TypeFlags.Object) {
+      const props = checker.getPropertiesOfType(type);
+      found = props.some((p) => primitiveOf(p));
+      if (!found) {
+        if (userDeclared(type) || ts.getObjectFlags(type) & ts.ObjectFlags.Mapped) members.push(...props.map((p) => checker.getTypeOfSymbol(p)));
+        members.push(...checker.getIndexInfosOfType(type).map((i) => i.type));
+        if (ts.getObjectFlags(type) & ts.ObjectFlags.Reference) next.push(...checker.getTypeArguments(type));
+      }
+    }
+    found ||= next.some((t) => !(t.flags & opaque) && typeReaches(t))
+      || members.some((t) => !(t.flags & opaque) && typeReaches(t, true));
+    reachPath.pop();
+    if (found || reachCuts === before) reachMemo.set(type, found);
+    return found;
+  };
+  // A value is a guarded namespace when a boundary primitive is reachable from
+  // its checker type or through an object literal holding such a namespace.
   const guarded = (values, seen = new Set()) => values.some((v) => {
-    if (v.type) return checker.getPropertiesOfType(v.type).some((p) => primitiveOf(p));
+    if (v.type) return typeReaches(v.type);
     if (!v.object || seen.has(v.object)) return false;
     seen.add(v.object);
     return v.object.properties.some((p) => guarded(

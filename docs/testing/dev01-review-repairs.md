@@ -186,3 +186,137 @@ filesystem/timing test observation with independent and CI green runs. Those
 runs do not establish its underlying cause or prove it can never recur.
 No watcher test is relaxed. Upstream conflicts are left for separately
 authorized integration; pinned-head green checks are not merge-integration proof.
+
+## Deep follow-up repair of B-2 and B-3
+
+This section adds to the narrative above. It does not change or replace any
+earlier statement, except where it names a rule that replaces an earlier one.
+
+### Namespaces nested in checker types (EG-31 to EG-39)
+
+The earlier `guarded` check walked object-literal ASTs recursively. For a
+checker type, though, it inspected only the immediate properties. A boundary
+namespace held one level down, as in `x: { a: typeof api }`, therefore escaped
+once an assertion erased the static type. Two strict-mode sources from the
+review, with no `any`, show this. One uses a dynamic key over
+`x as unknown as Record<...>`. The other uses a rest binding over that
+asserted value.
+
+A checker type now counts as guarded when a boundary primitive is reachable
+from it. The walk covers:
+
+- union and intersection members;
+- string and number index signature types;
+- type arguments of type references (arrays, tuples, nested arrays, generic
+  instantiations) and alias type arguments;
+- property types of user-declared object types and mapped types
+  (`Record<'a' | 'b', typeof api>`).
+
+Default-library types (`Date`, `Map`, `Promise` and DOM types) retain user
+types through type arguments and index signatures; their own members are not
+walked. Imported ambient declarations are walked like other user types.
+
+The walk records the types on its current path. A type already on the path is a
+cycle and ends that branch, so recursive interfaces and mutually recursive types
+terminate. Type-argument, union and alias edges descend into finite structure.
+A property or index edge that reaches a symbol already present three times on
+the path is an expanding instantiation, such as `Nest<T> { next: Nest<T[]> }`,
+and checks its finite declaration graph before cutting. The walk memoizes positive results. It memoizes negative results
+only when no cut was involved.
+
+A literal property key that misses on a type with an index signature now
+resolves to the index signature's type. Origins therefore survive
+`y.slot?.[k]` over `{ [name: string]: { inner: typeof api } }`.
+
+As before, origins pass through assertions, `satisfies`, non-null, `await`,
+parentheses, conditionals, `??` and identifier initializers. Fail-closed
+results apply only when a boundary origin is reachable.
+
+The new tests and fixtures:
+
+- `namespace-origin-deep` holds the two exact review repros, deeper contextual
+  wrappers, arrays, tuples, nested arrays, index signatures (string, nested,
+  number and literal-key mapped), recursive, mutual, generic and expanding
+  types, rest variants, `Reflect.get` and `for...in` dynamic reads. Each
+  yields one `unresolved-boundary-extraction` (EG-31 to EG-33).
+- In the same fixture, literal extraction through nested property, array
+  element, index signature and asserted types counts exactly once. It
+  baselines exactly: matching counts pass, an overstated count is
+  `stale-baseline` and an understated count is `unauthorized-call` (EG-34).
+  EG-35 checks the full finding list.
+- `namespace-origin-deep-negative` holds classified helpers and reads through
+  nested types, an unrelated same-named namespace in recursive, mutual,
+  generic and expanding types, local objects, library types and the egress
+  module. It reports no usages and no violations (EG-36).
+
+All fixture sources pass `tsc --strict` and the repository ESLint config with
+`--max-warnings 0`, and none uses `any`. The fixture API stubs reference their
+parameters to keep ESLint at zero warnings. The repository scan is unchanged:
+10 baseline usages and no violations.
+
+Limits: the walk does not follow function signatures. A namespace returned from
+a function-typed property counts once the call result's checker type exposes it
+(`typeValue`). Before that, it is not counted. A rest binding fails closed. It
+does not carry its source's origin forward, so later reads through the rest
+local are not counted separately. When an expanding instantiation reaches the
+member cutoff, the finite declaration graph is checked for namespace origins
+before cutting. This includes later conditional branches and referenced type
+aliases. Such branches are treated conservatively when expansion cannot prove
+them unreachable. Resolved mapped selections expose only their selected
+properties; omitted write properties are not reintroduced from type arguments.
+EG-37 covers a namespace introduced after five generic layers, EG-38 covers a
+mapped helper selection, and EG-39 covers an imported ambient wrapper.
+
+### Injective identity encoding (B3-15 to B3-19)
+
+`identityKey` used to join fields with `|` and leave out the segment count, so
+distinct tuples could collide. One example is occurrence `oc|extra` with run
+`run1` against occurrence `oc` with run `extra|run1`. The key is now the JSON
+serialization of the ordered array `[fixture, occurrence, run, kind, ordinal,
+index, count]`. That array must be valid: the strings nonempty, the integers
+safe and non-negative, and `1 <= index <= count`. A malformed identity has no
+key.
+
+A stored marker reconciles only when its key is found and every parsed field,
+including the count, equals the expected identity field by field. A capture is
+attributed in the same way. Otherwise the capture is `unexpected-attempt`, and
+the delivery it might have explained stays `uncaptured-delivery`. An expected
+identity that is malformed is reported as `malformed-expected-identity`, a
+failing violation. The bounds, explaining-outcome and retry rules are
+unchanged.
+
+Tests:
+
+- B3-15 holds genuine positive controls cloned from the ORACLE-07 control
+  trace. Each sets the delimiter-bearing identity in the expected identity,
+  marker, body, payload and request hashes, and capture fields. One control
+  uses occurrence `oc|extra` with run `run1`, one uses run `run1|cron`, and one
+  uses JSON metacharacters. Each is evaluated against its own separately
+  declared synthetic seal and passes.
+- B3-16 changes only the stored marker to occurrence `oc` with run
+  `extra|run1`, leaving the expected identity, capture, hashes and seal as
+  they were. The result is `unexpected-delivery`. The same applies to shifts
+  across the run/kind, reversed occurrence/run and fixture/occurrence
+  boundaries. Kind/ordinal/index shifts and empty fields are invalid under the
+  marker grammar and are rejected.
+- B3-17 shifts captured identities across the occurrence/run, run/kind and
+  fixture/occurrence boundaries. None passes: each fails with
+  `unexpected-attempt` and `uncaptured-delivery`. A combined stored and
+  captured collision also fails.
+- B3-18: a captured or expected identity with a string, delimited, empty or
+  missing field, a changed count or a zero index cannot pass.
+- B3-19: the original ORACLE-07 seal (run7) cannot be borrowed for a run1
+  trace. Every check confirms that the seal is not rewritten.
+
+The original ORACLE-01..08 fixtures, `capture-ledgers-v1.json`,
+`capture-inventory.mjs` and all earlier tests are unchanged and still pass.
+
+Pre-commit evidence is in `artifacts/deep-precommit/red` and
+`artifacts/deep-precommit/green`. That directory is git-ignored. The RED run had
+16 failures and 140 passes across 156 tests. The supplemental RED for the
+expanding-generic case comes from the HEAD baseline scanner copy. The focused
+GREEN run, including `test/oracle/oracle.test.ts`, passed 168 of 168. The later
+expansion and ambient audit failures are preserved separately; both also fail
+assertions with the unchanged reviewed-head scanner. The final focused run
+passes 171 of 171, including the mapped-helper control. Clean-head
+gates, mutation and binary runs are left to the integrating executor.

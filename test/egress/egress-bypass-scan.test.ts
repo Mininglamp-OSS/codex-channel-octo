@@ -294,3 +294,96 @@ describe('egress bypass scan: namespace origin tracking (B-2 review repair)', ()
     expect(keyed(r)).toEqual(['unauthorized-call:src/handler.ts:sendMessage']);
   });
 });
+
+describe('egress bypass scan: namespaces nested in checker types (B-2 deep repair)', () => {
+  type Usage = { file: string; symbol: string; via: string };
+  type Violation = { code: string; file: string; symbol: string; observed?: number; baseline?: number };
+  const scan = (name: string, baseline?: Array<{ file: string; symbol: string; count: number }>) =>
+    scanEgress(fixtureConfig(name, baseline)) as { usages: Usage[]; violations: Violation[] };
+  const keyed = (r: { violations: Violation[] }) => r.violations.map((v) => `${v.code}:${v.file}:${v.symbol}`).sort();
+  const inFile = (r: { violations: Violation[] }, file: string) => keyed(r).filter((k) => k.split(':')[1] === file);
+  const tally = (r: { usages: Usage[] }) => r.usages.reduce<Record<string, number>>((acc, u) => {
+    const k = `${u.file}#${u.symbol}`; acc[k] = (acc[k] ?? 0) + 1; return acc;
+  }, {});
+  const unresolved = (file: string, symbols: string[]) => symbols.map((s) => `unresolved-boundary-extraction:${file}:${s}`).sort();
+  // Literal extraction through nested property, array element, index signature and asserted types.
+  const literalTally = {
+    'src/literal.ts#sendMessage': 2,
+    'src/literal.ts#sendRichTextMessage': 1,
+    'src/literal.ts#sendTyping': 2,
+  };
+  const literalBaseline = Object.entries(literalTally).map(([k, count]) => {
+    const [file, symbol] = k.split('#');
+    return { file, symbol, count };
+  });
+  const deepUnresolved = [
+    ...unresolved('src/repro-index.ts', ['[key]']),
+    ...unresolved('src/repro-rest.ts', ['...rest']),
+    ...unresolved('src/deep-wrapper.ts', ['[k1]', '[k2]']),
+    ...unresolved('src/array-wrapper.ts', ['[k1]', '[k2]', '[k3]']),
+    ...unresolved('src/index-signature.ts', ['[k1]', '[k2]', '[k3]', '[k4]']),
+    ...unresolved('src/recursive.ts', ['[k1]', '[k2]', '[k3]', '[k4]']),
+    ...unresolved('src/rest-variants.ts', ['...rp', '...rn', '...rd']),
+    ...unresolved('src/dynamic.ts', ['Reflect.get(x, key)', '[k as keyof typeof x]']),
+  ];
+
+  it('EG-31: the review repro sources (dynamic key and rest over an asserted wrapper of a namespace) fail closed', () => {
+    const r = scan('namespace-origin-deep');
+    expect(inFile(r, 'src/repro-index.ts')).toEqual(['unresolved-boundary-extraction:src/repro-index.ts:[key]']);
+    expect(inFile(r, 'src/repro-rest.ts')).toEqual(['unresolved-boundary-extraction:src/repro-rest.ts:...rest']);
+  });
+
+  it('EG-32: deeper contextual wrappers, arrays, tuples, index signatures, recursive, mutual and generic types fail closed', () => {
+    const r = scan('namespace-origin-deep');
+    expect(inFile(r, 'src/deep-wrapper.ts')).toEqual(unresolved('src/deep-wrapper.ts', ['[k1]', '[k2]']));
+    expect(inFile(r, 'src/array-wrapper.ts')).toEqual(unresolved('src/array-wrapper.ts', ['[k1]', '[k2]', '[k3]']));
+    expect(inFile(r, 'src/index-signature.ts')).toEqual(unresolved('src/index-signature.ts', ['[k1]', '[k2]', '[k3]', '[k4]']));
+    expect(inFile(r, 'src/recursive.ts')).toEqual(unresolved('src/recursive.ts', ['[k1]', '[k2]', '[k3]', '[k4]']));
+  });
+
+  it('EG-33: rest bindings and dynamic reads of a nested namespace wrapper fail closed', () => {
+    const r = scan('namespace-origin-deep');
+    expect(inFile(r, 'src/rest-variants.ts')).toEqual(unresolved('src/rest-variants.ts', ['...rp', '...rn', '...rd']));
+    expect(inFile(r, 'src/dynamic.ts')).toEqual(unresolved('src/dynamic.ts', ['Reflect.get(x, key)', '[k as keyof typeof x]']));
+  });
+
+  it('EG-34: literal extraction through nested checker types counts exactly once and baselines exactly', () => {
+    const r = scan('namespace-origin-deep');
+    expect(tally(r)).toEqual(literalTally);
+    expect(inFile(r, 'src/literal.ts')).toEqual(Object.keys(literalTally).map((k) => `unauthorized-call:${k.replace('#', ':')}`).sort());
+    expect(keyed(scan('namespace-origin-deep', literalBaseline))).toEqual(deepUnresolved.slice().sort());
+    expect(keyed(scan('namespace-origin-deep', literalBaseline.map((b) => (b.symbol === 'sendRichTextMessage' ? { ...b, count: 2 } : b)))))
+      .toEqual([...deepUnresolved, 'stale-baseline:src/literal.ts:sendRichTextMessage'].sort());
+    expect(keyed(scan('namespace-origin-deep', literalBaseline.map((b) => (b.symbol === 'sendTyping' ? { ...b, count: 1 } : b)))))
+      .toEqual([...deepUnresolved, 'unauthorized-call:src/literal.ts:sendTyping'].sort());
+  });
+
+  it('EG-35: the deep fixture reports exactly the expected findings and nothing else', () => {
+    const r = scan('namespace-origin-deep');
+    expect(keyed(r)).toEqual([...deepUnresolved,
+      ...Object.keys(literalTally).map((k) => `unauthorized-call:${k.replace('#', ':')}`)].sort());
+  });
+
+  it('EG-36: no false positives — classified helpers/reads, unrelated recursive types, locals, lib types and the egress module', () => {
+    const r = scan('namespace-origin-deep-negative');
+    expect(r.violations).toEqual([]);
+    expect(r.usages).toEqual([]);
+  });
+
+  it('EG-37: a namespace introduced after several generic layers still fails closed', () => {
+    expect(keyed(scan('namespace-origin-late'))).toEqual([
+      'unresolved-boundary-extraction:src/handler.ts:...rest',
+      'unresolved-boundary-extraction:src/handler.ts:...rest',
+    ]);
+  });
+
+  it('EG-38: late mapped helper selections do not reintroduce excluded boundary writes', () => {
+    const r = scan('namespace-origin-late-negative');
+    expect(r.usages).toEqual([]);
+    expect(r.violations).toEqual([]);
+  });
+
+  it('EG-39: an imported ambient wrapper retains nested namespace origins', () => {
+    expect(keyed(scan('namespace-origin-ambient'))).toEqual(['unresolved-boundary-extraction:src/handler.ts:[key]']);
+  });
+});
