@@ -1703,10 +1703,21 @@ const IMMUTABLE_FIELDS: Readonly<Partial<Record<CardTable, readonly string[]>>> 
   card_admissions: ['session_id', 'event_id', 'continuation_generation', 'submitted_hash', 'admitted_at'],
   card_event_dispositions: ['consumer_scope', 'event_class', 'session_id', 'disposition', 'reason_code', 'attempts', 'created_at'],
   card_handler_generations: ['installation_ref', 'session_key', 'runtime_incarnation', 'reset_epoch', 'context_digest', 'policy_identity'],
-  card_explicit_requests: ['body_digest', 'opcode', 'send_slot', 'client_msg_no', 'card_id'],
+  card_explicit_requests: ['body_digest', 'opcode'],
+};
+
+/** Fields that are written once: a tail value is binding, a tail null may be filled in. */
+const SET_ONCE_FIELDS: Readonly<Partial<Record<CardTable, readonly string[]>>> = {
+  card_explicit_requests: ['send_slot', 'client_msg_no', 'card_id'],
 };
 
 const OPEN_SESSION = new Set(['sending', 'pending', 'retry_wait', 'admitted', 'ambiguous']);
+const TERMINAL_MESSAGE = new Set(['done', 'error', 'expired', 'abandoned']);
+const TERMINAL_ADMISSION = new Set(['completed', 'failed']);
+/** Explicit request progress; acked/failed/cancelled are absorbing (rank 3). */
+const REQUEST_RANK: Readonly<Record<string, number>> = {
+  charged: 0, reserved: 1, ambiguous: 2, acked: 3, failed: 3, cancelled: 3,
+};
 
 /**
  * Compare a candidate restore image against the protected tail. Fences and
@@ -1730,12 +1741,9 @@ export function compareProtectedGraph(candidate: ProtectedGraphRows, tail: Prote
         out.push({ table, key, code: 'missing_fact' });
         continue;
       }
-      for (const f of IMMUTABLE_FIELDS[table] ?? []) {
-        if (c[f] !== t[f]) {
-          out.push({ table, key, code: 'conflicting_fact' });
-          break;
-        }
-      }
+      const immutable = (IMMUTABLE_FIELDS[table] ?? []).some((f) => c[f] !== t[f]);
+      const setOnce = (SET_ONCE_FIELDS[table] ?? []).some((f) => t[f] !== null && c[f] !== t[f]);
+      if (immutable || setOnce) out.push({ table, key, code: 'conflicting_fact' });
       const num = (v: unknown): number => (typeof v === 'number' ? v : Number(v));
       if (table === 'card_messages') {
         if (num(c.seq_reserved) < num(t.seq_reserved) || num(c.seq_acked) < num(t.seq_acked)) {
@@ -1743,12 +1751,19 @@ export function compareProtectedGraph(candidate: ProtectedGraphRows, tail: Prote
         }
         if (t.message_id !== null && c.message_id !== t.message_id) out.push({ table, key, code: 'conflicting_fact' });
         if (t.terminal_at !== null && c.terminal_at === null) out.push({ table, key, code: 'revived_work' });
+        // Absorbing terminal outcomes are final facts: a different terminal outcome contradicts.
+        if (TERMINAL_MESSAGE.has(String(t.state)) && TERMINAL_MESSAGE.has(String(c.state))
+            && (c.state !== t.state || c.terminal_reason !== t.terminal_reason)) {
+          out.push({ table, key, code: 'conflicting_fact' });
+        }
       }
-      if (table === 'card_sessions' && !OPEN_SESSION.has(String(t.status)) && OPEN_SESSION.has(String(c.status))) {
-        out.push({ table, key, code: 'revived_work' });
+      if (table === 'card_sessions' && !OPEN_SESSION.has(String(t.status))) {
+        if (OPEN_SESSION.has(String(c.status))) out.push({ table, key, code: 'revived_work' });
+        else if (c.status !== t.status) out.push({ table, key, code: 'conflicting_fact' });
       }
-      if (table === 'card_admissions' && t.state !== 'admitted' && c.state === 'admitted') {
-        out.push({ table, key, code: 'revived_work' });
+      if (table === 'card_admissions' && TERMINAL_ADMISSION.has(String(t.state))) {
+        if (!TERMINAL_ADMISSION.has(String(c.state))) out.push({ table, key, code: 'revived_work' });
+        else if (c.state !== t.state) out.push({ table, key, code: 'conflicting_fact' });
       }
       if (table === 'card_handler_generations') {
         if (num(c.invocation_count) < num(t.invocation_count) || num(c.logical_send_count) < num(t.logical_send_count)) {
@@ -1756,8 +1771,13 @@ export function compareProtectedGraph(candidate: ProtectedGraphRows, tail: Prote
         }
         if (t.state === 'closed' && c.state !== 'closed') out.push({ table, key, code: 'revived_work' });
       }
-      if (table === 'card_explicit_requests' && t.state !== c.state && (c.state === 'charged' || c.state === 'reserved')) {
-        out.push({ table, key, code: 'revived_work' });
+      if (table === 'card_explicit_requests') {
+        const tr = REQUEST_RANK[String(t.state)] ?? -1;
+        const cr = REQUEST_RANK[String(c.state)] ?? -1;
+        if (cr < tr) out.push({ table, key, code: 'revived_work' });
+        else if (tr === 3 && (c.state !== t.state || c.safe_result_json !== t.safe_result_json)) {
+          out.push({ table, key, code: 'conflicting_fact' });
+        }
       }
       if (table === 'card_event_cursor') {
         if (t.halted_reason !== null && c.halted_reason === null) out.push({ table, key, code: 'halt_lost' });

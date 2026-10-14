@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createAdapter, type DbAdapter } from '../db-adapter.js';
 import { SessionStore } from '../session-store.js';
-import { FileActivationMarker, migrateCardSchema, provisionFirstInstallMarker } from '../cards/migrations.js';
+import { FileActivationMarker, checkCardInvariants, migrateCardSchema, provisionFirstInstallMarker } from '../cards/migrations.js';
 import {
   ACTIVE_SESSION_CAPACITY,
   CardStore,
@@ -959,5 +959,212 @@ describe('P1-1: routine retention never trips startup invariants', () => {
     expect(store.getAdmissionForSession(r.sessionId)).toBeNull();
     expect(store.getDisposition('e-1')).toBeNull();
     expect(store.getDisposition('e-2')).toBeNull();
+  });
+});
+
+describe('restore comparator: contradictory absorbing terminal outcomes quarantine', () => {
+  interface Image {
+    adapter: DbAdapter;
+    store: CardStore;
+  }
+  const images: DbAdapter[] = [];
+
+  afterEach(() => {
+    while (images.length) images.pop()?.close();
+  });
+
+  /** Branch two independent images of the current live store via online backup. */
+  async function branch(): Promise<[Image, Image]> {
+    const out: Image[] = [];
+    for (const name of ['candidate', 'tail']) {
+      const path = join(root, `${name}-${seq}-${images.length}.db`);
+      await adapter.backup(path);
+      const a = createAdapter(path);
+      images.push(a);
+      let n = 0;
+      out.push({ adapter: a, store: new CardStore(a, { clock, newId: () => `${name}-${++n}` }) });
+    }
+    return out as [Image, Image];
+  }
+
+  /** Both images must be independently valid, same-lineage stores before they are compared. */
+  function compare(candidate: Image, tail: Image) {
+    expect(candidate.store.checkInvariants()).toEqual([]);
+    expect(tail.store.checkInvariants()).toEqual([]);
+    const c = readProtectedGraph(candidate.adapter);
+    const t = readProtectedGraph(tail.adapter);
+    expect(manifestProtectedGraph(c).lineageId).toBe('lineage-1');
+    expect(manifestProtectedGraph(t).lineageId).toBe('lineage-1');
+    return compareProtectedGraph(c, t);
+  }
+
+  async function admittedImages(): Promise<{ images: [Image, Image]; sessionId: string; admissionId: string; cardId: string }> {
+    store.initCursor('scope-a', 'T-EXCL');
+    const r = pendingSession('restore');
+    const a = store.admitOnce({ ...ev('e-1', r.sessionId), sessionId: r.sessionId, continuationGeneration: 'c', submittedHash: 'h', currentResetEpoch: 0, cursor: cursor(null, 'p1') });
+    if (a.kind !== 'admitted') throw new Error('not admitted');
+    return { images: await branch(), sessionId: r.sessionId, admissionId: a.admissionId, cardId: r.cardId };
+  }
+
+  it('the same admitted receipt settled completed vs failed conflicts in both directions', async () => {
+    const { images: [a, b], sessionId, admissionId } = await admittedImages();
+    a.store.settleAdmission(admissionId, 'completed');
+    b.store.settleAdmission(admissionId, 'failed');
+    for (const [cand, tail] of [[a, b], [b, a]] as const) {
+      expect(compare(cand, tail)).toEqual(expect.arrayContaining([
+        { table: 'card_admissions', key: admissionId, code: 'conflicting_fact' },
+        { table: 'card_sessions', key: sessionId, code: 'conflicting_fact' },
+      ]));
+    }
+  });
+
+  it('identical terminal admission outcomes pass', async () => {
+    const { images: [a, b], admissionId } = await admittedImages();
+    a.store.settleAdmission(admissionId, 'completed');
+    b.store.settleAdmission(admissionId, 'completed');
+    expect(compare(a, b)).toEqual([]);
+  });
+
+  it('progress from an unresolved tail to a terminal candidate passes', async () => {
+    const { images: [a, b], admissionId } = await admittedImages();
+    // Tail still admitted; candidate settled.
+    a.store.settleAdmission(admissionId, 'failed');
+    expect(compare(a, b)).toEqual([]);
+    // Tail ambiguous; candidate ambiguous then settled in the same process.
+    b.store.markAdmissionAmbiguous(admissionId);
+    expect(compare(a, b)).toEqual([]);
+  });
+
+  it('a settled tail admission is never reopened as ambiguous by the candidate', async () => {
+    const { images: [a, b], admissionId } = await admittedImages();
+    a.store.markAdmissionAmbiguous(admissionId);
+    b.store.settleAdmission(admissionId, 'completed');
+    expect(compare(a, b)).toEqual(expect.arrayContaining([
+      { table: 'card_admissions', key: admissionId, code: 'revived_work' },
+    ]));
+  });
+
+  it('a pending session expired in one image and dead-lettered in the other conflicts', async () => {
+    store.initCursor('scope-a', 'T-EXCL');
+    const r = pendingSession('term');
+    const [a, b] = await branch();
+    now = T0 + DAY;
+    expect(a.store.expireSessions()).toEqual([r.cardId]);
+    now = T0;
+    const start = (s: CardStore) => s.recordAttemptStart({ ...ev('e-1', r.sessionId), messageId: 'msg-term', positionRef: 'p1', previousPositionRef: null, envelopeDigest: 'env' });
+    for (const at of [T0, T0 + 1000, T0 + 5000]) {
+      now = at;
+      expect(start(b.store).kind).toBe('started');
+      b.store.recordAttemptFailure({ eventId: 'e-1', reasonCode: 'membership_fetch', cursor: cursor(null, 'p1') });
+    }
+    now = T0;
+    expect(b.store.getSession(r.sessionId)?.status).toBe('dead_letter');
+    for (const [cand, tail] of [[a, b], [b, a]] as const) {
+      expect(compare(cand, tail)).toEqual(expect.arrayContaining([
+        { table: 'card_sessions', key: r.sessionId, code: 'conflicting_fact' },
+      ]));
+    }
+  });
+
+  it('a card terminal outcome failed vs abandoned conflicts; identical terminal and forward progress pass', async () => {
+    const res = store.reserveMessage({ kind: 'display', binding, bodyDigest: 'd', clientMsgNo: 'cmn-term' });
+    if (res.kind !== 'reserved') throw new Error('reserve');
+    let [a, b] = await branch();
+    a.store.markSendFailed(res.cardId);
+    b.store.abandonUnsent(res.cardId);
+    for (const [cand, tail] of [[a, b], [b, a]] as const) {
+      expect(compare(cand, tail)).toEqual(expect.arrayContaining([
+        { table: 'card_messages', key: res.cardId, code: 'conflicting_fact' },
+      ]));
+    }
+    [a, b] = await branch();
+    a.store.markSendFailed(res.cardId);
+    b.store.markSendFailed(res.cardId);
+    expect(compare(a, b)).toEqual([]);
+    [a, b] = await branch();
+    // Tail ambiguous; candidate definitively failed after reconciliation.
+    a.store.markSendAmbiguous(res.cardId);
+    a.store.markSendFailed(res.cardId);
+    b.store.markSendAmbiguous(res.cardId);
+    expect(compare(a, b)).toEqual([]);
+  });
+
+  async function reservedRequestImages() {
+    store.registerHandler(handler('gen-1'));
+    store.chargeExplicitRequest({ ...fence('gen-1'), requestId: 'r1', bodyDigest: 'b1', opcode: 'display' });
+    const r = store.reserveExplicitSend({ ...fence('gen-1'), requestId: 'r1', card: displayCard });
+    if (r.kind !== 'reserved') throw new Error('reserve');
+    return { images: await branch(), cardId: r.cardId };
+  }
+
+  const ack = (s: CardStore, result = '{"status":"sent","message_id":"m1"}') =>
+    s.finishExplicitRequest({ generation: 'gen-1', requestId: 'r1', outcome: 'acked', safeResultJson: result, message: { kind: 'ack', messageId: 'm1', currentResetEpoch: 0, policyAllows: true } });
+  const fail = (s: CardStore) =>
+    s.finishExplicitRequest({ generation: 'gen-1', requestId: 'r1', outcome: 'failed', safeResultJson: '{"status":"error"}', message: { kind: 'failed' } });
+
+  it('an explicit request acked vs failed conflicts in both directions', async () => {
+    const { images: [a, b] } = await reservedRequestImages();
+    expect(ack(a.store).kind).toBe('finished');
+    expect(fail(b.store).kind).toBe('finished');
+    for (const [cand, tail] of [[a, b], [b, a]] as const) {
+      expect(compare(cand, tail)).toEqual(expect.arrayContaining([
+        { table: 'card_explicit_requests', key: 'gen-1/r1', code: 'conflicting_fact' },
+      ]));
+    }
+  });
+
+  it('an absorbing request with a different recorded result conflicts', async () => {
+    const { images: [a, b] } = await reservedRequestImages();
+    ack(a.store, '{"status":"sent","message_id":"m1"}');
+    ack(b.store, '{"status":"sent","message_id":"m1","session_id":"other"}');
+    expect(compare(a, b)).toEqual(expect.arrayContaining([
+      { table: 'card_explicit_requests', key: 'gen-1/r1', code: 'conflicting_fact' },
+    ]));
+  });
+
+  it('identical absorbing requests pass; reserved or ambiguous tails progress to a terminal candidate', async () => {
+    let { images: [a, b] } = await reservedRequestImages();
+    ack(a.store);
+    ack(b.store);
+    expect(compare(a, b)).toEqual([]);
+    [a, b] = await branch();
+    // Tail still reserved; candidate acked.
+    expect(compare(a, b)).toEqual([]);
+    ack(a.store);
+    expect(compare(a, b)).toEqual([]);
+  });
+
+  it('an ambiguous tail request progresses to failed but an absorbing tail is never reopened', async () => {
+    const { images: [a, b] } = await reservedRequestImages();
+    for (const s of [a.store, b.store]) {
+      s.finishExplicitRequest({ generation: 'gen-1', requestId: 'r1', outcome: 'ambiguous', safeResultJson: '{"status":"error","error":{"code":"send_unconfirmed"}}', message: { kind: 'ambiguous' } });
+    }
+    fail(a.store);
+    expect(compare(a, b)).toEqual([]);
+    expect(compare(b, a)).toEqual(expect.arrayContaining([
+      { table: 'card_explicit_requests', key: 'gen-1/r1', code: 'revived_work' },
+    ]));
+  });
+});
+
+describe('restore comparator: forward request progress', () => {
+  it('a charged tail request progressing to reserved in the candidate passes', async () => {
+    store.registerHandler(handler('gen-1'));
+    store.chargeExplicitRequest({ ...fence('gen-1'), requestId: 'r1', bodyDigest: 'b1', opcode: 'display' });
+    const tailPath = join(root, 'charged-tail.db');
+    await adapter.backup(tailPath);
+    const tail = createAdapter(tailPath);
+    try {
+      expect(store.reserveExplicitSend({ ...fence('gen-1'), requestId: 'r1', card: displayCard }).kind).toBe('reserved');
+      expect(store.checkInvariants()).toEqual([]);
+      expect(checkCardInvariants(tail)).toEqual([]);
+      expect(compareProtectedGraph(readProtectedGraph(adapter), readProtectedGraph(tail))).toEqual([]);
+      // The reverse direction loses the reservation and is quarantined.
+      expect(compareProtectedGraph(readProtectedGraph(tail), readProtectedGraph(adapter))).toEqual(expect.arrayContaining([
+        { table: 'card_explicit_requests', key: 'gen-1/r1', code: 'revived_work' },
+      ]));
+    } finally {
+      tail.close();
+    }
   });
 });
