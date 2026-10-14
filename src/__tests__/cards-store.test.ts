@@ -1310,3 +1310,135 @@ describe('R1: restore comparator ranks admission and session progress', () => {
     expect(compareValid(ambiguousCand, admittedTail)).toEqual([]);
   });
 });
+
+describe('stranded sending sessions: fixed-deadline expiry releases capacity', () => {
+  function fillWithSending(capacity: number): Array<{ cardId: string; sessionId: string }> {
+    store = newStore({ sessionCapacity: capacity });
+    const out = [];
+    for (let i = 0; i < capacity; i++) out.push(reserveInteractive(`stranded-${i}`));
+    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract })).toEqual({ kind: 'capacity_full' });
+    return out;
+  }
+
+  it('[regression] before, exactly at and after the fixed deadline', () => {
+    const rows = fillWithSending(3);
+    // One millisecond before expires_at: nothing is reclaimed and capacity stays full.
+    now = T0 + DAY - 1;
+    expect(store.expireSessions()).toEqual([]);
+    for (const r of rows) expect(store.getSession(r.sessionId)?.status).toBe('sending');
+    expect(store.activeSessions()).toBe(3);
+    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract })).toEqual({ kind: 'capacity_full' });
+    // Exactly at expires_at the stranded rows terminalize; they never had an identity, so no closure edit is owed.
+    now = T0 + DAY;
+    expect(store.expireSessions()).toEqual([]);
+    for (const r of rows) {
+      expect(store.getSession(r.sessionId)).toMatchObject({ status: 'expired', terminalAt: now, retainUntil: now + DAY });
+      expect(store.getMessage(r.cardId)).toMatchObject({ state: 'expired', terminalReason: 'expired', messageId: null, terminalAt: now, retainUntil: now + DAY });
+    }
+    expect(store.activeSessions()).toBe(0);
+    expect(store.checkInvariants()).toEqual([]);
+    // After the deadline new work fits again.
+    now = T0 + DAY + 1;
+    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract }).kind).toBe('reserved');
+  });
+
+  it('[regression] well after the deadline a full stranded capacity is released in one pass', () => {
+    const rows = fillWithSending(2);
+    now = T0 + 3 * DAY;
+    store.expireSessions();
+    expect(store.activeSessions()).toBe(0);
+    for (const r of rows) expect(store.getSession(r.sessionId)?.status).toBe('expired');
+    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract }).kind).toBe('reserved');
+  });
+
+  it('[control] expiry is idempotent: a repeated pass changes nothing', () => {
+    fillWithSending(2);
+    now = T0 + DAY;
+    store.expireSessions();
+    const once = readProtectedGraph(adapter);
+    now = T0 + DAY + 5;
+    expect(store.expireSessions()).toEqual([]);
+    expect(readProtectedGraph(adapter)).toEqual(once);
+  });
+
+  it('[regression] a late acknowledgement of an expired stranded send is rejected as terminal', () => {
+    const [r] = fillWithSending(1);
+    now = T0 + DAY;
+    store.expireSessions();
+    expect(store.ackMessage({ cardId: r.cardId, messageId: 'm-late', currentResetEpoch: 0, policyAllows: true })).toEqual({ kind: 'invalid_state', state: 'expired' });
+    expect(store.getSession(r.sessionId)?.status).toBe('expired');
+  });
+
+  it('[control] ambiguous work is never reclaimed by expiry, before or after the deadline', async () => {
+    store = newStore({ sessionCapacity: 3 });
+    store.initCursor('scope-a', 'T-EXCL');
+    const send = reserveInteractive('amb-send');
+    store.markSendAmbiguous(send.cardId);
+    const adm = pendingSession('amb-adm');
+    const a = store.admitOnce({ ...ev('e-1', adm.sessionId), sessionId: adm.sessionId, continuationGeneration: 'c', submittedHash: 'h', currentResetEpoch: 0, cursor: cursor(null, 'p1') });
+    if (a.kind !== 'admitted') throw new Error('not admitted');
+    store.markAdmissionAmbiguous(a.admissionId);
+    for (const at of [T0 + DAY - 1, T0 + DAY, T0 + 10 * DAY]) {
+      now = at;
+      store.expireSessions();
+      store.cleanup();
+      expect(store.getSession(send.sessionId)?.status).toBe('ambiguous');
+      expect(store.getMessage(send.cardId)?.state).toBe('ambiguous');
+      expect(store.getSession(adm.sessionId)?.status).toBe('ambiguous');
+      expect(store.activeSessions()).toBe(2);
+    }
+    expect(store.checkInvariants()).toEqual([]);
+  });
+
+  it('[regression] crash-shaped: stranded rows survive a restart, then expire, stay ready and clean up', async () => {
+    const marker = join(root, 'recovery', 'stranded-marker.json');
+    provisionFirstInstallMarker(marker, 'install-a', T0);
+    const dbPath = join(root, 'stranded.db');
+    const open = async (): Promise<{ a: DbAdapter; s: CardStore }> => {
+      const a = createAdapter(dbPath);
+      new SessionStore(a).init();
+      const r = await initializeCardStore({ adapter: a, marker: new FileActivationMarker(marker), installationRef: 'install-a', backupDir: join(root, 'stranded-backups'), clock, newLineageId: () => 'lineage-stranded', sessionCapacity: 2, newId: () => `id-${++seq}` });
+      if (r.state !== 'ready') throw new Error(r.reason);
+      return { a, s: r.store };
+    };
+    // Process 1 reserves two interactive sends and crashes before any transport.
+    let { a, s } = await open();
+    const stranded = [1, 2].map((i) => {
+      const r = s.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: `crash-${i}`, contract });
+      if (r.kind !== 'reserved') throw new Error('reserve');
+      return r;
+    });
+    a.close();
+    // Process 2 restarts before the deadline: the rows are still counted.
+    now = T0 + DAY - 1;
+    ({ a, s } = await open());
+    s.expireSessions();
+    expect(s.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'crash-3', contract })).toEqual({ kind: 'capacity_full' });
+    a.close();
+    // Process 3 restarts after the deadline: the store-owned expiry releases capacity.
+    now = T0 + DAY + 1;
+    ({ a, s } = await open());
+    s.expireSessions();
+    s.expireSessions();
+    for (const r of stranded) expect(s.getSession(r.sessionId)?.status).toBe('expired');
+    expect(s.activeSessions()).toBe(0);
+    expect(s.checkInvariants()).toEqual([]);
+    expect(s.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'crash-3', contract }).kind).toBe('reserved');
+    a.close();
+    // Process 4: restart stays ready; retention cleanup converges on the expired rows.
+    now = T0 + 2 * DAY + 2;
+    ({ a, s } = await open());
+    s.cleanup();
+    s.cleanup();
+    for (const r of stranded) {
+      expect(s.getSession(r.sessionId)).toBeNull();
+      expect(s.getMessage(r.cardId)).toBeNull();
+    }
+    expect(s.checkInvariants()).toEqual([]);
+    expect(s.activeSessions()).toBe(1);
+    a.close();
+    ({ a, s } = await open());
+    expect(s.checkInvariants()).toEqual([]);
+    a.close();
+  });
+});

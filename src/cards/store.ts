@@ -1244,13 +1244,22 @@ export class CardStore {
     });
   }
 
-  /** T4: fixed-deadline expiry of pending/retry sessions; returns cards needing a closure edit. */
+  /**
+   * T4: fixed-deadline expiry of pending/retry sessions, and of `sending`
+   * sessions stranded by a crash between reservation and first transport,
+   * which would otherwise hold active capacity forever. Ambiguous work is
+   * never reclaimed. Returns cards owed a closure edit, i.e. those with an
+   * acknowledged message identity; an expired stranded send has none.
+   */
   expireSessions(): string[] {
     return this.tx(() => {
       const now = this.now();
       const rows = this.adapter
-        .prepare(`SELECT session_id, card_id FROM card_sessions WHERE status IN ('pending','retry_wait') AND expires_at <= ?`)
-        .all(now) as Array<{ session_id: string; card_id: string }>;
+        .prepare(
+          `SELECT s.session_id, s.card_id, m.message_id FROM card_sessions s JOIN card_messages m USING(card_id)
+           WHERE s.status IN ('sending','pending','retry_wait') AND s.expires_at <= ?`,
+        )
+        .all(now) as Array<{ session_id: string; card_id: string; message_id: string | null }>;
       for (const r of rows) {
         this.run(
           `UPDATE card_sessions SET status = 'expired', terminal_at = ?, retain_until = ? WHERE session_id = ?`,
@@ -1262,7 +1271,7 @@ export class CardStore {
           now, now + RETENTION_MS, now, r.card_id,
         );
       }
-      return rows.map((r) => r.card_id);
+      return rows.filter((r) => r.message_id !== null).map((r) => r.card_id);
     });
   }
 
