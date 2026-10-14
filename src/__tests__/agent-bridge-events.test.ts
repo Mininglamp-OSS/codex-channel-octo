@@ -34,6 +34,7 @@ vi.mock('@openai/codex-sdk', () => ({
 import { queryAgent, queryAgentEvents } from '../agent-bridge.js';
 import type { AgentOutputEvent, QueryAgentOptions } from '../agent-bridge.js';
 import type { Config } from '../config.js';
+import type { SafeText } from '../prompt-safety.js';
 
 function cfg(): Config {
   return {
@@ -313,6 +314,7 @@ describe('T25: one canonical options contract', () => {
       resume?: string;
       onSessionId?: (id: string, prompt: string) => void;
       groupInstructions?: string;
+      senderContext?: SafeText;
       onResumeFailed?: () => void;
       fallbackRetryPrompt?: string;
     }>();
