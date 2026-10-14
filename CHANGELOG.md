@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Strict global/inline/per-bot `cards` field merge with independent frozen
+  startup snapshots. Defaults: `disable=false`, `eventTransport="off"`,
+  `reasoningSummary="off"`. Local preferences grant no server or routing
+  authority. Invalid card settings fail startup with fixed diagnostics;
+  deprecated card flags are ignored with bounded, value-free warnings.
+  Same-ID edits do not restart Bots; restart or explicit remove/re-add is
+  required. Runtime card wiring and production enablement remain separate.
+
 - Per-turn transport sender metadata matched to the registration UID or its
   single prefix in the transport space (including UUID/operator-named spaces);
   identity is kept out of shared AGENTS.md. Unicode whitespace/invisibles are
