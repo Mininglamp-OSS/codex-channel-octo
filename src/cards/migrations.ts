@@ -472,9 +472,11 @@ export function checkCardInvariants(adapter: DbAdapter): InvariantViolation[] {
   ) {
     out.push('handler_invocation_count');
   }
+  // High-water counters never refund, while settled request rows are pruned by
+  // retention; only a counter below retained evidence (restore regression) is invalid.
   if (
     one(`SELECT 1 FROM card_handler_generations g
-         WHERE g.logical_send_count <> (SELECT count(*) FROM card_explicit_requests r
+         WHERE g.logical_send_count < (SELECT count(*) FROM card_explicit_requests r
                                         WHERE r.generation = g.generation AND r.send_slot IS NOT NULL)`)
   ) {
     out.push('handler_send_count');

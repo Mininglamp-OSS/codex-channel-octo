@@ -1280,13 +1280,19 @@ export class CardStore {
            SELECT d.event_id FROM card_event_dispositions d WHERE d.retain_until < ?)`,
         now,
       );
-      // Admitted dispositions leave together with their settled admission.
+      // Admitted dispositions leave together with their settled admission, and
+      // only when no other retained event still pins the session, so the
+      // session is pruned in the same pass and never outlives its admission.
       const admitted = this.adapter
         .prepare(
           `SELECT a.admission_id, a.event_id FROM card_admissions a
            JOIN card_sessions s USING(session_id)
            JOIN card_event_dispositions d ON d.event_id = a.event_id
-           WHERE a.state IN ('completed','failed') AND ${terminalSession} AND d.retain_until < ?`,
+           WHERE a.state IN ('completed','failed') AND ${terminalSession} AND d.retain_until < ?
+             AND NOT EXISTS (SELECT 1 FROM card_event_dispositions d2
+                             WHERE d2.session_id = a.session_id AND d2.event_id <> a.event_id)
+             AND NOT EXISTS (SELECT 1 FROM card_event_attempts t
+                             WHERE t.session_id = a.session_id AND t.event_id <> a.event_id)`,
         )
         .all(now) as Array<{ admission_id: string; event_id: string }>;
       for (const a of admitted) {
@@ -1778,7 +1784,8 @@ export type CardStoreDisabledReason =
   | 'invariant_failed'
   | 'backup_failed'
   | 'migration_failed'
-  | 'marker_write_failed';
+  | 'marker_write_failed'
+  | 'invalid_options';
 
 export interface CardStoreInitOptions extends CardStoreOptions {
   readonly adapter: DbAdapter;
@@ -1809,6 +1816,20 @@ export async function initializeCardStore(options: CardStoreInitOptions): Promis
     violations ? { state: 'disabled', reason, violations } : { state: 'disabled', reason };
   const { adapter, marker, installationRef } = options;
   if (!isSafeStoreRef(installationRef)) return disabled('provenance_invalid');
+
+  // Validate every option before any read or write so invalid configuration
+  // resolves disabled with the DB, marker and backup directory untouched.
+  let store: CardStore;
+  let nowMs: number;
+  let lineageId: string;
+  try {
+    store = new CardStore(adapter, options);
+    nowMs = options.clock.nowUtcMs();
+    lineageId = (options.newLineageId ?? randomUUID)();
+  } catch {
+    return disabled('invalid_options');
+  }
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0 || !isSafeStoreRef(lineageId)) return disabled('invalid_options');
 
   let read;
   try {
@@ -1841,7 +1862,6 @@ export async function initializeCardStore(options: CardStoreInitOptions): Promis
     }
   };
   const ready = (meta: CardMeta, provenance: 'first_install' | 'reopened' | 'activation_reconciled', backup?: BackupReceipt): CardStoreInit => {
-    const store = new CardStore(adapter, options);
     return backup ? { state: 'ready', store, meta, provenance, backup } : { state: 'ready', store, meta, provenance };
   };
   const activate = (lineageId: string, backupRef: string | null, nowMs: number): boolean => {
@@ -1878,14 +1898,13 @@ export async function initializeCardStore(options: CardStoreInitOptions): Promis
       return disabled('integrity_failed');
     }
     if (rows !== 0) return disabled('provenance_conflict');
-    if (!activate(inspected.meta.lineageId, m.backupRef, options.clock.nowUtcMs())) return disabled('marker_write_failed');
+    if (!activate(inspected.meta.lineageId, m.backupRef, nowMs)) return disabled('marker_write_failed');
     return ready(inspected.meta, 'activation_reconciled');
   }
 
   // No card objects in the database.
   if (m.everActivated) return disabled('prior_active_store_missing');
 
-  const nowMs = options.clock.nowUtcMs();
   let backup: BackupReceipt;
   try {
     backup = await backupBeforeMigration(adapter, options.backupDir, nowMs);
@@ -1898,7 +1917,7 @@ export async function initializeCardStore(options: CardStoreInitOptions): Promis
     if (inspectCardSchema(adapter).state !== 'absent') return disabled('provenance_conflict');
     meta = migrateCardSchema(adapter, {
       installationRef,
-      lineageId: (options.newLineageId ?? randomUUID)(),
+      lineageId,
       nowMs,
     });
   } catch {

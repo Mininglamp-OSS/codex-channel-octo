@@ -497,3 +497,65 @@ describe('downgrade and re-upgrade (AC-025.1)', () => {
     expect(await init(openDb())).toEqual({ state: 'disabled', reason: 'prior_active_store_missing' });
   });
 });
+
+describe('P1-2: invalid startup options resolve disabled with no mutation', () => {
+  function markerBytes(): string | null {
+    return existsSync(env.markerPath) ? readFileSync(env.markerPath, 'utf8') : null;
+  }
+
+  const invalid: Array<[string, Partial<Parameters<typeof initializeCardStore>[0]>]> = [
+    ['capacity 0', { sessionCapacity: 0 }],
+    ['capacity -1', { sessionCapacity: -1 }],
+    ['capacity 1.5', { sessionCapacity: 1.5 }],
+    ['capacity NaN', { sessionCapacity: Number.NaN }],
+    ['capacity string', { sessionCapacity: '5' as unknown as number }],
+    ['clock NaN', { clock: { nowUtcMs: () => Number.NaN } }],
+    ['clock negative', { clock: { nowUtcMs: () => -1 } }],
+    ['clock fractional', { clock: { nowUtcMs: () => T0 + 0.5 } }],
+    ['clock Infinity', { clock: { nowUtcMs: () => Number.POSITIVE_INFINITY } }],
+    ['clock string', { clock: { nowUtcMs: () => String(T0) as unknown as number } }],
+    ['clock throws', { clock: { nowUtcMs: () => { throw new Error('clock'); } } }],
+    ['clock missing', { clock: {} as unknown as { nowUtcMs: () => number } }],
+    ['lineage invalid', { newLineageId: () => '../escape' }],
+    ['lineage throws', { newLineageId: () => { throw new Error('rng'); } }],
+  ];
+
+  for (const [name, overrides] of invalid) {
+    it(`first install with ${name} resolves disabled and leaves DB, marker and backups untouched`, async () => {
+      provisionFirstInstallMarker(env.markerPath, INSTALL, T0);
+      const a = openDb();
+      const marker = markerBytes();
+      const pending = init(a, overrides);
+      await expect(pending).resolves.toEqual({ state: 'disabled', reason: 'invalid_options' });
+      expect(cardObjects(a)).toEqual([]);
+      expect(markerBytes()).toBe(marker);
+      expect(existsSync(env.backupDir)).toBe(false);
+    });
+  }
+
+  it('DB-only reconciliation with a NaN clock never writes an unparseable marker', async () => {
+    provisionFirstInstallMarker(env.markerPath, INSTALL, T0);
+    const a = openDb();
+    migrateCardSchema(a, { installationRef: INSTALL, lineageId: 'lineage-crash', nowMs: T0 });
+    const before = readProtectedGraph(a);
+    const marker = markerBytes();
+    await expect(init(a, { clock: { nowUtcMs: () => Number.NaN } })).resolves.toEqual({ state: 'disabled', reason: 'invalid_options' });
+    expect(markerBytes()).toBe(marker);
+    expect(readProtectedGraph(a)).toEqual(before);
+    // A valid restart still reconciles normally.
+    const r = await init(a);
+    expect(r.state === 'ready' && r.provenance).toBe('activation_reconciled');
+  });
+
+  it('reopening an activated store with an invalid capacity resolves disabled without touching it', async () => {
+    provisionFirstInstallMarker(env.markerPath, INSTALL, T0);
+    const a = openDb();
+    expect((await init(a)).state).toBe('ready');
+    const before = readProtectedGraph(a);
+    const marker = markerBytes();
+    await expect(init(a, { sessionCapacity: 0 })).resolves.toEqual({ state: 'disabled', reason: 'invalid_options' });
+    expect(markerBytes()).toBe(marker);
+    expect(readProtectedGraph(a)).toEqual(before);
+    expect(readdirSync(env.backupDir)).toHaveLength(1);
+  });
+});

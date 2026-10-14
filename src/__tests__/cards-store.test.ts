@@ -898,3 +898,66 @@ describe('B1: T1/T2 never commit across a halted, missing or foreign cursor boun
     expectUnchanged(before, r.sessionId);
   });
 });
+
+describe('P1-1: routine retention never trips startup invariants', () => {
+  it('P1-1A: pruning a settled request beside an unresolved charge keeps handler_send_count valid', () => {
+    store.registerHandler(handler('gen-1'));
+    store.chargeExplicitRequest({ ...fence('gen-1'), requestId: 'r1', bodyDigest: 'b1', opcode: 'display' });
+    store.chargeExplicitRequest({ ...fence('gen-1'), requestId: 'r2', bodyDigest: 'b2', opcode: 'display' });
+    const r1 = store.reserveExplicitSend({ ...fence('gen-1'), requestId: 'r1', card: displayCard });
+    expect(r1.kind).toBe('reserved');
+    // r1 fails definitively (prunable); r2 stays charged with no result (unresolved).
+    expect(store.finishExplicitRequest({ generation: 'gen-1', requestId: 'r1', outcome: 'failed', safeResultJson: '{"status":"error"}', message: { kind: 'failed' } }).kind).toBe('finished');
+    store.closeHandler('gen-1');
+    expect(store.checkInvariants()).toEqual([]);
+
+    now = T0 + DAY + 1;
+    const report = store.cleanup();
+    expect(report.requests).toBe(1);
+    expect(store.getExplicitRequest('gen-1', 'r1')).toBeNull();
+    expect(store.getExplicitRequest('gen-1', 'r2')?.state).toBe('charged');
+    // The trigger-protected high-water mark stays; it never refunds.
+    expect(store.getHandler('gen-1')).toMatchObject({ invocationCount: 2, logicalSendCount: 1 });
+    expect(store.checkInvariants()).toEqual([]);
+    expect(store.recoverExplicitLedger('inc-2').violations).toEqual([]);
+  });
+
+  it('P1-1A: counters restored below retained request evidence are still detected', () => {
+    store.registerHandler(handler('gen-1'));
+    store.chargeExplicitRequest({ ...fence('gen-1'), requestId: 'r1', bodyDigest: 'b1', opcode: 'display' });
+    store.reserveExplicitSend({ ...fence('gen-1'), requestId: 'r1', card: displayCard });
+    adapter.exec('DROP TRIGGER trg_card_handler_generations_fence');
+    adapter.prepare('UPDATE card_handler_generations SET logical_send_count = 0').run();
+    expect(store.checkInvariants()).toEqual(expect.arrayContaining(['handler_send_count']));
+  });
+
+  it('P1-1B: a later duplicate event never strands a session without its admission', () => {
+    store.initCursor('scope-a', 'T-EXCL');
+    const r = pendingSession('multi');
+    const a = store.admitOnce({ ...ev('e-1', r.sessionId), sessionId: r.sessionId, continuationGeneration: 'c', submittedHash: 'h', currentResetEpoch: 0, cursor: cursor(null, 'p1') });
+    if (a.kind !== 'admitted') throw new Error('not admitted');
+    store.settleAdmission(a.admissionId, 'completed');
+    // A later click on the same single-use card records a duplicate with its own, later retention.
+    now = T0 + 12 * 60 * 60 * 1000;
+    expect(store.admitOnce({ ...ev('e-2', r.sessionId), sessionId: r.sessionId, continuationGeneration: 'c2', submittedHash: 'h', currentResetEpoch: 0, cursor: cursor('p1', 'p2') }))
+      .toEqual({ kind: 'duplicate', recorded: 'completed' });
+
+    // Past the admission/session retention, but before the duplicate's.
+    now = T0 + DAY + 1;
+    store.cleanup();
+    expect(store.checkInvariants()).toEqual([]);
+    expect(store.getSession(r.sessionId)?.status).toBe('completed');
+    expect(store.getAdmissionForSession(r.sessionId)?.state).toBe('completed');
+    expect(store.getDisposition('e-1')).toBe('admitted');
+
+    // Once every related record is past retention, the whole set leaves together.
+    now = T0 + 12 * 60 * 60 * 1000 + DAY + 1;
+    store.cleanup();
+    store.cleanup();
+    expect(store.checkInvariants()).toEqual([]);
+    expect(store.getSession(r.sessionId)).toBeNull();
+    expect(store.getAdmissionForSession(r.sessionId)).toBeNull();
+    expect(store.getDisposition('e-1')).toBeNull();
+    expect(store.getDisposition('e-2')).toBeNull();
+  });
+});
