@@ -1711,9 +1711,30 @@ const SET_ONCE_FIELDS: Readonly<Partial<Record<CardTable, readonly string[]>>> =
   card_explicit_requests: ['send_slot', 'client_msg_no', 'card_id'],
 };
 
-const OPEN_SESSION = new Set(['sending', 'pending', 'retry_wait', 'admitted', 'ambiguous']);
 const TERMINAL_MESSAGE = new Set(['done', 'error', 'expired', 'abandoned']);
-const TERMINAL_ADMISSION = new Set(['completed', 'failed']);
+/** Admission progress: admitted -> ambiguous -> completed|failed (rank 2, absorbing). */
+const ADMISSION_RANK: Readonly<Record<string, number>> = {
+  admitted: 0, ambiguous: 1, completed: 2, failed: 2,
+};
+/**
+ * Session progress. `ambiguous` has two meanings: after an admission it sits
+ * between admitted and terminal; without one it is an unconfirmed initial send
+ * that T-bind may still legitimately reconcile to pending.
+ */
+function sessionRank(status: unknown, hasAdmission: boolean): number {
+  switch (status) {
+    case 'sending': return 0;
+    case 'ambiguous': return hasAdmission ? 3 : 0.5;
+    case 'pending':
+    case 'retry_wait': return 1;
+    case 'admitted': return 2;
+    case 'completed':
+    case 'failed':
+    case 'dead_letter':
+    case 'expired': return 4;
+    default: return -1;
+  }
+}
 /** Explicit request progress; acked/failed/cancelled are absorbing (rank 3). */
 const REQUEST_RANK: Readonly<Record<string, number>> = {
   charged: 0, reserved: 1, ambiguous: 2, acked: 3, failed: 3, cancelled: 3,
@@ -1730,6 +1751,9 @@ export function compareProtectedGraph(candidate: ProtectedGraphRows, tail: Prote
     TABLE_KEYS[table].map((k) => String(r[k])).join('/');
   const lineage = (rows: ProtectedGraphRows): unknown => rows.card_meta.find((r) => r.k === 'lineage_id')?.v;
   if (lineage(candidate) !== lineage(tail)) out.push({ table: 'card_meta', key: 'lineage_id', code: 'lineage_mismatch' });
+  const admittedSessions = (rows: ProtectedGraphRows): Set<unknown> => new Set(rows.card_admissions.map((r) => r.session_id));
+  const candAdmitted = admittedSessions(candidate);
+  const tailAdmitted = admittedSessions(tail);
 
   for (const table of CARD_TABLES) {
     if (table === 'card_meta') continue;
@@ -1757,13 +1781,17 @@ export function compareProtectedGraph(candidate: ProtectedGraphRows, tail: Prote
           out.push({ table, key, code: 'conflicting_fact' });
         }
       }
-      if (table === 'card_sessions' && !OPEN_SESSION.has(String(t.status))) {
-        if (OPEN_SESSION.has(String(c.status))) out.push({ table, key, code: 'revived_work' });
-        else if (c.status !== t.status) out.push({ table, key, code: 'conflicting_fact' });
+      if (table === 'card_sessions') {
+        const tr = sessionRank(t.status, tailAdmitted.has(t.session_id));
+        const cr = sessionRank(c.status, candAdmitted.has(c.session_id));
+        if (cr < tr) out.push({ table, key, code: 'revived_work' });
+        else if (tr === 4 && c.status !== t.status) out.push({ table, key, code: 'conflicting_fact' });
       }
-      if (table === 'card_admissions' && TERMINAL_ADMISSION.has(String(t.state))) {
-        if (!TERMINAL_ADMISSION.has(String(c.state))) out.push({ table, key, code: 'revived_work' });
-        else if (c.state !== t.state) out.push({ table, key, code: 'conflicting_fact' });
+      if (table === 'card_admissions') {
+        const tr = ADMISSION_RANK[String(t.state)] ?? -1;
+        const cr = ADMISSION_RANK[String(c.state)] ?? -1;
+        if (cr < tr) out.push({ table, key, code: 'revived_work' });
+        else if (tr === 2 && c.state !== t.state) out.push({ table, key, code: 'conflicting_fact' });
       }
       if (table === 'card_handler_generations') {
         if (num(c.invocation_count) < num(t.invocation_count) || num(c.logical_send_count) < num(t.logical_send_count)) {

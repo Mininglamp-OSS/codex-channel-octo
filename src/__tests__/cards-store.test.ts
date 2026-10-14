@@ -1168,3 +1168,145 @@ describe('restore comparator: forward request progress', () => {
     }
   });
 });
+
+describe('R1: restore comparator ranks admission and session progress', () => {
+  interface Image {
+    adapter: DbAdapter;
+    store: CardStore;
+  }
+  const opened: DbAdapter[] = [];
+
+  afterEach(() => {
+    while (opened.length) opened.pop()?.close();
+  });
+
+  /** Two independent images of the current live store, branched by online backup. */
+  async function images(): Promise<[Image, Image]> {
+    const out: Image[] = [];
+    for (const name of ['candidate', 'tail']) {
+      const path = join(root, `r1-${name}-${opened.length}.db`);
+      await adapter.backup(path);
+      const a = createAdapter(path);
+      opened.push(a);
+      let n = 0;
+      out.push({ adapter: a, store: new CardStore(a, { clock, newId: () => `${name}-${++n}` }) });
+    }
+    return out as [Image, Image];
+  }
+
+  /** Each image must be a valid same-lineage store on its own before it is compared. */
+  function compareValid(candidate: Image, tail: Image) {
+    expect(checkCardInvariants(candidate.adapter)).toEqual([]);
+    expect(checkCardInvariants(tail.adapter)).toEqual([]);
+    const c = readProtectedGraph(candidate.adapter);
+    const t = readProtectedGraph(tail.adapter);
+    expect(manifestProtectedGraph(c).lineageId).toBe('lineage-1');
+    expect(manifestProtectedGraph(t).lineageId).toBe('lineage-1');
+    return compareProtectedGraph(c, t);
+  }
+
+  const admit = (s: CardStore, sessionId: string) =>
+    s.admitOnce({ ...ev('e-1', sessionId), sessionId, continuationGeneration: 'c', submittedHash: 'h', currentResetEpoch: 0, cursor: cursor(null, 'p1') });
+
+  async function ambiguousAdmissionTail() {
+    store.initCursor('scope-a', 'T-EXCL');
+    const r = pendingSession('r1');
+    const a = admit(store, r.sessionId);
+    if (a.kind !== 'admitted') throw new Error('not admitted');
+    const [cand, tail] = await images();
+    expect(tail.store.markAdmissionAmbiguous(a.admissionId)).toEqual({ kind: 'marked' });
+    return { cand, tail, sessionId: r.sessionId, admissionId: a.admissionId };
+  }
+
+  it('[regression] tail ambiguous admission, candidate still admitted: revived_work on admission and session', async () => {
+    const { cand, tail, sessionId, admissionId } = await ambiguousAdmissionTail();
+    expect(cand.store.getAdmissionForSession(sessionId)?.state).toBe('admitted');
+    expect(compareValid(cand, tail)).toEqual(expect.arrayContaining([
+      { table: 'card_admissions', key: admissionId, code: 'revived_work' },
+      { table: 'card_sessions', key: sessionId, code: 'revived_work' },
+    ]));
+  });
+
+  for (const outcome of ['completed', 'failed'] as const) {
+    it(`[control] tail ambiguous admission, candidate ${outcome}: passes`, async () => {
+      const { cand, tail, admissionId } = await ambiguousAdmissionTail();
+      expect(cand.store.settleAdmission(admissionId, outcome).kind).toBe('settled');
+      expect(compareValid(cand, tail)).toEqual([]);
+    });
+  }
+
+  it('[control] tail ambiguous admission, candidate ambiguous: passes', async () => {
+    const { cand, tail, admissionId } = await ambiguousAdmissionTail();
+    cand.store.markAdmissionAmbiguous(admissionId);
+    expect(compareValid(cand, tail)).toEqual([]);
+  });
+
+  it('[regression] tail ambiguous admission, candidate session pending / retry_wait / sending: session revived_work', async () => {
+    store.initCursor('scope-a', 'T-EXCL');
+    const sending = reserveInteractive('r1-sending');
+    const [sendingImage] = await images();
+    store.ackMessage({ cardId: sending.cardId, messageId: 'm-r1-sending', currentResetEpoch: 0, policyAllows: true });
+    const [pendingImage] = await images();
+    const [retryImage] = await images();
+    expect(retryImage.store.recordAttemptStart({ ...ev('e-1', sending.sessionId), messageId: 'm-r1-sending', positionRef: 'p1', previousPositionRef: null, envelopeDigest: 'env' }).kind).toBe('started');
+    expect(retryImage.store.recordAttemptFailure({ eventId: 'e-1', reasonCode: 'membership_fetch', cursor: cursor(null, 'p1') }).kind).toBe('retry_wait');
+    const a = admit(store, sending.sessionId);
+    if (a.kind !== 'admitted') throw new Error('not admitted');
+    store.markAdmissionAmbiguous(a.admissionId);
+    const [, tail] = await images();
+    for (const [cand, status] of [[sendingImage, 'sending'], [pendingImage, 'pending'], [retryImage, 'retry_wait']] as const) {
+      expect(cand.store.getSession(sending.sessionId)?.status).toBe(status);
+      expect(compareValid(cand, tail)).toEqual(expect.arrayContaining([
+        { table: 'card_sessions', key: sending.sessionId, code: 'revived_work' },
+      ]));
+    }
+  });
+
+  it('[control] tail ambiguous send (no admission), candidate reconciled to pending: passes', async () => {
+    const r = reserveInteractive('r1-send');
+    store.markSendAmbiguous(r.cardId);
+    const [cand, tail] = await images();
+    expect(tail.store.getSession(r.sessionId)?.status).toBe('ambiguous');
+    expect(cand.store.ackMessage({ cardId: r.cardId, messageId: 'm-r1-send', currentResetEpoch: 0, policyAllows: true })).toEqual({ kind: 'bound', admittable: true });
+    expect(compareValid(cand, tail)).toEqual([]);
+  });
+
+  it('[regression] tail ambiguous send (no admission), candidate still sending: session revived_work', async () => {
+    const r = reserveInteractive('r1-send');
+    const [cand] = await images();
+    store.markSendAmbiguous(r.cardId);
+    const [, tail] = await images();
+    expect(compareValid(cand, tail)).toEqual(expect.arrayContaining([
+      { table: 'card_sessions', key: r.sessionId, code: 'revived_work' },
+    ]));
+  });
+
+  it('[regression] tail admitted, candidate session rewound to pending: session revived_work', async () => {
+    store.initCursor('scope-a', 'T-EXCL');
+    const r = pendingSession('r1-adm');
+    const [cand] = await images();
+    expect(admit(store, r.sessionId).kind).toBe('admitted');
+    const [, tail] = await images();
+    expect(compareValid(cand, tail)).toEqual(expect.arrayContaining([
+      { table: 'card_sessions', key: r.sessionId, code: 'revived_work' },
+    ]));
+  });
+
+  it('[control] forward session progress pending -> admitted -> ambiguous passes', async () => {
+    store.initCursor('scope-a', 'T-EXCL');
+    const r = pendingSession('r1-fwd');
+    const [, pendingTail] = await images();
+    const a = admit(store, r.sessionId);
+    if (a.kind !== 'admitted') throw new Error('not admitted');
+    const [admittedCand, admittedTail] = await images();
+    // The admission legitimately advances the opaque cursor, which the unchanged
+    // cursor rule reports because opaque positions cannot be ordered; no session
+    // or admission conflict may appear.
+    expect(compareValid(admittedCand, pendingTail)).toEqual([
+      { table: 'card_event_cursor', key: 'scope-a', code: 'cursor_regression' },
+    ]);
+    store.markAdmissionAmbiguous(a.admissionId);
+    const [ambiguousCand] = await images();
+    expect(compareValid(ambiguousCand, admittedTail)).toEqual([]);
+  });
+});
