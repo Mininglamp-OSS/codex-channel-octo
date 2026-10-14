@@ -443,7 +443,8 @@ export interface AdmitInput extends EventIdentity {
   readonly continuationGeneration: string;
   readonly submittedHash: string;
   readonly currentResetEpoch: number;
-  readonly cursor: CursorAdvance | null;
+  /** Required: T2 always commits the event's own contiguous cursor position. */
+  readonly cursor: CursorAdvance;
 }
 
 export type AdmitResult =
@@ -644,6 +645,25 @@ export class CardStore {
   }
 
   // ── cursor (inside transactions) ──
+
+  private static checkCursorInput(c: CursorAdvance): void {
+    if (c === null || typeof c !== 'object') throw new CardStoreError('invalid_input');
+    text(c.scope);
+    if (c.expectedPrevious !== null) text(c.expectedPrevious);
+    text(c.next);
+  }
+
+  /**
+   * Event-scope boundary check, run before any T1/T2 mutation: the cursor must
+   * belong to the event's own consumer scope, and that scope must have a live,
+   * unhalted cursor row. A halt can never be crossed through another scope.
+   */
+  private checkCursorBoundary(eventScope: string, c: CursorAdvance): void {
+    if (c.scope !== eventScope) throw new Rollback<CursorFailure>({ kind: 'cursor_conflict' });
+    const row = this.get<CursorRow>('SELECT * FROM card_event_cursor WHERE consumer_scope = ?', eventScope);
+    if (!row) throw new Rollback<CursorFailure>({ kind: 'no_cursor' });
+    if (row.halted_reason !== null) throw new Rollback<CursorFailure>({ kind: 'halted', reason: row.halted_reason });
+  }
 
   private advanceCursor(c: CursorAdvance, now: number): void {
     const row = this.get<CursorRow>('SELECT * FROM card_event_cursor WHERE consumer_scope = ?', text(c.scope));
@@ -1098,10 +1118,12 @@ export class CardStore {
       throw new CardStoreError('invalid_input');
     }
     const reason = input.reasonCode === undefined ? null : text(input.reasonCode, 64);
+    CardStore.checkCursorInput(input.cursor);
     return this.tx<DispositionResult>(() => {
       const now = this.now();
       const final = this.finalDisposition(input.eventId);
       if (final !== undefined) return { kind: 'already_final', disposition: final };
+      this.checkCursorBoundary(input.scope, input.cursor);
       const sessionId = input.sessionId !== null && this.get('SELECT 1 FROM card_sessions WHERE session_id = ?', input.sessionId)
         ? input.sessionId
         : null;
@@ -1126,10 +1148,12 @@ export class CardStore {
   admitOnce(input: AdmitInput): AdmitResult {
     text(input.eventId); text(input.scope); text(input.eventClass); text(input.sessionId);
     text(input.continuationGeneration); text(input.submittedHash); int(input.currentResetEpoch);
+    CardStore.checkCursorInput(input.cursor);
     return this.tx<AdmitResult>(() => {
       const now = this.now();
       const final = this.finalDisposition(input.eventId);
       if (final !== undefined) return { kind: 'duplicate', recorded: final };
+      this.checkCursorBoundary(input.scope, input.cursor);
       const changed = this.run(
         `UPDATE card_sessions SET status = 'admitted'
          WHERE session_id = ? AND status IN ('pending','retry_wait') AND expires_at > ? AND reset_epoch = ?`,
@@ -1145,7 +1169,7 @@ export class CardStore {
         );
         const attempts = this.get<{ attempt_no: number }>('SELECT attempt_no FROM card_event_attempts WHERE event_id = ?', input.eventId);
         this.insertDisposition(input, 'admitted', null, attempts?.attempt_no ?? 1, now);
-        if (input.cursor) this.advanceCursor(input.cursor, now);
+        this.advanceCursor(input.cursor, now);
         return { kind: 'admitted', admissionId };
       }
       const s = this.get<SessionRow>('SELECT * FROM card_sessions WHERE session_id = ?', input.sessionId);
@@ -1167,7 +1191,7 @@ export class CardStore {
         disposition = 'duplicate';
       }
       this.insertDisposition({ ...input, sessionId: sessionRef }, disposition, null, 1, now);
-      if (input.cursor) this.advanceCursor(input.cursor, now);
+      this.advanceCursor(input.cursor, now);
       return result;
     });
   }

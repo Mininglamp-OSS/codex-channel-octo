@@ -400,7 +400,8 @@ describe('T0/T1a retry, T1 final disposition and cursor (AC-016)', () => {
     expect(store.recordDisposition({ ...ev('e-1', null), disposition: 'unknown', cursor: cursor(null, 'p1') })).toEqual({ kind: 'halted', reason: 'non_owned_event' });
     expect(store.getDisposition('e-1')).toBeNull();
     expect(newStore().readCursor('scope-a')?.haltedReason).toBe('non_owned_event');
-    expect(store.recordDisposition({ ...ev('e-1', null), disposition: 'unknown', cursor: { scope: 'nope', expectedPrevious: null, next: 'p' } })).toEqual({ kind: 'no_cursor' });
+    expect(store.recordDisposition({ ...ev('e-1', null), disposition: 'unknown', cursor: { scope: 'nope', expectedPrevious: null, next: 'p' } })).toEqual({ kind: 'cursor_conflict' });
+    expect(store.recordDisposition({ ...ev('e-1', null), scope: 'nope', disposition: 'unknown', cursor: { scope: 'nope', expectedPrevious: null, next: 'p' } })).toEqual({ kind: 'no_cursor' });
   });
 
   it('definitive rejection from retry_wait restores pending', () => {
@@ -414,7 +415,12 @@ describe('T0/T1a retry, T1 final disposition and cursor (AC-016)', () => {
 });
 
 describe('T2 admission, T3 settle and T4 expiry (AC-015.1, AC-017.1)', () => {
-  const admit = (eventId: string, sessionId: string, c: CursorAdvance | null = null, epoch = 0) =>
+  // T2 always commits the event's own contiguous cursor; default to the next scope-a position.
+  const nextCursor = (): CursorAdvance => {
+    const current = store.initCursor('scope-a', 'T-EXCL').cursor;
+    return cursor(current, `p${current === null ? 1 : Number(current.slice(1)) + 1}`);
+  };
+  const admit = (eventId: string, sessionId: string, c: CursorAdvance = nextCursor(), epoch = 0) =>
     store.admitOnce({ ...ev(eventId, sessionId), sessionId, continuationGeneration: `cont-${eventId}`, submittedHash: 'sub', currentResetEpoch: epoch, cursor: c });
 
   it('admits exactly once per single-use card; later events record duplicate', () => {
@@ -435,7 +441,7 @@ describe('T2 admission, T3 settle and T4 expiry (AC-015.1, AC-017.1)', () => {
     const sending = reserveInteractive('s');
     expect(admit('e-s', sending.sessionId)).toEqual({ kind: 'duplicate', recorded: 'sending' });
     const fenced = pendingSession('f');
-    expect(admit('e-f', fenced.sessionId, null, 1)).toEqual({ kind: 'rejected', reason: 'reset_fenced' });
+    expect(admit('e-f', fenced.sessionId, nextCursor(), 1)).toEqual({ kind: 'rejected', reason: 'reset_fenced' });
     expect(admit('e-u', 'missing')).toEqual({ kind: 'rejected', reason: 'unknown_session' });
     expect(store.getDisposition('e-u')).toBe('unknown');
     const late = pendingSession('l');
@@ -475,7 +481,7 @@ describe('T2 admission, T3 settle and T4 expiry (AC-015.1, AC-017.1)', () => {
     expect(store.fenceSessionKey(binding.sessionKey, 1)).toBe(1);
     expect(store.getSession(r.sessionId)?.status).toBe('failed');
     expect(store.getSession(other.sessionId)?.status).toBe('pending');
-    expect(admit('e-1', r.sessionId, null, 1)).toEqual({ kind: 'duplicate', recorded: 'failed' });
+    expect(admit('e-1', r.sessionId, nextCursor(), 1)).toEqual({ kind: 'duplicate', recorded: 'failed' });
   });
 });
 
@@ -782,5 +788,113 @@ describe('protected graph backup and restore comparison (AC-017.2, AC-022.1, AC-
     };
     const codes = compareProtectedGraph(forged, tail).map((c) => c.code);
     expect(codes).toEqual(expect.arrayContaining(['lineage_mismatch', 'conflicting_fact']));
+  });
+});
+
+describe('B1: T1/T2 never commit across a halted, missing or foreign cursor boundary', () => {
+  interface Snapshot {
+    admissions: number;
+    dispositions: number;
+    sessionStatus: string | undefined;
+    cursors: unknown[];
+  }
+
+  function snapshot(sessionId: string): Snapshot {
+    return {
+      admissions: count('card_admissions'),
+      dispositions: count('card_event_dispositions'),
+      sessionStatus: store.getSession(sessionId)?.status,
+      cursors: adapter.prepare('SELECT * FROM card_event_cursor ORDER BY consumer_scope').all(),
+    };
+  }
+
+  function admitIn(eventScope: string, sessionId: string, c: CursorAdvance | null) {
+    return store.admitOnce({
+      eventId: 'e-b1', scope: eventScope, eventClass: 'card_action', sessionId,
+      continuationGeneration: 'cont-b1', submittedHash: 'sub', currentResetEpoch: 0,
+      cursor: c as CursorAdvance,
+    });
+  }
+
+  function dispose(eventScope: string, sessionId: string, c: CursorAdvance) {
+    return store.recordDisposition({
+      eventId: 'e-b1', scope: eventScope, eventClass: 'card_action', sessionId,
+      disposition: 'invalid', cursor: c,
+    });
+  }
+
+  function expectUnchanged(before: Snapshot, sessionId: string): void {
+    expect(snapshot(sessionId)).toEqual(before);
+    expect(before.admissions).toBe(0);
+    expect(before.dispositions).toBe(0);
+    expect(store.getDisposition('e-b1')).toBeNull();
+    expect(store.getAdmissionForSession(sessionId)).toBeNull();
+    expect(before.sessionStatus).toBe('pending');
+  }
+
+  it('admitOnce with a null cursor on a halted event scope is rejected with no mutation', () => {
+    const r = pendingSession('b1');
+    store.initCursor('scope-a', 'T-EXCL');
+    store.haltCursor('scope-a', 'non_owned_event');
+    const before = snapshot(r.sessionId);
+    let result: unknown;
+    try {
+      result = admitIn('scope-a', r.sessionId, null);
+    } catch (err) {
+      result = err;
+    }
+    expect(result).not.toEqual(expect.objectContaining({ kind: 'admitted' }));
+    expectUnchanged(before, r.sessionId);
+  });
+
+  it('admitOnce whose cursor names a different, unhalted scope is a cursor_conflict', () => {
+    const r = pendingSession('b1');
+    store.initCursor('scope-a', 'T-EXCL');
+    store.initCursor('scope-b', 'T-EXCL');
+    store.haltCursor('scope-a', 'non_owned_event');
+    const before = snapshot(r.sessionId);
+    expect(admitIn('scope-a', r.sessionId, { scope: 'scope-b', expectedPrevious: null, next: 'p1' })).toEqual({ kind: 'cursor_conflict' });
+    expectUnchanged(before, r.sessionId);
+  });
+
+  it('admitOnce for an event scope without a cursor row never admits', () => {
+    const r = pendingSession('b1');
+    store.initCursor('scope-b', 'T-EXCL');
+    const before = snapshot(r.sessionId);
+    let nullResult: unknown;
+    try {
+      nullResult = admitIn('scope-missing', r.sessionId, null);
+    } catch (err) {
+      nullResult = err;
+    }
+    expect(nullResult).not.toEqual(expect.objectContaining({ kind: 'admitted' }));
+    expectUnchanged(before, r.sessionId);
+    expect(admitIn('scope-missing', r.sessionId, { scope: 'scope-b', expectedPrevious: null, next: 'p1' })).toEqual({ kind: 'cursor_conflict' });
+    expectUnchanged(before, r.sessionId);
+    expect(admitIn('scope-missing', r.sessionId, { scope: 'scope-missing', expectedPrevious: null, next: 'p1' })).toEqual({ kind: 'no_cursor' });
+    expectUnchanged(before, r.sessionId);
+  });
+
+  it('admitOnce on a halted scope with its own cursor reports halted', () => {
+    const r = pendingSession('b1');
+    store.initCursor('scope-a', 'T-EXCL');
+    store.haltCursor('scope-a', 'non_owned_event');
+    const before = snapshot(r.sessionId);
+    expect(admitIn('scope-a', r.sessionId, { scope: 'scope-a', expectedPrevious: null, next: 'p1' })).toEqual({ kind: 'halted', reason: 'non_owned_event' });
+    expectUnchanged(before, r.sessionId);
+  });
+
+  it('recordDisposition whose cursor names a different scope is a cursor_conflict', () => {
+    const r = pendingSession('b1');
+    store.initCursor('scope-a', 'T-EXCL');
+    store.initCursor('scope-b', 'T-EXCL');
+    store.haltCursor('scope-a', 'non_owned_event');
+    const before = snapshot(r.sessionId);
+    expect(dispose('scope-a', r.sessionId, { scope: 'scope-b', expectedPrevious: null, next: 'p1' })).toEqual({ kind: 'cursor_conflict' });
+    expectUnchanged(before, r.sessionId);
+    expect(dispose('scope-missing', r.sessionId, { scope: 'scope-b', expectedPrevious: null, next: 'p1' })).toEqual({ kind: 'cursor_conflict' });
+    expectUnchanged(before, r.sessionId);
+    expect(dispose('scope-a', r.sessionId, { scope: 'scope-a', expectedPrevious: null, next: 'p1' })).toEqual({ kind: 'halted', reason: 'non_owned_event' });
+    expectUnchanged(before, r.sessionId);
   });
 });
