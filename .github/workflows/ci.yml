@@ -21,6 +21,10 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run build
+      - name: Verify pinned PSL in package
+        run: |
+          npm pack --json > psl-package-info.json
+          node --input-type=module -e "import fs from 'node:fs'; import crypto from 'node:crypto'; const sha='2919eb9803c91a3f73a507cc6fedc934de005543c22c4016f72e3343de5dd6e7'; const path='dist/cards/data/psl-'+sha+'.dat'; const info=JSON.parse(fs.readFileSync('psl-package-info.json'))[0]; if(crypto.createHash('sha256').update(fs.readFileSync(path)).digest('hex')!==sha || !info.files.some(f=>f.path===path) || info.files.some(f=>/__tests__|__fixtures__|privacy-corpus|harness/.test(f.path))) process.exit(1); for(const name of ['LICENSE-PSL.txt','NOTICE.txt','PSL-PROVENANCE.json']) if(!info.files.some(f=>f.path==='dist/cards/data/'+name)) process.exit(1)"
       - run: test -f dist/codex-jsonl-proxy.mjs && test -x dist/codex-jsonl-proxy.mjs
       - run: npm pack --json > package-info.json
       - run: node -e "const fs=require('fs');const info=JSON.parse(fs.readFileSync('package-info.json'))[0];if(!info.files.some(file=>file.path==='dist/codex-jsonl-proxy.mjs'&&(file.mode&73)))process.exit(1)"
@@ -35,6 +39,10 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run type-check
+      - name: Type-check WP-05 corpus and notice contracts
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop --resolveJsonModule src/__tests__/cards-redact.test.ts src/__tests__/cards-redact-regressions.test.ts src/__tests__/cards-redact-idna.test.ts src/__tests__/cards-notices.test.ts src/__tests__/cards-safe-bridge.test.ts
+      - name: Type-check canonical options test contract
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop src/__tests__/agent-bridge-events.test.ts
 
   lint:
     name: ESLint (zero warnings)
@@ -61,4 +69,17 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: 'npm'
       - run: npm ci
+      - name: Repeat Unix launcher contracts
+        timeout-minutes: 10
+        run: |
+          for attempt in $(seq 1 20); do
+            echo "Launcher attempt ${attempt}/20"
+            start=$SECONDS
+            set +e
+            timeout --signal=KILL 30s npm run test -- src/__tests__/sdk-jsonl.test.ts src/__tests__/jsonl-proxy-path.test.ts --maxWorkers=1 --minWorkers=1
+            status=$?
+            set -e
+            echo "Launcher attempt ${attempt}/20 exit=${status} duration=$((SECONDS-start))s"
+            if [ "$status" -ne 0 ]; then exit "$status"; fi
+          done
       - run: npm test

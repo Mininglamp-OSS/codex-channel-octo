@@ -1,0 +1,8 @@
+Public Suffix List
+Copyright and license notices are retained in the unmodified UTF-8 source snapshot.
+Source and revision: see PSL-PROVENANCE.json.
+The snapshot is MPL-2.0; see LICENSE-PSL.txt.
+It is distributed in source form, including in the npm package.
+The surrounding project remains Apache-2.0. MPL-2.0 section 3.3 allows this
+combination as a larger work, with the separate snapshot retaining MPL terms.
+Both ICANN and PRIVATE rules are consumed; runtime/test network refresh is absent.

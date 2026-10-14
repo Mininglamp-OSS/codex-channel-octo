@@ -1,3 +1,4 @@
+import { reduceItem, type ReducedItemFacts } from './cards/redact.js';
 /**
  * Agent Bridge — OpenAI Codex invocation via @openai/codex-sdk.
  * Outputs typed AgentOutputEvents (queryAgentEvents) or, for legacy callers,
@@ -365,9 +366,10 @@ export async function* queryAgent(
   sessionCtx?: SessionCtx,
   onToolUse?: (toolName: string, toolInput?: unknown) => void,
   opts?: QueryAgentOptions,
+  onSafeItem?: (facts: ReducedItemFacts) => void,
 ): AsyncIterable<string> {
   let buffered = new Map<string, { seq: number; text: string }>();
-  for await (const ev of queryAgentEvents(userMessage, config, sessionCtx, onToolUse, opts)) {
+  for await (const ev of queryAgentEvents(userMessage, config, sessionCtx, onToolUse, opts, onSafeItem)) {
     if (ev.kind === 'attempt_start') {
       buffered = new Map();
     } else if (ev.kind === 'message') {
@@ -407,6 +409,7 @@ export async function* queryAgentEvents(
   sessionCtx?: SessionCtx,
   onToolUse?: (toolName: string, toolInput?: unknown) => void,
   opts?: QueryAgentOptions,
+  onSafeItem?: (facts: ReducedItemFacts) => void,
 ): AsyncIterable<AgentOutputEvent> {
   // Frozen system text (security prefix + SOUL + group instructions).
   const systemPrompt = buildSystemPrompt(config.sdk.systemPrompt, opts?.groupInstructions);
@@ -532,6 +535,14 @@ export async function* queryAgentEvents(
         case 'item.updated':
         case 'item.completed': {
           const item = ev.item;
+          // Use the existing start/completion notice cadence, with no raw data
+          // passed to the channel callback. Item-state/lifecycle integration is separate.
+          if (onSafeItem && (ev.type === 'item.started' || ev.type === 'item.completed')
+            && (isSideEffectItem(item.type) || item.type === 'web_search'
+              || (ev.type === 'item.started' && (item.type === 'reasoning' || item.type === 'todo_list')))) {
+            try { onSafeItem(reduceItem(item)); }
+            catch { console.error('[codex-channel-octo] safe progress callback failed'); }
+          }
           if (!NON_WORK_ITEM_TYPES.has(item.type)) {
             // Work boundary: once per item, at first sight. Type only.
             const s = sight(item.id);

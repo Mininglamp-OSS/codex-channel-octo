@@ -297,11 +297,13 @@ describe('E2E smoke tests', () => {
     (queryAgent as ReturnType<typeof vi.fn>).mockImplementation(
       async function* (
         _u: string, _cfg: Config, _ctx: unknown,
-        onToolUse?: (t: string) => void,
+        _onToolUse: unknown,
+        _opts: unknown,
+        onSafeItem?: (facts: import('../cards/redact.js').ReducedItemFacts) => void,
       ) {
-        onToolUse?.('Bash');
-        onToolUse?.('Bash'); // consecutive repeat → collapsed
-        onToolUse?.('Read');
+        onSafeItem?.({ category: 'command', program: 'git' as import('../cards/contracts.js').SafeProgram });
+        onSafeItem?.({ category: 'command' }); // consecutive repeat → collapsed
+        onSafeItem?.({ category: 'file_change', fileCount: 1 });
         yield 'done';
       },
     );
@@ -310,10 +312,12 @@ describe('E2E smoke tests', () => {
     await simulateMessage(makeDmMsg('do work'), cfg, store, router, groupContext, streamRelay);
 
     const sent = (sendMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0].content as string);
-    const progress = sent.filter((s) => s.startsWith('🔧 Running'));
-    expect(progress).toEqual(['🔧 Running Bash…', '🔧 Running Read…']); // repeat collapsed
+    const progress = sent.filter((s) => s.startsWith('🔧 '));
+    expect(progress).toEqual(['🔧 Running command…', '🔧 Editing files…']); // repeat collapsed
     // The final answer is still delivered.
     expect(sent.some((s) => s.includes('done'))).toBe(true);
+    expect(store.buildHistoryPrefix(USER_UID, 40)).toContain('done');
+    expect(progress.join(' ').includes('git')).toBe(false);
   });
 
   it('sends NO progress messages when toolProgress is off (default)', async () => {
