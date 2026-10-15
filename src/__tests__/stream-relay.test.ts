@@ -131,6 +131,7 @@ const mockState = vi.hoisted(() => {
 });
 
 vi.mock("../octo/api.js", () => ({
+  generateClientMsgNo: vi.fn(() => "c1"),
   sendTyping: vi.fn(async (params: Record<string, unknown>) => {
     mockState.calls.push({ fn: "sendTyping", args: params });
   }),
@@ -251,7 +252,7 @@ describe("StreamRelay", () => {
     await guarded;
 
     // Q23: sendMessage failures are swallowed per-segment; deliver() should not reject.
-    await expect(promise).resolves.toBeUndefined();
+    await expect(promise).resolves.toEqual({ expected: 1, acked: 0, failed: 1, messageIds: [], emptyNotice: false });
 
     const countAfter = mockState.calls.filter((c) => c.fn === "sendTyping").length;
     await vi.advanceTimersByTimeAsync(30_000);

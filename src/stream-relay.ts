@@ -11,9 +11,11 @@
  */
 
 import type { ChannelType } from "./octo/types.js";
+import type { DeliveryReport } from "./cards/contracts.js";
 import {
   sendTyping,
   sendMessage,
+  generateClientMsgNo,
 } from "./octo/api.js";
 import { resolveMentions } from "./mention-utils.js";
 import { TRUNCATION_SUFFIX, DEFAULT_MAX_RESPONSE_CHARS } from "./output-selection.js";
@@ -26,6 +28,23 @@ const TYPING_INTERVAL_MS = 5_000;
 
 /** Maximum characters per message segment. */
 const MAX_SEGMENT_CHARS = 3_500;
+
+const UUID_MESSAGE_ID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/**
+ * Acknowledgement IDs must be canonical positive int64 text, an ASCII opaque
+ * name (letter/underscore first, then letters/digits/underscore/hyphen; ≤128
+ * characters), or a UUID. Do not trim or normalize evidence: numeric aliases,
+ * parser-recovered leading zeros, controls and malformed Unicode fail closed.
+ */
+function isUsableMessageId(id: unknown): id is string {
+  if (typeof id !== "string" || id.length === 0 || id.length > 128) return false;
+  if (/^[1-9][0-9]{0,18}$/.test(id)) {
+    return BigInt(id) <= 9223372036854775807n;
+  }
+  if (/^(nan|inf|infinity)$/i.test(id)) return false;
+  return UUID_MESSAGE_ID.test(id) || /^[A-Za-z_][A-Za-z0-9_-]{0,127}$/.test(id);
+}
 
 // ─── Message Splitting ─────────────────────────────────────────────────────
 
@@ -162,7 +181,10 @@ export class StreamRelay {
     maxResponseChars: number = DEFAULT_MAX_RESPONSE_CHARS,
     memberMap?: Map<string, string>,
     isValidUid?: (uid: string) => boolean,
-  ): Promise<void> {
+  ): Promise<DeliveryReport> {
+    let expected = 0;
+    const messageIds: string[] = [];
+    const messageIdKeys = new Set<string>();
     // --- Typing heartbeat ---
     const typingParams = { apiUrl, botToken, channelId, channelType };
     // Fire one immediately — don't wait for the first interval tick.
@@ -224,6 +246,7 @@ export class StreamRelay {
         }));
 
         const segments = splitMessage(finalContent, undefined, protectedRanges);
+        expected = segments.length;
         let segStart = 0;
         let mentionAllConsumed = false;
         for (const segment of segments) {
@@ -254,7 +277,8 @@ export class StreamRelay {
           if (useMentionAll) mentionAllConsumed = true;
 
           try {
-            await sendMessage({
+            const clientMsgNo = generateClientMsgNo();
+            const result = await sendMessage({
               apiUrl,
               botToken,
               channelId,
@@ -263,7 +287,22 @@ export class StreamRelay {
               ...(segUids.length > 0 ? { mentionUids: segUids } : {}),
               ...(segEntities.length > 0 ? { mentionEntities: segEntities } : {}),
               ...(useMentionAll ? { mentionAll: true } : {}),
+              clientMsgNo,
             });
+            // A successful HTTP response alone does not acknowledge this
+            // segment. Require its request identity and a unique usable ID.
+            // Keep IDs as returned strings, including int64-safe REST values.
+            if (isUsableMessageId(result?.message_id)
+              && result.client_msg_no === clientMsgNo) {
+              // UUID case aliases share an identity, including letter-first
+              // UUIDs that also match the case-sensitive opaque grammar.
+              const key = UUID_MESSAGE_ID.test(result.message_id)
+                ? result.message_id.toLowerCase() : result.message_id;
+              if (!messageIdKeys.has(key)) {
+                messageIdKeys.add(key);
+                messageIds.push(result.message_id);
+              }
+            }
           } catch (err) {
             console.error(`[stream-relay] sendMessage failed for segment (${segment.length} chars), continuing: ${summarizeAgentError(err)}`);
             // Continue sending remaining segments — don't let one failure drop the rest
@@ -277,6 +316,14 @@ export class StreamRelay {
       // not double-send — the partial was delivered here, the caller only logs /
       // surfaces the failure).
       if (streamError !== undefined) throw streamError;
+      return {
+        expected,
+        acked: messageIds.length,
+        failed: expected - messageIds.length,
+        messageIds,
+        // The caller owns the separate empty-output notice path.
+        emptyNotice: false,
+      };
     } finally {
       clearInterval(typingTimer);
     }

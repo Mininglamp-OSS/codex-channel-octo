@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { StreamRelay } from '../stream-relay.js';
 
 vi.mock('../octo/api.js', () => ({
+  generateClientMsgNo: vi.fn(() => 'client-msg-001'),
   sendTyping: vi.fn().mockResolvedValue(undefined),
   sendMessage: vi.fn().mockResolvedValue(undefined),
   registerBot: vi.fn().mockResolvedValue({
