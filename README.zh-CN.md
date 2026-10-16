@@ -240,7 +240,8 @@ SDK override 使用私有可执行 shell 启动器，通过 `exec` 调用当前 
 ## 开发
 
 ```bash
-npm install
+npm ci              # 按仓库锁文件安装
+npm run runtime:update  # 显式升级 SDK 及配套 CLI 到最新稳定版
 npm run build       # 编译 TypeScript，并复制/设置 JSONL 代理执行权限
 npm test            # vitest
 npm run lint        # eslint --max-warnings 0
@@ -250,6 +251,24 @@ npm run type-check  # tsc --noEmit
 ### 本机运维诊断（默认关闭）
 
 设置 `sdk.privateDiagnostics: true` 可保存与任务编号关联的本机失败元数据。SDK 错误文本只保留指纹，不写入原文；公开回复不变。日志仅当前用户可读，最多保留三个文件，每个不超过 1 MiB。详见[隐私边界、保留策略与解读](docs/private-diagnostics.md)。
+
+### Codex 运行时版本
+
+全新安装已发布的适配器时，SDK 通过 npm 的稳定版 `latest` 标签解析；CLI 使用 SDK 声明的配套版本，不使用无关的全局 `codex`。仓库锁文件保留已测试版本，供 `npm ci` 可复现构建。存在锁文件时，即使执行 `npm install`，也可能继续使用旧运行时。
+
+在源码或打包暂存目录中显式刷新版本，再验证和打包：
+
+```bash
+npm ci
+npm run runtime:update
+npm run build
+npm test
+npm pack
+```
+
+`runtime:update` 执行 `npm update @openai/codex-sdk`，更新锁文件并保留 `latest` 依赖标签，然后运行 `runtime:check`。后者从已安装的 SDK 解析 CLI，实际启动 `--version`，报告 SDK、CLI 包与原生二进制版本，缺失或不匹配时失败；不调用模型、不要求登录。不要复制旧 node_modules 后就认为版本已升级。更新命令会修改依赖，应在暂存目录验证后再部署，它不会重启网关。
+
+CI 在 Node 22/24 上同时验证锁定版本及重新解析的最新稳定版，包括严格类型、实际 CLI 启动、SDK/代理/进程回归和打包检查。未来新版需要通过兼容测试；更新失败必须明确报告，不得静默回退并声称升级成功。需要复现旧版本时使用对应发布版本的锁文件，不要独立覆盖 SDK 选用的 CLI。
 
 ## License
 

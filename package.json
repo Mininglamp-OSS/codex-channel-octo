@@ -20,7 +20,8 @@
     "docs/issue-26-safe-recovery.md",
     "docs/final-output-policy.md",
     "docs/private-diagnostics.md",
-    "docs/session-continuity.md"
+    "docs/session-continuity.md",
+    "scripts/check-codex-runtime.mjs"
   ],
   "repository": {
     "type": "git",
@@ -41,15 +42,17 @@
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",
     "type-check:mention-tests": "tsc --project tsconfig.mention-tests.json",
-    "lint": "eslint src/ --max-warnings 0",
+    "lint": "eslint src/ scripts/ --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "type-check:recovery-tests": "tsc --project tsconfig.recovery-tests.json",
-    "type-check:continuity-tests": "tsc --project tsconfig.continuity-tests.json"
+    "type-check:continuity-tests": "tsc --project tsconfig.continuity-tests.json",
+    "runtime:check": "node scripts/check-codex-runtime.mjs",
+    "runtime:update": "npm update @openai/codex-sdk && npm run runtime:check"
   },
   "dependencies": {
-    "@openai/codex-sdk": "^0.142.0",
+    "@openai/codex-sdk": "latest",
     "better-sqlite3": "^12.10.0",
     "crypto-js": "^4.2.0",
     "curve25519-js": "^0.0.4",

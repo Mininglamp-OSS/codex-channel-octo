@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fresh published-package installs select the latest stable Codex SDK and its paired CLI; keep a reproducible lockfile, add runtime update/version verification commands and a Node 22/24 latest compatibility CI lane.
+
 - Separate `sdk.privateDiagnosticsDetails` opt-in for bounded allowlisted SDK failure metadata; requires `privateDiagnostics` and never captures arbitrary text.
 - Opt-in `sdk.privateDiagnostics` saves bounded owner-only failure metadata and SDK message fingerprints. Raw SDK/error/prompt/tool payloads stay excluded; rotation is limited to three 1 MiB files and diagnostic I/O failure cannot alter task behavior.
 

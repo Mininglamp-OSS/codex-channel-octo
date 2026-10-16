@@ -8,7 +8,7 @@ export default [
     ignores: ["dist/", "node_modules/", "coverage/"],
   },
   {
-    files: ["src/**/*.mjs"],
+    files: ["src/**/*.mjs", "scripts/**/*.mjs"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
