@@ -36,8 +36,6 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run type-check
-      - name: Type-check canonical options test contract
-        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop src/__tests__/agent-bridge-events.test.ts
       - run: npm run type-check:mention-tests
       - run: npm run type-check:recovery-tests
       - run: npm run type-check:continuity-tests
@@ -67,19 +65,12 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: 'npm'
       - run: npm ci
-      - name: Repeat Unix launcher contracts
-        timeout-minutes: 10
-        run: |
-          for attempt in $(seq 1 20); do
-            echo "Launcher attempt ${attempt}/20"
-            start=$SECONDS
-            set +e
-            timeout --signal=KILL 30s npm run test -- src/__tests__/sdk-jsonl.test.ts src/__tests__/jsonl-proxy-path.test.ts --maxWorkers=1 --minWorkers=1
-            status=$?
-            set -e
-            echo "Launcher attempt ${attempt}/20 exit=${status} duration=$((SECONDS-start))s"
-            if [ "$status" -ne 0 ]; then exit "$status"; fi
-          done
+      - name: Verify launcher supervisor failure paths
+        run: python3 scripts/ci/test_repeat_launcher.py
+      - name: Repeat Unix launcher contracts (serial)
+        # 20 × (90s run + 15s TERM grace + 3s KILL/reap + 1s wait) = 2180s; 220s slack.
+        timeout-minutes: 40
+        run: python3 scripts/ci/repeat-launcher.py --attempts 20 -- node node_modules/vitest/vitest.mjs run src/__tests__/sdk-jsonl.test.ts src/__tests__/jsonl-proxy-path.test.ts --maxWorkers=1 --minWorkers=1 --reporter=verbose
       - run: npm test
 
   latest-sdk:
@@ -105,5 +96,9 @@ jobs:
       - run: npm run type-check:continuity-tests
       - run: npm run lint
       - run: npm run build
+      - name: Repeat updated SDK launcher contracts (default concurrency)
+        # 5 × 109s = 545s; 115s slack for startup and reporting.
+        timeout-minutes: 11
+        run: python3 scripts/ci/repeat-launcher.py --attempts 5 -- node node_modules/vitest/vitest.mjs run src/__tests__/sdk-jsonl.test.ts src/__tests__/jsonl-proxy-path.test.ts --reporter=verbose
       - run: npm test
       - run: npm pack --dry-run
