@@ -43,6 +43,8 @@ jobs:
         run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop src/__tests__/agent-bridge-events.test.ts
       - name: Type-check card telemetry tests
         run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --noUnusedLocals --noUnusedParameters --skipLibCheck --esModuleInterop src/__tests__/cards-telemetry-*.test.ts
+      - name: Type-check card pacer and write-queue tests
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --noUnusedLocals --noUnusedParameters --skipLibCheck --esModuleInterop src/__tests__/cards-pacer*.test.ts src/__tests__/cards-write-queue*.test.ts
 
   lint:
     name: ESLint (zero warnings)
