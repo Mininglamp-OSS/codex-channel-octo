@@ -84,8 +84,8 @@ export interface CardSpec {
  * Terminal disposition of a card in this queue. `skipped`: settled before
  * the first send started, nothing left the process. `suspended`: refused
  * because the sender is suspended after an ambiguous send. `cancelled`: the
- * queue closed before the terminal frame could be sent; intent is retained
- * in `status()`. `store_failed`: the durable store refused, so nothing was
+ * queue closed before the terminal frame could be sent, or the terminal was
+ * requested only after close(); intent is retained in `status()`. `store_failed`: the durable store refused, so nothing was
  * sent. `unresolved`: transport outcome unknown after an abort-fence.
  */
 export type CardOutcome = WriteOutcome | "skipped" | "suspended" | "cancelled" | "store_failed" | "unresolved";
@@ -176,6 +176,8 @@ interface CardState {
   dirty?: CardFrame;
   dirtySince: number;
   terminal?: CardFrame;
+  /** Terminal requested after close(): retained as intent, never sent by this queue. */
+  fencedTerminal?: CardFrame;
   terminalResult?: Deferred<TerminalResult>;
   terminalSeq?: number;
   cancelled: boolean;
@@ -623,6 +625,19 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
         card.terminalResult.resolve(Object.freeze({ outcome: card.outcome as CardOutcome }));
         return card.terminalResult.promise;
       }
+      if (closing()) {
+        // close() fenced intake and authority: a terminal requested now is retained as intent only.
+        // It never reserves a sequence or starts a transport; owned in-flight work is left to drain.
+        if (card.phase === "pending" && !card.inflight) {
+          // Never sent: the closing worker settles it as skipped.
+          if (!card.running) close(card, "skipped");
+          return card.terminalResult.promise;
+        }
+        card.fencedTerminal = snapshot;
+        if (card.running) card.terminalResult.resolve(Object.freeze({ outcome: "cancelled" as const }));
+        else close(card, "cancelled");
+        return card.terminalResult.promise;
+      }
       card.terminal = snapshot;
       card.dirty = undefined;
       kick(card);
@@ -653,7 +668,8 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
         seqAcked: card.seqAcked,
         dirty: card.dirty !== undefined,
         inflight: card.inflight,
-        terminalPending: card.terminal !== undefined && (card.phase !== "closed" || card.outcome === "cancelled" || card.outcome === "unresolved"),
+        terminalPending: card.fencedTerminal !== undefined
+          || (card.terminal !== undefined && (card.phase !== "closed" || card.outcome === "cancelled" || card.outcome === "unresolved")),
         ...(card.outcome !== undefined ? { outcome: card.outcome } : {}),
       });
     },
