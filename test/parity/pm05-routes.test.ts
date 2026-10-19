@@ -249,12 +249,12 @@ describe('PM05-F1: source-backed Octo tool surfaces (A-R8-PM05-01)', () => {
   });
 
   it('PM05-F1-11: the amendment is referenced by version from the golden and the matrix and its document records the counts', () => {
-    const ref = { id: 'A-R8-PM05-01', ratification: 'b57277b2-618e-4da2-8291-3dba7b0b1c5f', doc: 'docs/amendments/R8-AMD-01.md' };
+    const ref = { id: 'A-R8-PM05-01', ratification: 'owner-ratified-R8-AMD-01', doc: 'docs/amendments/R8-AMD-01.md' };
     expect(golden.amendment).toEqual(ref);
     expect((matrix.amendments as unknown[] | undefined) ?? []).toContainEqual(expect.objectContaining({ ...ref, version: 'R8-AMD-01' }));
     const docPath = new URL(`../../${ref.doc}`, import.meta.url);
     expect(existsSync(docPath)).toBe(true);
     const doc = existsSync(docPath) ? readFileSync(docPath, 'utf8') : '';
-    for (const s of ['A-R8-PM05-01', 'A-R8-SB07-01', 'b57277b2-618e-4da2-8291-3dba7b0b1c5f', '24', '32', '30', '155', '59', SHA['src/actions.ts']]) expect(doc, s).toContain(s);
+    for (const s of ['A-R8-PM05-01', 'A-R8-SB07-01', 'owner-ratified-R8-AMD-01', '24', '32', '30', '155', '59', SHA['src/actions.ts']]) expect(doc, s).toContain(s);
   });
 });

@@ -1,7 +1,0 @@
-{"dir":"out","at":141.163208,"message":{"id":1,"method":"thread/start","params":{}}}
-{"dir":"in","at":190.33075,"message":{"error":{"code":-32600,"message":"Not initialized"},"id":1}}
-{"dir":"out","at":190.474125,"message":{"id":2,"method":"initialize","params":{"clientInfo":{"name":"codex_sdk_ts","title":null,"version":"0.0.0-dev01"},"capabilities":{"experimentalApi":true,"requestAttestation":false,"optOutNotificationMethods":["item/agentMessage/delta","item/reasoning/textDelta","item/reasoning/summaryTextDelta","item/commandExecution/outputDelta"]}}}}
-{"dir":"in","at":190.925625,"message":{"id":2,"result":{"userAgent":"codex_sdk_ts/0.142.3 (Mac OS 15.3.1; arm64) unknown (codex_sdk_ts; 0.0.0-dev01)","codexHome":"/private/var/folders/6x/fy0qtg9d5_q_xc0pln8n17lc0000gn/T/dev01-rb-SB-01-KpQI95/home","platformFamily":"unix","platformOs":"macos"}}}
-{"dir":"out","at":190.957125,"message":{"id":3,"method":"initialize","params":{"clientInfo":{"name":"codex_sdk_ts","title":null,"version":"0.0.0-dev01"},"capabilities":{"experimentalApi":true,"requestAttestation":false,"optOutNotificationMethods":["item/agentMessage/delta","item/reasoning/textDelta","item/reasoning/summaryTextDelta","item/commandExecution/outputDelta"]}}}}
-{"dir":"in","at":190.983083,"message":{"method":"remoteControl/status/changed","params":{"status":"disabled","serverName":"Mac-mini.local","installationId":"cb8fe200-5b7f-419f-a28d-a2f4277d8c46","environmentId":null}}}
-{"dir":"in","at":191.006333,"message":{"error":{"code":-32600,"message":"Already initialized"},"id":3}}

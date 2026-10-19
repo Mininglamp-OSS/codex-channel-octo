@@ -51,7 +51,7 @@ interface RecvSpecJson {
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
 
-describe('B golden provenance', () => {
+describe('B golden metadata and integrity', () => {
   it('GB-00: golden bytes match the committed sha256 and the pinned B source', () => {
     const recorded = readFileSync(new URL('./b/wire-aes-framing.json.sha256', import.meta.url), 'utf8').trim().split(/\s+/)[0];
     expect(createHash('sha256').update(raw).digest('hex')).toBe(recorded);

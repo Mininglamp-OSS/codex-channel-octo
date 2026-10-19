@@ -24,7 +24,7 @@ function listTs(dir) {
   for (const e of readdirSync(dir)) {
     const p = join(dir, e);
     if (statSync(p).isDirectory()) { if (e !== '__tests__') out.push(...listTs(p)); }
-    else if (e.endsWith('.ts') && !e.endsWith('.d.ts')) out.push(p);
+    else if (/\.[cm]?[jt]sx?$/.test(e) && !/\.d\.[cm]?ts$/.test(e)) out.push(p);
   }
   return out;
 }
@@ -33,7 +33,7 @@ export function scanEgress(cfg) {
   const root = resolve(cfg.root);
   const rel = (p) => relative(root, p).split(sep).join('/');
   const files = listTs(join(root, cfg.srcDir ?? 'src'));
-  const options = { module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, target: ts.ScriptTarget.ES2022, noEmit: true, skipLibCheck: true, allowJs: false };
+  const options = { module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, target: ts.ScriptTarget.ES2022, noEmit: true, skipLibCheck: true, allowJs: true };
   const program = ts.createProgram(files, options);
   const checker = program.getTypeChecker();
   const boundary = new Set(cfg.boundaryModules);
@@ -69,7 +69,22 @@ export function scanEgress(cfg) {
   };
 
   const usages = [];
+  /** @type {Array<{code: string, file: string, symbol: string, observed?: number, baseline?: number}>} */
   const violations = [];
+  for (const file of boundary) if (!program.getSourceFiles().some(sf => rel(sf.fileName) === file)) violations.push({ code: 'missing-boundary-module', file, symbol: '*' });
+  if (!primitives.size) violations.push({ code: 'empty-primitive-boundary', file: '', symbol: '*' });
+  const diagnostics = program.getSyntacticDiagnostics().filter(d => d.file && !rel(d.file.fileName).startsWith('..'));
+  for (const d of diagnostics) violations.push({ code: 'unanalyzable-source', file: rel(d.file.fileName), symbol: '*' });
+
+  // Callable capabilities retain declaration identity through renamed/mapped
+  // properties. Structural signature equality alone never creates provenance.
+  const callableOrigins = type => [...new Set(checker.getSignaturesOfType(type, ts.SignatureKind.Call).flatMap(sig => {
+    const declaration = sig.getDeclaration();
+    if (!declaration || !isBoundary(declaration.getSourceFile())) return [];
+    const symbol = declaration.name && checker.getSymbolAtLocation(declaration.name);
+    const name = primitiveOf(symbol);
+    return name ? [name] : [];
+  }))];
   const opaque = ts.TypeFlags.Any | ts.TypeFlags.Unknown;
   const ASSIGN = new Set([ts.SyntaxKind.EqualsToken, ts.SyntaxKind.QuestionQuestionEqualsToken,
     ts.SyntaxKind.BarBarEqualsToken, ts.SyntaxKind.AmpersandAmpersandEqualsToken]);
@@ -131,7 +146,7 @@ export function scanEgress(cfg) {
       const name = primitiveOf(prop);
       if (name) return [{ primitive: name }];
       const type = checker.getTypeOfSymbol(prop);
-      return type.flags & opaque ? [] : [{ type }];
+      return type.flags & opaque ? [] : [...callableOrigins(type).map(primitive => ({ primitive })), { type }];
     }
     if (!v.object || seen.has(v.object)) return [];
     const path = new Set(seen).add(v.object);
@@ -224,8 +239,8 @@ export function scanEgress(cfg) {
         const resolved = checker.getTypeAtLocation(node);
         // A resolved mapped selection exposes only its selected properties;
         // traversing its syntactic arguments would reintroduce omitted writes.
-        if (ts.getObjectFlags(resolved) & ts.ObjectFlags.Mapped) return typeReaches(resolved);
-        if (!(resolved.flags & opaque) && typeReaches(resolved)) return true;
+        if (ts.getObjectFlags(resolved) & ts.ObjectFlags.Mapped) return !reachPath.includes(resolved) && typeReaches(resolved);
+        if (!(resolved.flags & opaque) && !reachPath.includes(resolved) && typeReaches(resolved)) return true;
         const name = ts.isTypeReferenceNode(node) ? node.typeName : ts.isTypeQueryNode(node) ? node.exprName : node.qualifier;
         const symbol = name && checker.getSymbolAtLocation(name);
         const target = symbol?.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
@@ -244,40 +259,56 @@ export function scanEgress(cfg) {
     };
     return [type.symbol, type.aliasSymbol].some(symbol => (symbol?.declarations ?? []).some(walk));
   };
-  const typeReaches = (type, member = false) => {
+  const typeReaches = (type) => {
     if (reachMemo.has(type)) return reachMemo.get(type);
-    if (reachPath.includes(type)) {
-      reachCuts++;
-      return false;
-    }
-    if (member && type.symbol && reachPath.filter((t) => t.symbol === type.symbol).length >= 3) {
-      reachCuts++;
-      return declarationReaches(type);
-    }
-    reachPath.push(type);
-    const before = reachCuts;
-    const next = ts.getObjectFlags(type) & ts.ObjectFlags.Mapped ? [] : [...(type.aliasTypeArguments ?? [])];
-    const members = [];
-    let found = false;
-    if (type.isUnionOrIntersection()) next.push(...type.types);
-    else if (type.flags & ts.TypeFlags.Object) {
-      const props = checker.getPropertiesOfType(type);
-      found = props.some((p) => primitiveOf(p));
-      if (!found) {
-        if (userDeclared(type) || ts.getObjectFlags(type) & ts.ObjectFlags.Mapped) members.push(...props.map((p) => checker.getTypeOfSymbol(p)));
-        members.push(...checker.getIndexInfosOfType(type).map((i) => i.type));
-        if (ts.getObjectFlags(type) & ts.ObjectFlags.Reference) next.push(...checker.getTypeArguments(type));
+    // Build a finite capability graph, then propagate positive origins to a
+    // fixed point. Back edges are explicit; a cycle is not an empty value.
+    const graph = new Map(), reverse = new Map(), positive = new Set();
+    const queue = [{ type, ancestors: [] }];
+    while (queue.length) {
+      const { type: current, ancestors } = queue.pop();
+      if (graph.has(current)) { reachCuts++; continue; }
+      graph.set(current, []);
+      if (reachMemo.get(current) === true || callableOrigins(current).length) { positive.add(current); continue; }
+      const expanding = current.symbol && ancestors.filter(t => t.symbol === current.symbol).length >= 3;
+      if (expanding) {
+        reachCuts++;
+        // Inspect finite declarations before limiting expanding instantiations.
+        reachPath.push(current);
+        if (declarationReaches(current)) positive.add(current);
+        reachPath.pop();
+        continue;
+      }
+      const next = [];
+      if (current.isUnionOrIntersection()) next.push(...current.types);
+      if (!(ts.getObjectFlags(current) & ts.ObjectFlags.Mapped)) next.push(...(current.aliasTypeArguments ?? []));
+      if (current.flags & ts.TypeFlags.Object) {
+        const props = checker.getPropertiesOfType(current);
+        if (props.some(p => primitiveOf(p))) positive.add(current);
+        if (userDeclared(current) || ts.getObjectFlags(current) & ts.ObjectFlags.Mapped) next.push(...props.map(p => checker.getTypeOfSymbol(p)));
+        next.push(...checker.getIndexInfosOfType(current).map(i => i.type));
+        if (ts.getObjectFlags(current) & ts.ObjectFlags.Reference) next.push(...checker.getTypeArguments(current));
+      }
+      for (const child of next.filter(t => !(t.flags & opaque))) {
+        graph.get(current).push(child);
+        if (!reverse.has(child)) reverse.set(child, new Set());
+        reverse.get(child).add(current);
+        if (ancestors.includes(child)) { reachCuts++; continue; }
+        queue.push({ type: child, ancestors: [...ancestors, current] });
       }
     }
-    found ||= next.some((t) => !(t.flags & opaque) && typeReaches(t))
-      || members.some((t) => !(t.flags & opaque) && typeReaches(t, true));
-    reachPath.pop();
-    if (found || reachCuts === before) reachMemo.set(type, found);
-    return found;
+    const work = [...positive];
+    while (work.length) for (const parent of reverse.get(work.pop()) ?? []) if (!positive.has(parent)) { positive.add(parent); work.push(parent); }
+    for (const node of graph.keys()) if (positive.has(node)) reachMemo.set(node, true);
+    // Negative subgraphs with expanding declarations are not reusable outside
+    // this traversal; memoize only this complete root result.
+    reachMemo.set(type, positive.has(type));
+    return positive.has(type);
   };
   // A value is a guarded namespace when a boundary primitive is reachable from
   // its checker type or through an object literal holding such a namespace.
   const guarded = (values, seen = new Set()) => values.some((v) => {
+    if (v.primitive) return true;
     if (v.type) return typeReaches(v.type);
     if (!v.object || seen.has(v.object)) return false;
     seen.add(v.object);
@@ -295,6 +326,7 @@ export function scanEgress(cfg) {
     if (ts.isArrayLiteralExpression(p) || ts.isReturnStatement(p) || ts.isThrowStatement(p)
       || ts.isYieldExpression(p) || ts.isExportAssignment(p)) return p;
     if (ts.isArrowFunction(p) && p.body === node) return p;
+    if (ts.isTemplateSpan(p) && ts.isTemplateExpression(p.parent) && ts.isTaggedTemplateExpression(p.parent.parent)) return p.parent.parent;
     if (ts.isSpreadElement(p)) return p.parent;
     if (isAssignment(p) && p.right === node && !ts.isIdentifier(unwrap(p.left))) return p;
     return undefined;
@@ -352,10 +384,14 @@ export function scanEgress(cfg) {
         return; // specifiers are declarations, not uses
       }
       if (ts.isImportDeclaration(node)) return;
-      if (ts.isCallExpression(node) && node.arguments.length === 1 && ts.isStringLiteralLike(node.arguments[0])
-        && (node.expression.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
-        const target = resolvesToBoundary(node.arguments[0].text, sf.fileName);
-        if (target) violations.push({ code: 'unauthorized-dynamic-import', file, symbol: target });
+      if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+        || ts.isIdentifier(node.expression) && node.expression.text === 'require')) {
+        const specifier = node.arguments.length === 1 ? constantKey(node.arguments[0]) : undefined;
+        if (specifier === undefined) violations.push({ code: 'unresolved-dynamic-import', file, symbol: node.getText() });
+        else {
+          const target = resolvesToBoundary(specifier, sf.fileName);
+          if (target) violations.push({ code: 'unauthorized-dynamic-import', file, symbol: target });
+        }
       }
       if (ts.isElementAccessExpression(node)) {
         const key = constantKey(node.argumentExpression);
@@ -395,7 +431,8 @@ export function scanEgress(cfg) {
     const [file, symbol] = k.split('#');
     if ((observed.get(k) ?? 0) < n) violations.push({ code: 'stale-baseline', file, symbol, observed: observed.get(k) ?? 0, baseline: n });
   }
-  return { primitives: [...primitives].sort(), unclassified: unclassified.sort(), usages, violations };
+  for (const [counter, actual] of Object.entries({ cuts, reachCuts })) if (cfg.analysisBudget && actual > cfg.analysisBudget[counter]) violations.push({ code: 'analysis-budget-exceeded', file: '', symbol: counter, observed: actual, baseline: cfg.analysisBudget[counter] });
+  return { primitives: [...primitives].sort(), unclassified: unclassified.sort(), usages, violations, cuts, reachCuts };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

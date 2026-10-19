@@ -11,9 +11,9 @@
   },
   "croner": "10.0.1",
   "runtime": {
-    "node": "v26.5.0",
-    "tz": "2026a",
-    "icu": "78.3"
+    "node": "v24.10.0",
+    "tz": "2025a",
+    "icu": "77.1"
   },
   "method": "OC sources bundled unmodified by esbuild (export statement appended to jobs-scheduling.ts); @openclaw/normalization-core resolved to the pinned workspace sources; croner from the exact devDependency",
   "stubbedHostImports": [

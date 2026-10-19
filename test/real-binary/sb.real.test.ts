@@ -1,11 +1,11 @@
 /**
  * Real-binary contract cases SB-01..SB-14 and protocol spike SP-T1 (R8 §6.3/§6.4),
- * executed against the pinned codex 0.142.3 binary from the installed SDK
- * vendor package. The model provider is the local mock Responses server;
+ * executed against the pinned codex 0.142.3 binary from the isolated development-only CLI
+ * package. The model provider is the local mock Responses server;
  * every run uses an isolated temporary CODEX_HOME/HOME, NO_PROXY for loopback
  * and a fake API key. Raw JSONL transcripts and mock request logs are written
  * under $DEV01_EVIDENCE_DIR/real-binary/ (default artifacts/evidence/real-binary/)
- * for each case; test/evidence/dev01/real-binary/ is a committed snapshot.
+ * for each case; generated run receipts are not committed.
  *
  * Expectations are R8's normative statements. If the binary contradicts one,
  * the case fails with the raw evidence retained — expectations are not relaxed.
@@ -69,8 +69,8 @@ describe('SB contract cases', () => {
     const tid = await as.startThread({ cwd: env.cwd() });
     const t1 = await as.request('turn/start', { threadId: tid, input: text('first'), cwd: env.cwd(), approvalPolicy: 'never', effort: 'low' }) as { turn: { id: string } };
     await as.waitForNotification((n) => n.method === 'turn/started');
-    const t2 = await as.request('turn/start', { threadId: tid, input: text('second'), cwd: env.cwd(), approvalPolicy: 'never', effort: 'low' }) as { turn: { id: string } };
     const windowStart = as.transcript.length;
+    const t2 = await as.request('turn/start', { threadId: tid, input: text('second'), cwd: env.cwd(), approvalPolicy: 'never', effort: 'low' }) as { turn: { id: string } };
     await sleep(10_000);
     const t2Events = as.transcript.slice(windowStart).filter((e) => e.dir === 'in' && ['turn/started', 'turn/completed'].includes(String(e.message.method))
       && (e.message.params as { turn?: { id?: string } })?.turn?.id === t2.turn.id);

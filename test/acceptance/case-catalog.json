@@ -1,6 +1,6 @@
 {
   "revision": "R8",
-  "source": "Quoted from R8 §§3.4.7, 3.4.8, 6.3–6.6, 10.6, 10.6.1, 10.6.2, 10.9, 10.10, 10.11 by test/evidence/dev01/tools/build-case-catalog.py",
+  "source": "Quoted from R8 §§3.4.7, 3.4.8, 6.3–6.6, 10.6, 10.6.1, 10.6.2, 10.9, 10.10, 10.11 by scripts/dev01/build-case-catalog.py",
   "entries": [
     {
       "id": "M1-01",
@@ -776,7 +776,7 @@
       "mandatoryFor": [
         "M1"
       ],
-      "procedure": "Class G (M1): **Baseline:** `codex exec resume` cold start versus the App Server sentinel resume, using the same 50 MB rollout and the same host, 20 runs each. **Pass:** p95(app-server) − p95(exec) ≤ 2 s, and p95 with 10 concurrent sessions ≤ 2× the single-session p95. **Fail:** propose the size/mtime sentinel optimization ([XIN-2043](mention://issue/39b6b370-e129-4804-b7a6-134b21a69822) §8.1) only via a named architecture amendment before dependent DEV-04 work/M1 G6. This replaces §3.3.2's every-idle-resume sentinel rule; it is not an automatic optimization. Require affected-role+independent re-review, renewed sequential terminal→IM freshness, first resume after process/config change, completed-turn freshness, and adversarial same-size/mtime file changes before accepting a weaker sentinel policy",
+      "procedure": "Class G (M1): **Baseline:** `codex exec resume` cold start versus the App Server sentinel resume, using the same 50 MB rollout and the same host, 20 runs each. **Pass:** p95(app-server) − p95(exec) ≤ 2 s, and p95 with 10 concurrent sessions ≤ 2× the single-session p95. **Fail:** propose the size/mtime sentinel optimization (XIN-2043 §8.1) only via a named architecture amendment before dependent DEV-04 work/M1 G6. This replaces §3.3.2's every-idle-resume sentinel rule; it is not an automatic optimization. Require affected-role+independent re-review, renewed sequential terminal→IM freshness, first resume after process/config change, completed-turn freshness, and adversarial same-size/mtime file changes before accepting a weaker sentinel policy",
       "evidenceOracle": "Real-model evidence on the declared head/provider/model; scrubbed streams committed; missing evidence stays pending.",
       "source": "R8 §6.5"
     },

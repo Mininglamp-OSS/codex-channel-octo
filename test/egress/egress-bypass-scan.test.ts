@@ -14,6 +14,7 @@ import { scanEgress } from '../../scripts/egress-bypass-scan.mjs';
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const FIX = fileURLToPath(new URL('./fixtures/', import.meta.url));
 const boundary = JSON.parse(readFileSync(new URL('./egress-boundary.json', import.meta.url), 'utf8')) as {
+  analysisBudget: { cuts: number; reachCuts: number };
   boundaryModules: string[]; classification: Record<string, { class: string; reason: string }>;
   baselinePermittedCallers: Array<{ file: string; symbol: string; count: number }>;
 };
@@ -43,6 +44,8 @@ describe('egress bypass scan: repository at DEV-01', () => {
 
   it('EG-02: the observed outbound call sites equal the explicit baseline exactly (no new caller, no stale entry)', () => {
     expect(result.violations).toEqual([]);
+    expect(result.cuts).toBeLessThanOrEqual(boundary.analysisBudget.cuts);
+    expect(result.reachCuts).toBeLessThanOrEqual(boundary.analysisBudget.reachCuts);
     const observed = result.usages.reduce<Record<string, number>>((acc, u: { file: string; symbol: string }) => {
       const k = `${u.file}#${u.symbol}`; acc[k] = (acc[k] ?? 0) + 1; return acc;
     }, {});

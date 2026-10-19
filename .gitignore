@@ -8,7 +8,9 @@ config.json
 *.lock.pid
 .DS_Store
 *.log
-.cache/
-dist-test/
-artifacts/
-*.tgz
+/.cache/
+/dist-test/
+/artifacts/
+/*.tgz
+
+/test/evidence/

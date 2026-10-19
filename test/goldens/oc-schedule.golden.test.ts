@@ -1,7 +1,7 @@
 /**
  * OC schedule goldens (R8 §3.4.6, §3.4.8, §10.3): produced by
  * scripts/goldens/gen-oc-schedule.mjs executing pinned OC source
- * (openclaw @ f6065d6) with croner@10.0.1. DEV-01 verifies provenance and the
+ * (openclaw @ f6065d6) with croner@10.0.1. DEV-01 verifies metadata/integrity; separate pinned-source regeneration verifies provenance and the
  * R8-normative values; DEV-09 binds the codex-buddy port to the same file.
  */
 import { describe, it, expect } from 'vitest';
@@ -29,7 +29,7 @@ interface OcGolden {
 
 const iso = (s: string | null) => (s === null ? null : new Date(s).toISOString());
 
-describe('OC schedule golden provenance', () => {
+describe('OC schedule golden metadata and integrity', () => {
   it('GOC-00: golden bytes match the committed sha256, pinned OC source and croner 10.0.1', () => {
     const recorded = readFileSync(new URL('./oc/schedule.json.sha256', import.meta.url), 'utf8').trim().split(/\s+/)[0];
     expect(createHash('sha256').update(raw).digest('hex')).toBe(recorded);
@@ -86,7 +86,9 @@ describe('SF-4 fixed-instant DST cases (generated, never hand-computed)', () => 
   });
 
   it('GOC-03: every generated cron instant lands on the expression wall time (gap skipped, never the transition instant)', () => {
-    for (const c of golden.fixedInstant.filter((x) => x.expr)) {
+    const cases = golden.fixedInstant.filter(x => x.expr);
+    expect(cases.length).toBeGreaterThan(0);
+    for (const c of cases) {
       const [min, hour] = c.expr!.split(' ');
       const want = `${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
       for (const t of [c.next, c.previous]) {

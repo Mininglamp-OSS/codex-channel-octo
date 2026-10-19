@@ -60,9 +60,11 @@ export function semanticInventory(dbPath, opts = {}) {
   try {
     const out = {};
     for (const t of tables) {
+      if (!ORIGINAL_TABLES.includes(t) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) throw new Error("invalid inventory table");
       const exists = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
       if (!exists) { out[t] = { rows: 0, keys: [], hash: 'missing' }; continue; }
       const info = db.prepare(`PRAGMA table_info(${t})`).all();
+      if (info.some(c => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(c.name))) throw new Error("invalid inventory column");
       const cols = info.map((c) => c.name).filter((c) => !VOLATILE.has(c) && !(ignore[t] ?? []).includes(c));
       const pk = info.filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk).map((c) => c.name);
       const rows = db.prepare(`SELECT ${cols.join(', ')} FROM ${t}`).all();

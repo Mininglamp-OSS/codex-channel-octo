@@ -9,7 +9,12 @@ import { buildCaseRecords, toJUnit, type CatalogMeta } from './case-records.js';
 import { captureSourceState } from '../../../scripts/ci/source-state.mjs';
 
 type AnyTask = { type: string; tasks?: AnyTask[]; [k: string]: unknown };
-const flatten = (t: AnyTask): AnyTask[] => (t.type === 'test' ? [t] : (t.tasks ?? []).flatMap(flatten));
+const flatten = (t: AnyTask): AnyTask[] => {
+  if (t.type === 'test') return [t];
+  const result = t.result as { state?: string } | undefined;
+  if (result?.state === 'fail') return [{ ...t, type: 'test', name: 'collection-error', file: { name: t.filepath ?? t.name } }, ...(t.tasks ?? []).flatMap(flatten)];
+  return (t.tasks ?? []).flatMap(flatten);
+};
 
 function loadCatalog(): Record<string, CatalogMeta> {
   const out: Record<string, CatalogMeta> = {};
@@ -21,7 +26,7 @@ function loadCatalog(): Record<string, CatalogMeta> {
 }
 
 export default class CaseReporter {
-  onFinished(files: AnyTask[] = []): void {
+  onFinished(files: AnyTask[] = [], errors: Array<{ message?: string }> = []): void {
     // Ad-hoc runs write to the git-ignored artifacts/ directory; the runner
     // scripts (scripts/ci/run-runner.mjs) set both variables explicitly.
     const runner = process.env.DEV01_RUNNER ?? 'adhoc';
@@ -34,7 +39,8 @@ export default class CaseReporter {
     const head = state.head;
     const pins = JSON.parse(readFileSync(join(process.cwd(), 'test', 'pins.json'), 'utf8')) as unknown;
     const environment = { node: process.version, platform: process.platform, arch: process.arch, ci: Boolean(process.env.CI), runner };
-    const records = buildCaseRecords(files.flatMap(flatten) as never, { pins, head, environment, catalog: loadCatalog() });
+    const tasks = [...files.flatMap(flatten), ...errors.map((e, i) => ({ type: 'test', name: `unhandled-error-${i}`, file: { name: '<runner>' }, result: { state: 'fail', errors: [e] } }))];
+    const records = buildCaseRecords(tasks as never, { pins, head, environment, catalog: loadCatalog() });
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, `${runner}.results.json`), JSON.stringify({ runner, head, environment, generatedAt: new Date().toISOString(), records }, null, 2) + '\n');
     writeFileSync(join(dir, `${runner}.junit.xml`), toJUnit(records, runner));

@@ -4,12 +4,12 @@
 |---|---|
 | Amendment version | `R8-AMD-01` (amends R8) |
 | Proposals | `A-R8-PM05-01`, `A-R8-SB07-01` |
-| Owner ratification | `b57277b2-618e-4da2-8291-3dba7b0b1c5f` |
+| Owner ratification | `owner-ratified-R8-AMD-01` |
 | Stage | DEV-01 harness and invariant foundations |
 | Source pin B | `Mininglamp-OSS/openclaw-channel-octo` `2e710e903fa43ac9440723746f7395d2f7b4347e` |
 | Binary pin | `codex-cli 0.142.3` |
 
-This implementation traceability record references the owner-ratified proposal in XIN-2118 comment `9ac35667-6b56-41a3-bb83-74a0ba7b1f4c`; it does not replace PjM publication of the authoritative amendment. Everything else in R8 remains unchanged.
+This implementation traceability record references the owner-ratified proposal in XIN-2118 comment `owner-ratified-R8-AMD-01`; it does not replace PjM publication of the authoritative amendment. Everything else in R8 remains unchanged.
 
 ## A-R8-PM05-01: Octo tool surfaces (R8 §4 O24, §9 DEV-14)
 
@@ -93,8 +93,8 @@ four contracts execute.
   `scripts/goldens/gen-b.mjs` from the pinned source (`npm run goldens:verify`).
   It carries AST-captured inventories plus file/symbol/line/sha256 ownership.
 * Validator: `validateMessageRoutes` in `scripts/parity/validate-matrix.mjs`.
-* Historical DEV-01 evidence under `test/evidence/dev01/` is unchanged. It records
-  the pre-amendment PM-05 failure.
+* Historical pre-amendment failure receipts remain in the prior PR history.
+  Current results are generated under ignored artifacts and uploaded by CI.
 
 ## A-R8-SB07-01: SB-07 exec-parity rejection (R8 §6.3)
 

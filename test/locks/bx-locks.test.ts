@@ -30,6 +30,12 @@ vi.mock('../../src/agent-bridge.js', async (importOriginal) => {
   return {
     ...actual,
     queryAgent: async function* () { for (const c of agent.chunks) yield c; },
+    queryAgentEvents: async function* (_prompt: unknown, _cwd: unknown, _sdk: unknown, opts: { onExecutionStarted?: () => void; onManagedExecution?: (scope: unknown) => void } = {}) {
+      opts.onManagedExecution?.({ waitForStopped: async () => ({ stopped: true, groupStopped: true, closeObserved: true, reason: 'closed' }) });
+      opts.onExecutionStarted?.();
+      yield { kind: 'attempt_start', attempt: 0, reason: 'initial', continues: null };
+      yield { kind: 'attempt_end', attempt: 0, terminal: 'completed' };
+    },
   };
 });
 
@@ -79,7 +85,8 @@ describe('BX locks (B defects not ported)', () => {
     // a header that promises 2 MiB then dribbles more than the 1 MiB cap
     ws.sendRaw(Buffer.from([0x50, 0x80, 0x80, 0x80, 0x01]));
     ws.sendRaw(Buffer.alloc(1024 * 1024 + 16, 0x41));
-    await ws.waitFor((e) => e.type === 'CLOSE', 5_000);
+    const closed = await ws.waitFor((e) => e.type === 'CLOSE', 500).then(() => true, () => false);
+    expect(closed, 'oversized partial frame must close the connection').toBe(true);
   });
 
   it('BX-3 / T5: the DH seed is CSPRNG-derived — fixing Math.random does not repeat the client key', async () => {
@@ -100,8 +107,8 @@ describe('BX locks (B defects not ported)', () => {
     expect(buildMediaUrl('/file/%2e%2e/internal/secret.env', api)).toBeUndefined();
     expect(buildMediaUrl('http://octo.example.com/file/a.png', api)).toBeUndefined(); // protocol downgrade
     expect(buildMediaUrl('https://cdn.example.net/file/a.png', api, 'cdn.example.net')).toBe('https://cdn.example.net/file/a.png');
-    await expect(assertPublicUrl('http://127.0.0.1/admin')).rejects.toThrow();
-    await expect(assertPublicUrl('http://169.254.169.254/latest/meta-data')).rejects.toThrow();
+    await expect(assertPublicUrl('http://127.0.0.1/admin')).rejects.toThrow(/Refusing to fetch private\/local address/);
+    await expect(assertPublicUrl('http://169.254.169.254/latest/meta-data')).rejects.toThrow(/Refusing to fetch private\/local address/);
   });
 
   it('BX-5: group numbers and short ids are percent-encoded in every ported path (no traversal)', async () => {

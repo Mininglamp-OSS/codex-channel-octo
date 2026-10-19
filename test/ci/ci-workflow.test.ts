@@ -13,31 +13,36 @@ import { pins } from '../harness/pins.js';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const wf = yaml.load(readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')) as {
-  on: Record<string, unknown>; jobs: Record<string, { 'runs-on': string; strategy?: { matrix?: Record<string, unknown> }; steps: Array<Record<string, unknown>> }>;
+  on: Record<string, unknown>; concurrency: { group: string; 'cancel-in-progress': boolean }; jobs: Record<string, { 'runs-on': string; strategy?: { matrix?: Record<string, unknown> }; steps: Array<Record<string, unknown>> }>;
 };
 const runs = (job: string) => wf.jobs[job].steps.map((s) => String(s.run ?? '')).join('\n');
 
 describe('CI workflow', () => {
   it('CI-01: push and pull_request on all branches plus workflow_dispatch', () => {
     expect(wf.on).toHaveProperty('workflow_dispatch');
+    expect(wf.concurrency['cancel-in-progress']).toBe(true);
+    expect(wf.concurrency.group).toContain('github.event.pull_request.head.sha || github.sha');
     expect(wf.on.push).toEqual({ branches: ['**'] });
     expect(wf.on.pull_request).toEqual({ branches: ['**'] });
   });
 
   it('CI-02: unit runs on a Node 22 / 24 matrix and uploads runner records', () => {
-    expect(wf.jobs.unit.strategy?.matrix?.node).toEqual(['22', '24']);
+    expect(wf.jobs.unit.strategy?.matrix?.node).toEqual(['22', '24.10.0']);
     expect(runs('unit')).toMatch(/npm test/);
   });
 
   it('CI-03: the R8 §10.2 jobs exist with their commands', () => {
-    for (const j of ['type-check', 'lint', 'unit', 'real-binary', 'pack-smoke', 'parity-matrix', 'egress-bypass-scan', 'downgrade-open', 'goldens', 'src-scope']) {
+    for (const j of ['type-check', 'lint', 'unit', 'real-binary', 'pack-smoke', 'parity-matrix', 'egress-bypass-scan', 'downgrade-open', 'goldens', 'src-scope', 'build', 'latest-sdk', 'mutation']) {
       expect(wf.jobs, j).toHaveProperty(j);
     }
     expect(wf.jobs['real-binary']['runs-on']).toBe('ubuntu-latest');
     expect(runs('real-binary')).toMatch(/npm run test:real-binary/);
+    expect(runs('real-binary')).toContain('unshare --user --map-root-user --net');
+    expect(runs('mutation')).toContain('npm run test:mutation');
+    expect(runs('build')).toContain('dist/codex-jsonl-proxy.mjs');
     expect(JSON.stringify(wf.jobs['real-binary'])).toMatch(/NO_PROXY/);
     expect(runs('pack-smoke')).toMatch(/npm run pack:smoke/);
-    expect(wf.jobs['pack-smoke'].strategy?.matrix?.node).toEqual(['22', '24']);
+    expect(wf.jobs['pack-smoke'].strategy?.matrix?.node).toEqual(['22', '24.10.0']);
     expect(runs('parity-matrix')).toMatch(/npm run test:parity-matrix/);
     expect(runs('egress-bypass-scan')).toMatch(/npm run test:egress/);
     expect(runs('downgrade-open')).toMatch(/npm run test:downgrade/);
@@ -80,29 +85,28 @@ describe('CI provenance', () => {
   });
 
   it('CI-10: runner outputs go to artifacts/ (never committed evidence) and every uploaded path is one a step writes', () => {
-    const written = new Set<string>();
-    for (const { s } of steps) for (const v of Object.values(s.env ?? {})) written.add(`${v.replace(/\/$/, '')}/`);
-    for (const { job, s } of steps.filter(({ s }) => String(s.uses ?? '').startsWith('actions/upload-artifact@'))) {
-      const paths = String(s.with?.path ?? '').split('\n').map((x) => x.trim()).filter(Boolean);
-      for (const p of paths) {
-        expect(p.startsWith('artifacts/'), `${job}: ${p}`).toBe(true);
-        expect(written.has(p), `${job}: ${p} is uploaded but no step env points there`).toBe(true);
-      }
+    const uploads = steps.filter(({ s }) => String(s.uses ?? '').startsWith('actions/upload-artifact@'));
+    expect(uploads.length).toBeGreaterThan(0);
+    for (const { job, s } of uploads) {
+      const written = new Set(steps.filter(x => x.job === job).flatMap(x => Object.values(x.s.env ?? {})).map(v => `${v.replace(/\/$/, '')}/`));
+      const paths = String(s.with?.path ?? '').split('\n').map(x => x.trim()).filter(Boolean);
+      expect(paths.length, job).toBeGreaterThan(0);
+      for (const p of paths) { expect(p.startsWith('artifacts/'), job).toBe(true); expect(written.has(p), `${job}: ${p}`).toBe(true); }
     }
     expect(JSON.stringify(wf)).not.toMatch(/test\/evidence\/dev01\/(runs|real-binary)/);
   });
 
   it('CI-11: the parity gate runs a fresh full unit selection and validates its own fresh JUnit', () => {
     const gate = readFileSync(new URL('../../scripts/ci/parity-matrix-gate.mjs', import.meta.url), 'utf8');
-    expect(gate).toMatch(/spawnSync\(process\.execPath, \['scripts\/ci\/run-runner\.mjs', runner\]/); // no path filter → full default suite
+    expect(gate).toMatch(/spawn\(process\.execPath, \['scripts\/ci\/run-runner\.mjs', runner\]/); // no path filter → full default suite
     expect(gate).toMatch(/rmSync\(junitPath/);
     expect(gate).not.toMatch(/test\/evidence/);
   });
 });
 
 describe('DEV-01 scope', () => {
-  it('CI-05: relative to the pinned parent, src changes are limited to the reviewed interface-seam allowlist', () => {
-    const r = checkSrcDiff({ root: ROOT, base: pins.A });
+  it('CI-05: relative to the reviewed main integration base, src changes are limited to the reviewed interface-seam allowlist', () => {
+    const r = checkSrcDiff({ root: ROOT });
     expect(r.violations).toEqual([]);
     expect(r.allowlist).toEqual(['src/seams/clock.ts', 'src/seams/fault-plan.ts']);
   });
@@ -127,8 +131,10 @@ describe('DEV-01 scope', () => {
       OC: 'f6065d67762f2c87fbdeff119f34f54266a95b87', codex: '0.142.3', croner: '10.0.1',
     });
     const lock = JSON.parse(readFileSync(new URL('../../package-lock.json', import.meta.url), 'utf8')) as { packages: Record<string, { version: string }> };
-    expect(lock.packages['node_modules/@openai/codex'].version).toBe('0.142.3');
-    expect(lock.packages['node_modules/@openai/codex-sdk'].version).toBe('0.142.3');
+    expect(lock.packages['node_modules/codex-contract-cli'].version).toBe('0.142.3');
+    expect(lock.packages['node_modules/@openai/codex-sdk'].version).toMatch(/^0\.\d+\./);
+    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+    expect(pkg.dependencies['@openai/codex-sdk']).toBe('latest');
     expect(lock.packages['node_modules/croner'].version).toBe('10.0.1');
   });
 });

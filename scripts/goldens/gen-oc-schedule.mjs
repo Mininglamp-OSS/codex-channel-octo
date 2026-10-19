@@ -22,6 +22,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import * as esbuild from 'esbuild';
+import { beginVectors, assertPureVectors } from './stub-purity.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const require = createRequire(join(ROOT, 'package.json'));
@@ -117,8 +118,7 @@ await esbuild.build({
   }],
 });
 const oc = await import(pathToFileURL(bundlePath).href + `?t=${Date.now()}`);
-const initStubCalls = [...(globalThis.__ocStubCalls ?? [])];
-globalThis.__ocStubCalls = [];
+const initStubCalls = beginVectors(globalThis);
 
 const iso = (ms) => (ms === undefined || ms === null ? null : new Date(ms).toISOString());
 const cronCase = (id, tz, expr, now) => {
@@ -187,14 +187,14 @@ const stagger = {
   ],
 };
 
-if ((globalThis.__ocStubCalls ?? []).length > 0) fail(`stubbed host package invoked while computing vectors: ${globalThis.__ocStubCalls.join(', ')}`);
+const stubCallsDuringVectors = assertPureVectors(globalThis);
 const golden = {
   generator: 'scripts/goldens/gen-oc-schedule.mjs',
   source: { repo: 'openclaw/openclaw', commit: pins.OC, files: sources },
   croner: cronerVersion,
   runtime: { node: process.version, tz: process.versions.tz ?? null, icu: process.versions.icu ?? null },
   method: 'OC sources bundled unmodified by esbuild (export statement appended to jobs-scheduling.ts); @openclaw/normalization-core resolved to the pinned workspace sources; croner from the exact devDependency',
-  stubbedHostImports: [...stubbed].sort(), stubCallsDuringModuleInit: initStubCalls.length, stubCallsDuringVectors: 0,
+  stubbedHostImports: [...stubbed].sort(), stubCallsDuringModuleInit: initStubCalls.length, stubCallsDuringVectors,
   ocVerbatim, fixedInstant, stagger,
 };
 const text = JSON.stringify(golden, null, 2) + '\n';

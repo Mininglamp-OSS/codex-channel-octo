@@ -277,3 +277,7 @@ Apache-2.0
 详细诊断需同时开启 `sdk.privateDiagnostics` 与 `sdk.privateDiagnosticsDetails`（默认均关闭），仅保存有界白名单元数据，不保留任意错误原文。写入器要求预先存在的本地数据目录及 POSIX 防跟随、目录和非阻塞打开标志；拒绝符号链接祖先、硬链接和组/其他用户可读文件。缺少必要标志时拒绝创建文件。原生 Windows 与网络/FUSE 文件系统兼容性尚未验证。详见[本机诊断](docs/private-diagnostics.md)。
 
 路由兼容只接受目标 UID 完全匹配，不进行子串匹配；拒绝的元数据仍为 `invalid`。首位属于其他成员的渲染实体会保留，仅后续位置有实体时可移除首位机器人 mention。
+
+## DEV-01 test harness
+
+See [the harness guide](docs/testing/dev01-harness.md) for development-only runtime pins, verification commands, CI artifacts and gate contracts.

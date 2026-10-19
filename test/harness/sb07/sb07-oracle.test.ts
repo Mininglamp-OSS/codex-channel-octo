@@ -158,8 +158,8 @@ describe('SB07-F1 oracle: mutation controls (each mutant rejected for its defect
     expect(v.violations).toContain(code);
   });
 
-  it('SB07-F1-OR-03: the committed 8546530 SB-07 capture is rejected for its unfaithful reply (historical bytes preserved)', () => {
-    const old = readFileSync(new URL('../../evidence/dev01/real-binary/SB-07/app-server-7.jsonl', import.meta.url), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as TranscriptEntry);
+  it('SB07-F1-OR-03: the committed 8546530 SB-07 capture is rejected for its unfaithful reply (only relevant historical protocol rows retained)', () => {
+    const old = readFileSync(new URL('../../fixtures/app-server/0.142.3/historical-bad-rejection.jsonl', import.meta.url), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as TranscriptEntry);
     const tid = (old.find((e) => e.dir === 'in' && msg(e).method === 'item/commandExecution/requestApproval')!.message as Msg).params!.threadId as string;
     const v = checkSb07RejectionPath(old, { threadId: tid, incarnation: undefined });
     expect(v.ok).toBe(false);

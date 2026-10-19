@@ -7,7 +7,7 @@ export function evaluateMilestone(manifest, milestone, evidence, provenance, cat
   const selection = parseSelection(manifest, milestone);
   const issues = [...rootIssues(manifest), ...selection.issues];
   if (issues.length) return { milestone, status: 'failed', reason: 'invalid-selection', items: [], issues };
-  const validProvenance = record(provenance) && ['manifestSha256', 'head', 'profile'].every(k => typeof provenance[k] === 'string' && provenance[k].trim());
+  const validProvenance = record(provenance) && /^[0-9a-f]{40}$/.test(provenance.head ?? '') && ['manifestSha256', 'head', 'profile'].every(k => typeof provenance[k] === 'string' && provenance[k].trim());
   const entries = Array.isArray(catalog?.entries) ? catalog.entries.filter(record) : [];
   const byId = new Map(entries.map(entry => [entry.id, entry]));
   const items = selection.requirements.map(({ id, list, where }) => {

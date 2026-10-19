@@ -4,5 +4,6 @@
   "OC": "f6065d67762f2c87fbdeff119f34f54266a95b87",
   "codex": "0.142.3",
   "codexRust": "e2b60462a7321517895dd94920661599303a7539",
-  "croner": "10.0.1"
+  "croner": "10.0.1",
+  "integrationBase": "f3ca7657f82a069a4b357a6ec6cdc1295c432c05"
 }

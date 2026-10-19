@@ -37,7 +37,9 @@ try {
   const unpack = join(work, 'unpacked');
   mkdirSync(unpack);
   execFileSync('tar', ['-xzf', tgz, '-C', unpack]);
-  const jsFiles = files.filter((f) => f.endsWith('.js'));
+  const jsFiles = files.filter((f) => /\.[cm]?js$/.test(f));
+  check('every executable module has a production source', jsFiles.every(f => f === 'scripts/check-codex-runtime.mjs' || f.startsWith('dist/') && existsSync(join(ROOT, 'src', f.slice(5).replace(/\.js$/, '.ts')))));
+  check('pack includes executable JSONL proxy', packed.files.some(f => f.path === 'dist/codex-jsonl-proxy.mjs' && (f.mode & 0o111)));
   const leaks = jsFiles.filter((f) => /\[DLY |CODEX_OCTO_TEST_FAULTS|CODEX_OCTO_TEST_CLOCK|ScriptedFaultPlan|FakeClock/.test(readFileSync(join(unpack, 'package', f), 'utf8')));
   check('no correlation marker or test-hook symbols in packaged JS', leaks.length === 0, leaks.join(','));
   const app = join(work, 'app');

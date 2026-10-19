@@ -225,7 +225,7 @@ describe('fake Octo REST: endpoint wire inventory for existing A endpoints', () 
   it('EP-21.get: upload/credentials encodes the filename and scrubs Bearer tokens from error text', async () => {
     rest!.setRoute('GET', '/v1/bot/upload/credentials', () => ({ status: 500, rawBody: 'echo Authorization: Bearer sekrit-token-value' }));
     const err = await getUploadCredentials({ apiUrl: rest!.url, botToken: T, filename: 'a b.png' }).catch((e: Error) => e);
-    expect(String(err)).toMatch(/\(500\).*\*\*\*/);
+    expect(String(err)).toMatch(/\(500\): api_failed\/http_status/);
     expect(String(err)).not.toContain('sekrit');
     expect(rest!.requests[0].query).toBe('filename=a%20b.png');
   });

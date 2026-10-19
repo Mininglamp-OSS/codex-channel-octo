@@ -54,6 +54,7 @@ export function evaluateDelivery(trace, captureInventory) {
   const identityOf = (e) => ({ fixture: trace.fixture, ...e.identity });
   const expected = new Map();
   for (const e of trace.expected) {
+    if (!['confirmed', 'suppressed', 'unknown'].includes(e.outcome)) v('malformed-expected-outcome', { outcome: e.outcome });
     const key = identityKey(identityOf(e));
     if (key === undefined) v('malformed-expected-identity', { identity: e.identity });
     else expected.set(key, e);

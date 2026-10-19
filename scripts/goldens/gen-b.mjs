@@ -170,7 +170,7 @@ for (const serverVersion of [4, 3]) {
       fail(`B decoded RECV differently from the generator spec: ${JSON.stringify(msg)}`);
     }
     if (!spec.poison && !msg) fail('B did not decode a valid RECV vector');
-    const { payloadObj: _p, poison: _q, ...rest } = spec;
+    const rest = { ...spec }; delete rest.payloadObj; delete rest.poison;
     recv.push({ spec: { ...rest, topic: rest.topic ?? undefined, payloadBase64Ascii }, frameHex: hex(frame), bOnMessage: msg ? JSON.parse(JSON.stringify(msg)) : null, bRecvackHex: ack ? hex(ack) : null });
   }
   session.push({ name: `server-v${serverVersion}`, clientSeedHex: hex(clientSeed), serverVersion, connackFrameHex: hex(connack), serverKey, salt, recv });
@@ -185,7 +185,7 @@ const wire = {
 };
 
 // ── action inventories via TypeScript AST (A-R8-PM05-01) ─────────────────
-const AMENDMENT = { id: 'A-R8-PM05-01', ratification: 'b57277b2-618e-4da2-8291-3dba7b0b1c5f', doc: 'docs/amendments/R8-AMD-01.md' };
+const AMENDMENT = { id: 'A-R8-PM05-01', ratification: 'owner-ratified-R8-AMD-01', doc: 'docs/amendments/R8-AMD-01.md' };
 const parsed = {};
 function parse(rel) { return (parsed[rel] ??= ts.createSourceFile(rel, readSource(rel), ts.ScriptTarget.Latest, true)); }
 function stringArray(node) {

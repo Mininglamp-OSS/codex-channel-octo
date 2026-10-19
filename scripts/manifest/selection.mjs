@@ -1,4 +1,4 @@
-/** Shared, fail-closed parser for the four R8 milestone selections. */
+/** Shared fail-closed parser. Normative manifest fixtures are the independent anchor; agreement between its two consumers alone is not validation. */
 export const MILESTONES = ['M1', 'M2', 'M3-dispatch', 'M3-G6'];
 export const CASE_LISTS = ['requiredCases', 'requiredSpikes', 'requiredContractCases', 'requiredOracleCases'];
 export const NAMED_LISTS = ['requiresGate', 'requiredSuites', 'requiredDiscoveriesConsumed', 'requiredArtifacts', 'dependencyBuilds'];

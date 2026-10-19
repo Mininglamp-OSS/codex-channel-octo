@@ -8,6 +8,10 @@ on:
     branches: ['**']
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -55,7 +59,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['22', '24']
+        node: ['22', '24.10.0']
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -95,14 +99,14 @@ jobs:
       - run: npm ci
       - name: Install Linux sandbox prerequisite
         # Ubuntu 24.04 needs the narrowly scoped bwrap user-namespace profile.
-        # https://learn.chatgpt.com/docs/sandboxing#prerequisites
+        # https://developers.openai.com/codex/concepts/sandboxing#prerequisites
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap apparmor-profiles apparmor-utils
           sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
           sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
           bwrap --unshare-user --ro-bind / / /bin/true
-      - run: npm run test:real-binary
+      - run: unshare --user --map-root-user --net sh -c 'ip link set lo up && npm run test:real-binary'
         env:
           DEV01_REPORT_DIR: artifacts/runs
           DEV01_EVIDENCE_DIR: artifacts/evidence
@@ -120,7 +124,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['22', '24']
+        node: ['22', '24.10.0']
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -245,6 +249,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
@@ -265,6 +272,9 @@ jobs:
         node: ['22', '24.10.0']
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ matrix.node }}
@@ -281,3 +291,25 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm pack --dry-run
+
+  mutation:
+    name: Mutation negative controls
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:mutation
+        env:
+          DEV01_MUTATION_DIR: artifacts/mutation
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mutation-records
+          path: artifacts/mutation/

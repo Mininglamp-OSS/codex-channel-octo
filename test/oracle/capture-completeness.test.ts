@@ -18,7 +18,7 @@ describe('B-3 independent capture completeness', () => {
     expect(r.verdict).toBe('pending');
     expect(codes(r)).toContain('incomplete-capture-inventory');
   });
-  it.each(['all', 'retry'])('B3-03: dropping %s captures cannot hide duplicate delivery attempts', mode => {
+  it.each(['all', 'retry'])('B3-03: dropping %s captures without a matching ledger cannot hide duplicate delivery attempts', mode => {
     const trace = clone(fixtures('ORACLE-07').trace);
     trace.captures = mode === 'all' ? [] : trace.captures.slice(0, 1);
     const r = evaluate(trace, ledgers['ORACLE-07'].trace);
@@ -52,6 +52,12 @@ describe('B-3 independent capture completeness', () => {
     expect(r.verdict).toBe('fail');
     expect(codes(r)).toContain('incomplete-capture-inventory');
     expect(codes(r)).toContain('duplicate-logical-attempt');
+  });
+  it('B3-03-limit: a jointly falsified collector and matching trusted seal cannot be detected downstream', () => {
+    const fixture = fixtures('ORACLE-07');
+    const trace = clone(fixture.trace);
+    trace.captures = clone(fixture.controlTrace.captures);
+    expect(evaluate(trace, ledgers['ORACLE-07'].controlTrace).verdict).toBe('pass');
   });
   it('B3-05: inventory-complete stored delivery without a capture still fails reconciliation', () => {
     const trace = clone(fixtures('ORACLE-07').controlTrace);

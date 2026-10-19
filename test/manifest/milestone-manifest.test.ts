@@ -100,14 +100,14 @@ describe('milestone manifest: linter', () => {
 
 describe('milestone manifest: gate evaluator', () => {
   const manifestSha = createHash('sha256').update(manifestBytes).digest('hex');
-  const provenance = { manifestSha256: manifestSha, head: 'candidate-head', profile: 'profile-hash' };
+  const provenance = { manifestSha256: manifestSha, head: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', profile: 'profile-hash' };
   const allItems = (ms: Milestone) => [
     ...(ms.requiresGate ?? []), ...(ms.requiredCases ?? []), ...(ms.requiredSpikes ?? []), ...(ms.requiredSuites ?? []),
     ...(ms.requiredDiscoveriesConsumed ?? []), ...(ms.requiredArtifacts ?? []), ...(ms.dependencyBuilds ?? []),
     ...(ms.requiredContractCases ?? []), ...(ms.requiredOracleCases ?? []),
   ];
   const passAll = (ms: Milestone) => Object.fromEntries(allItems(ms).map((id) => [id, {
-    status: 'passed', manifestSha256: manifestSha, head: 'candidate-head', profile: 'profile-hash', source: 'independent-tester',
+    status: 'passed', manifestSha256: manifestSha, head: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', profile: 'profile-hash', source: 'independent-tester',
   }]));
 
   it('MM-09: passed only when every required item passed on the verified head/profile with independent evidence', () => {
@@ -155,8 +155,8 @@ describe('milestone manifest: fail-closed evaluation (B-1)', () => {
     expect(evalWith(unbound, 'M1', passEverything(unbound)).status).not.toBe('passed');
   });
   const manifestSha = createHash('sha256').update(manifestBytes).digest('hex');
-  const provenance = { manifestSha256: manifestSha, head: 'candidate-head', profile: 'profile-hash' };
-  const pass = { status: 'passed', manifestSha256: manifestSha, head: 'candidate-head', profile: 'profile-hash', source: 'independent-tester' };
+  const provenance = { manifestSha256: manifestSha, head: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', profile: 'profile-hash' };
+  const pass = { status: 'passed', manifestSha256: manifestSha, head: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', profile: 'profile-hash', source: 'independent-tester' };
   const STATIC_LISTS = ['requiresGate', 'requiredCases', 'requiredSpikes', 'requiredSuites', 'requiredDiscoveriesConsumed',
     'requiredArtifacts', 'dependencyBuilds', 'requiredContractCases', 'requiredOracleCases'] as const;
   /** Passing evidence for every string ID reachable anywhere in a selection (the most permissive caller). */
@@ -250,7 +250,7 @@ describe('milestone manifest: fail-closed evaluation (B-1)', () => {
       ['evidence disposition', { ...everything, 'M3-G6': { ...pass, disposition: 'owner-dropped-all-M3-items' } }, provenance],
       ['implementer disposition', { ...everything, 'owner-drop-all': { ...pass, source: 'implementer', disposition: 'owner-dropped-all-M3-items' } }, provenance],
       ['provenance boolean', everything, { ...provenance, ownerDroppedAllM3Items: true }],
-      ['provenance disposition', everything, { ...provenance, ownerDisposition: { decision: 'drop-all-M3-items', milestone: 'M3-G6', manifestSha256: manifestSha, head: 'candidate-head', profile: 'profile-hash' } }],
+      ['provenance disposition', everything, { ...provenance, ownerDisposition: { decision: 'drop-all-M3-items', milestone: 'M3-G6', manifestSha256: manifestSha, head: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', profile: 'profile-hash' } }],
     ] as const) {
       expect(evalWith(manifest, 'M3-G6', ev as Record<string, unknown>, prov).status, name).toBe('pending');
     }

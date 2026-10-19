@@ -18,6 +18,7 @@
  *   validateMessageRoutes.
  */
 import ts from 'typescript';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative, resolve, sep, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,31 +46,43 @@ export function buildTestIndex(root) {
   for (const file of dirs.flatMap((d) => listTests(d))) {
     const rel = relative(root, file).split(sep).join('/');
     const sf = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
-    const visit = (node, stack) => {
+    const aliases = new Map();
+    const collectAlias = node => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+        const text = node.initializer.getText(sf);
+        if (/\b(?:it|test|describe)(?:\.|\b)/.test(text)) aliases.set(node.name.text, /\bskip(?:If)?\b/.test(text) ? 'skip' : /\btodo\b/.test(text) ? 'todo' : 'run');
+      }
+      ts.forEachChild(node, collectAlias);
+    };
+    collectAlias(sf);
+    const visit = (node, stack, inherited = 'run') => {
       if (ts.isCallExpression(node)) {
         let callee = node.expression;
-        let mode = 'run';
+        let mode = inherited;
         // it.each(...)(title, fn) / it.for(...)(title, fn)
         if (ts.isCallExpression(callee)) callee = callee.expression;
         if (ts.isPropertyAccessExpression(callee)) {
           const m = callee.name.text;
           if (m === 'todo') mode = 'todo';
-          else if (m === 'skip') mode = 'skip';
+          else if (['skip', 'skipIf', 'runIf'].includes(m)) mode = 'skip';
           callee = callee.expression;
         }
-        const name = ts.isIdentifier(callee) ? callee.text : undefined;
+        let name = ts.isIdentifier(callee) ? callee.text : undefined;
+        if (aliases.has(name)) { mode = aliases.get(name); name = 'it'; }
         const titleNode = node.arguments[0];
         if ((name === 'describe' || name === 'it' || name === 'test') && titleNode && ts.isStringLiteralLike(titleNode)) {
           const title = titleNode.text;
           if (name === 'describe') {
-            node.arguments.slice(1).forEach((a) => ts.forEachChild(a, (c) => visit(c, [...stack, title])));
+            node.arguments.slice(1).forEach((a) => ts.forEachChild(a, (c) => visit(c, [...stack, title], mode)));
             return;
           }
-          index.set(`${rel}#${[...stack, title].join(' > ')}`, { mode });
+          const key = `${rel}#${[...stack, title].join(' > ')}`;
+          const previous = index.get(key);
+          index.set(key, { mode: previous && previous.mode !== 'run' ? previous.mode : mode });
           return;
         }
       }
-      ts.forEachChild(node, (c) => visit(c, stack));
+      ts.forEachChild(node, (c) => visit(c, stack, inherited));
     };
     visit(sf, []);
   }
@@ -78,10 +91,10 @@ export function buildTestIndex(root) {
 
 /**
  * @param {{ rows: Array<Record<string, any>>, [key: string]: any }} matrix
- * @param {{ testIndex: Map<string, { mode: string }>, partial?: boolean, root?: string, managementGolden?: Record<string, any> }} opts
+ * @param {{ testIndex: Map<string, { mode: string }>, partial?: boolean, root?: string, head?: string, managementGolden?: Record<string, any> }} opts
  * @returns {Array<{ code: string, id: string, detail?: string }>}
  */
-export function validateMatrix(matrix, { testIndex, partial = false, managementGolden }) {
+export function validateMatrix(matrix, { testIndex, partial = false, managementGolden, root, head }) {
   const issues = [];
   const add = (code, id, detail) => issues.push({ code, id, ...(detail ? { detail } : {}) });
   const seen = new Set();
@@ -93,7 +106,7 @@ export function validateMatrix(matrix, { testIndex, partial = false, managementG
     if (!IMPL.has(r.implementationStatus)) add('bad-implementation-status', r.id);
     const tests = Array.isArray(r.tests) ? r.tests : [];
     const excluded = EXCLUDED.has(r.disposition);
-    if (excluded && !/^OD-\d+/.test(String(r.decision ?? '')) && r.disposition !== 'NA') add('missing-decision', r.id);
+    if (excluded && (r.disposition === 'NA' ? !String(r.decision ?? '').trim() : !/^OD-\d+/.test(String(r.decision ?? '')))) add('missing-decision', r.id);
     if (!excluded && tests.length === 0) add('missing-test-ref', r.id);
     const resolved = tests.map((t) => [t, testIndex.get(t)]);
     for (const [t, hit] of resolved) if (!hit) add('unresolved-test-ref', r.id, t);
@@ -102,7 +115,16 @@ export function validateMatrix(matrix, { testIndex, partial = false, managementG
     if (r.executionStatus === 'passed') {
       if (r.implementationStatus === 'pending' || tests.length === 0) add('fake-pass', r.id);
       if (anyTodo) add('todo-backed-pass', r.id);
-      if (!/^test\/evidence\//.test(String(r.evidence ?? ''))) add('pass-without-evidence', r.id);
+      if (resolved.some(([, hit]) => hit?.mode !== 'run')) add('nonrun-backed-pass', r.id);
+      if (!root || typeof r.evidence !== 'string' || !r.evidence || !existsSync(resolve(root, r.evidence))) add('pass-without-evidence', r.id);
+      else {
+        try {
+          const snapshot = JSON.parse(readFileSync(resolve(root, r.evidence), 'utf8'));
+          const expectedHead = head ?? execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          if (!/^[0-9a-f]{40}$/.test(expectedHead) || snapshot.head !== expectedHead) add('stale-evidence-head', r.id);
+          if (!r.profile || snapshot.profile !== r.profile) add('evidence-profile-mismatch', r.id);
+        } catch { add('invalid-evidence', r.id); }
+      }
     }
     if (allTodo && r.implementationStatus === 'implemented') add('todo-backed-implemented', r.id);
     if (!partial && !r.gap && r.implementationStatus !== 'implemented' && !excluded) add('missing-gap', r.id);
@@ -224,20 +246,38 @@ export function validateMessageRoutes(matrix, golden, { testIndex }) {
 }
 
 /** Re-verify `passed` claims against JUnit files (testcase classname=file, name=full title). */
-export function verifyAgainstJUnit(matrix, junitTexts) {
+export function verifyAgainstJUnit(matrix, junitTexts, { head, profile } = {}) {
   const results = new Map();
   for (const xml of junitTexts) {
     for (const m of xml.matchAll(/<testcase classname="([^"]*)" name="([^"]*)"[^>]*?(\/>|>([\s\S]*?)<\/testcase>)/g)) {
       const unesc = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
       const body = m[4] ?? '';
-      const status = /<failure/.test(body) ? 'failed' : /<skipped/.test(body) ? 'skipped' : 'passed';
-      results.set(`${unesc(m[1])}#${unesc(m[2])}`, status);
+      let status = /<(?:failure|error)\b/.test(body) ? 'failed' : /<skipped/.test(body) ? 'skipped' : 'passed';
+      if (head !== undefined && (!/^[0-9a-f]{40}$/.test(head) || !body.includes(`name="head" value="${head}"`))) status = 'unverified-head';
+      if (profile) {
+        try {
+          const encoded = /name="environment" value="([^"]*)"/.exec(body)?.[1];
+          const environment = JSON.parse(unesc(encoded ?? ''));
+          if (Object.entries(profile).some(([key, value]) => environment[key] !== value)) status = 'unverified-head';
+        } catch { status = 'unverified-head'; }
+      }
+      const key = `${unesc(m[1])}#${unesc(m[2])}`;
+      const previous = results.get(key);
+      const rank = { passed: 0, skipped: 1, 'unverified-head': 2, failed: 3 };
+      results.set(key, previous && rank[previous] > rank[status] ? previous : status);
     }
   }
   const issues = [];
-  for (const r of matrix.rows.filter((x) => x.executionStatus === 'passed')) {
+  for (const r of matrix.rows.filter((x) => x.executionStatus === 'passed' || x.requiredVerification === 'passed-on-fresh-head-and-profile')) {
     for (const t of r.tests) {
-      const s = results.get(t);
+      let s = results.get(t);
+      // Template references must match at least one expanded test, and every
+      // expansion must pass. A template cannot stand in for an empty selection.
+      if (!s && /\$[A-Za-z_]|%[sdifjo#]/.test(t)) {
+        const pattern = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\\\$[A-Za-z_][A-Za-z_0-9]*|%[sdifjo#]/g, '.+');
+        const matches = [...results].filter(([key]) => new RegExp(`^${pattern}$`).test(key));
+        s = matches.length ? matches.every(([, status]) => status === 'passed') ? 'passed' : 'failed' : undefined;
+      }
       if (s !== 'passed') issues.push({ code: 'claimed-pass-not-observed', id: r.id, detail: `${t} → ${s ?? 'absent'}` });
     }
   }
@@ -248,7 +288,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
   const matrix = JSON.parse(readFileSync(join(root, 'test', 'parity-matrix.json'), 'utf8'));
   const managementGolden = JSON.parse(readFileSync(join(root, 'test', 'goldens', 'b', 'management-actions.json'), 'utf8'));
-  const issues = validateMatrix(matrix, { testIndex: buildTestIndex(root), managementGolden });
+  const issues = validateMatrix(matrix, { testIndex: buildTestIndex(root), managementGolden, root });
   const junits = process.argv.flatMap((a, i) => (process.argv[i - 1] === '--junit' ? [readFileSync(a, 'utf8')] : []));
   const j = junits.length ? verifyAgainstJUnit(matrix, junits) : { issues: [], observed: 0 };
   const byStatus = {};

@@ -1,25 +1,26 @@
 /**
  * Real-binary harness (R8 §6.3, §10.1 layer 3, §10.4).
- * - The binary is the pinned codex 0.142.3 from the installed SDK vendor
+ * - The binary is the pinned codex 0.142.3 from the isolated test-only CLI vendor
  *   package; anything else fails resolution (no fallback to a PATH codex).
  * - Every case gets a fresh temporary HOME/CODEX_HOME, a scrubbed environment
  *   (no proxies, no real credentials, NO_PROXY for loopback) and a fake key.
  * - Raw JSONL transcripts, stderr and rollouts are copied to
  *   $DEV01_EVIDENCE_DIR/real-binary/<case>/ with the fake key redacted.
  */
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, statSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { JsonlRpcClient, type RpcMessage } from '../harness/jsonl-client.js';
 import { pins } from '../harness/pins.js';
+import { redactInstructions } from '../harness/mock-responses/server.mjs';
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
 // Current-run raw evidence goes to $DEV01_EVIDENCE_DIR/real-binary (default: git-ignored
-// artifacts/); committed snapshots under test/evidence/dev01/ are never rewritten.
+// artifacts/); generated snapshots are not committed.
 const EVIDENCE_ROOT = join(resolve(REPO, process.env.DEV01_EVIDENCE_DIR ?? join('artifacts', 'evidence')), 'real-binary');
 const PLATFORM_PACKAGES: Record<string, string> = {
   'darwin-arm64': '@openai/codex-darwin-arm64', 'darwin-x64': '@openai/codex-darwin-x64',
@@ -31,7 +32,7 @@ let resolved: { path: string; version: string } | undefined;
 export function resolveCodexBinary(): { path: string; version: string } {
   if (resolved) return resolved;
   const req = createRequire(import.meta.url);
-  const codexPkgPath = req.resolve('@openai/codex/package.json');
+  const codexPkgPath = req.resolve('codex-contract-cli/package.json');
   const codexPkg = JSON.parse(readFileSync(codexPkgPath, 'utf8')) as { version: string };
   if (codexPkg.version !== pins.codex) throw new Error(`@openai/codex ${codexPkg.version} installed, pinned ${pins.codex}`);
   const platPkg = PLATFORM_PACKAGES[`${process.platform}-${process.arch}`];
@@ -100,6 +101,7 @@ export class RealEnv {
     writeFileSync(t, this.scrub(h.transcript.map((x) => JSON.stringify(x)).join('\n') + '\n'));
     writeFileSync(e, this.scrub(h.stderr));
     assertLoopbackOnly(h.stderr, e);
+    assertLoopbackOnly(h.transcript.map(x => JSON.stringify(x.message)).join('\n'), t);
     return [relative(REPO, t), relative(REPO, e), relative(REPO, join(this.evidenceDir, 'mock-requests.jsonl'))];
   }
 
@@ -118,7 +120,7 @@ export class RealEnv {
     const dest = join(this.evidenceDir, 'rollouts');
     for (const f of findFiles(join(this.home, 'sessions')).filter((x) => x.endsWith('.jsonl'))) {
       mkdirSync(dest, { recursive: true });
-      writeFileSync(join(dest, f.split('/').at(-1)!), this.scrub(readFileSync(f, 'utf8')));
+      writeFileSync(join(dest, f.split('/').at(-1)!), this.scrub(readFileSync(f, 'utf8').split('\n').filter(Boolean).map(line => JSON.stringify(redactInstructions(JSON.parse(line)))).join('\n')+'\n'));
     }
     for (const h of this.handles) await h.client.close().catch(() => undefined);
     // The binary may still flush state (sqlite WAL, shell snapshots) right after exit.
@@ -278,18 +280,44 @@ send({ id: 2, method: 'account/login/start', params: { type: 'apiKey', apiKey: $
 send({ id: 3, method: 'thread/start', params: { cwd: ${JSON.stringify(env.cwd())}, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: false } });
 setInterval(() => {}, 1000);
 `);
-  const host = spawn(process.execPath, [script], { env: env.env(), cwd: env.root, stdio: 'ignore' });
-  const start = performance.now();
-  while (!existsSync(pidFile)) {
-    if (performance.now() - start > 10_000) throw new Error('hosted app-server did not start');
-    await new Promise((r) => setTimeout(r, 20));
-  }
-  await new Promise((r) => setTimeout(r, 50));
-  const childPid = Number(readFileSync(pidFile, 'utf8'));
-  return {
-    hostPid: host.pid!, childPid, logPath: relative(REPO, logPath),
-    cleanup: () => {
-      for (const pid of [childPid, host.pid!]) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
-    },
+  const host = spawn(process.execPath, [script], { env: env.env(), cwd: env.root, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+  const stderrPath = join(env.evidenceDir, 'host-child.stderr.log');
+  let stderr = '';
+  host.stderr!.setEncoding('utf8');
+  host.stderr!.on('data', (chunk: string) => { stderr += chunk; appendFileSync(stderrPath, env.scrub(chunk)); });
+  const cleanup = async () => {
+    await stopOwnedHost(host);
+    assertLoopbackOnly(stderr, stderrPath);
+    if (existsSync(logPath)) assertLoopbackOnly(readFileSync(logPath, 'utf8'), logPath);
   };
+  try {
+  const childPid = await awaitHostedPid(host, pidFile);
+  return { hostPid: host.pid!, childPid, logPath: relative(REPO, logPath), cleanup };
+  } catch (error) { await cleanup(); throw error; }
+}
+
+/** Only accepts our newly spawned detached child handle; never saved PIDs. */
+export async function stopOwnedHost(host: ChildProcess): Promise<void> {
+  if (!host.pid) return;
+  try { process.kill(process.platform === 'win32' ? host.pid : -host.pid, 'SIGKILL'); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  }
+  if (host.exitCode === null && host.signalCode === null) await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('owned host did not close')), 2000);
+    host.once('close', () => { clearTimeout(timer); resolve(); });
+  });
+}
+
+/** Startup failure always reaps the newly owned group before rejecting. */
+export async function awaitHostedPid(host: ChildProcess, pidFile: string, timeoutMs = 10_000): Promise<number> {
+  try {
+    const start = performance.now();
+    while (!existsSync(pidFile)) {
+      if (host.exitCode !== null || host.signalCode !== null || performance.now() - start > timeoutMs) throw new Error('hosted app-server did not start');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    if (!Number.isSafeInteger(pid) || pid < 1) throw new Error('invalid owned child PID');
+    return pid;
+  } catch (error) { await stopOwnedHost(host); throw error; }
 }

@@ -333,3 +333,7 @@ Apache-2.0
 Detailed private diagnostics require both `sdk.privateDiagnostics: true` and `sdk.privateDiagnosticsDetails: true` (both default off). Only bounded allowlisted metadata is retained, never arbitrary message text. The hardened writer requires POSIX no-follow/directory/nonblocking flags and a pre-existing local data directory; symlinked ancestors, hard links and files accessible to group/others are rejected. Missing required flags fail closed before creating files. Native Windows and network/FUSE filesystem compatibility are not established. See [private diagnostics](docs/private-diagnostics.md).
 
 Mention admission compatibility: an oversized routing UID array is scanned for an exact receiving-bot UID, and a legacy scalar UID is accepted only on exact equality. This does not relax the bounded prompt snapshot: rejected metadata remains `invalid` and does not claim an explicit mention. No substring matching is used. Rendered teammate spans at offset zero are preserved; a leading bot prefix can be removed when only later entities exist.
+
+## DEV-01 test harness
+
+See [the harness guide](docs/testing/dev01-harness.md) for development-only runtime pins, verification commands, CI artifacts and gate contracts.

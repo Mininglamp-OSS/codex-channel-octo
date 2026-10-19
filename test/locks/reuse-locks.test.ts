@@ -78,7 +78,7 @@ describe('transport locks', () => {
     await ws!.sendRecv({ messageId: '12', messageSeq: 2, fromUid: BOT, channelId: 'g1', channelType: 2, payload: { type: 1, event: { type: 'mention_pref_updated' } } });
     await ws!.sendRecv({ messageId: '13', messageSeq: 3, fromUid: BOT, channelId: 'g1', channelType: 2, payload: { type: 1, event: { type: 'group_md_updated' } } });
     await ws!.sendRecv({ messageId: '14', messageSeq: 4, fromUid: 'u_alice', channelId: 'g1', channelType: 2, payload: { type: 1, content: 'human' } });
-    await until(() => got.length === 3);
+    await until(() => got.length >= 3);
     expect(got.map((m) => m.message_id)).toEqual(['12', '13', '14']);
     // router layer: an ordinary self message never becomes a turn
     const router = new SessionRouter(routerConfig(), BOT);

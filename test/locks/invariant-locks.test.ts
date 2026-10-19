@@ -6,7 +6,7 @@
  * marks those rows pending.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, createCipheriv } from 'node:crypto';
@@ -131,7 +131,7 @@ describe('INV-P5 URL policy', () => {
     expect(seen.filter((s) => s.url.startsWith('http://93.184.216.35/')).every((s) => s.auth === null)).toBe(true);
     seen.length = 0;
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/admin' } })));
-    await expect(fetchWithRedirectGuard('http://93.184.216.34/x')).rejects.toThrow();
+    await expect(fetchWithRedirectGuard('http://93.184.216.34/x')).rejects.toThrow(/Refusing to fetch private\/local address/);
   });
   it.todo('INV-P5 (DEV-02): the wss policy is also applied on token-refresh reconnects and the wsUrl override');
 });
@@ -249,6 +249,7 @@ describe('INV-C compatibility', () => {
     await a.register();
     await expect(b.register()).rejects.toThrow(`Another instance is running (PID ${process.pid})`);
     b.releaseLock();
+    expect(existsSync(join(dataDir, 'gateway.lock')), 'other instance must not release lock').toBe(true);
     const lock = readFileSync(join(dataDir, 'gateway.lock'), 'utf8');
     expect(lock).toMatch(new RegExp(`^${process.pid} [0-9a-f-]{36}$`));
     a.releaseLock();

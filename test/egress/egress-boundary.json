@@ -1,5 +1,5 @@
 {
-  "description": "Outbound API module boundary for the egress bypass scan (R8 §3.5.5). Every export of the boundary is a guarded primitive unless classified here as infrastructure, read or helper. OctoEgress does not exist at DEV-01, so baselinePermittedCallers records the exact pre-egress call sites (R8 §0.3 item 2); DEV-06 moves them behind OctoEgress and shrinks this list to zero.",
+  "description": "Outbound API module boundary for the egress bypass scan (R8 \u00a73.5.5). Every export of the boundary is a guarded primitive unless classified here as infrastructure, read or helper. OctoEgress does not exist at DEV-01, so baselinePermittedCallers records the exact pre-egress call sites (R8 \u00a70.3 item 2); DEV-06 moves them behind OctoEgress and shrinks this list to zero.",
   "boundaryModules": [
     "src/octo/api.ts"
   ],
@@ -22,7 +22,7 @@
     },
     "registerBot": {
       "class": "infrastructure",
-      "reason": "transport register (R8 §3.5.5 explicit exception)"
+      "reason": "transport register (R8 \u00a73.5.5 explicit exception)"
     },
     "sendHeartbeat": {
       "class": "infrastructure",
@@ -69,47 +69,31 @@
     {
       "file": "src/index.ts",
       "symbol": "sendMessage",
-      "count": 4,
-      "lines": [
-        348,
-        702,
-        799,
-        817
-      ]
+      "count": 2
     },
     {
       "file": "src/index.ts",
       "symbol": "sendReadReceipt",
-      "count": 2,
-      "lines": [
-        360,
-        776
-      ]
+      "count": 2
     },
     {
       "file": "src/session-router.ts",
       "symbol": "sendMessage",
-      "count": 1,
-      "lines": [
-        602
-      ]
+      "count": 1
     },
     {
       "file": "src/stream-relay.ts",
       "symbol": "sendMessage",
-      "count": 1,
-      "lines": [
-        261
-      ]
+      "count": 2
     },
     {
       "file": "src/stream-relay.ts",
       "symbol": "sendTyping",
-      "count": 2,
-      "lines": [
-        173,
-        175
-      ]
+      "count": 2
     }
-  ]
+  ],
+  "analysisBudget": {
+    "cuts": 2,
+    "reachCuts": 4401
+  }
 }

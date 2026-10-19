@@ -18,6 +18,15 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 
+export function redactInstructions(value) {
+  if (Array.isArray(value)) return value.map(redactInstructions);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key,
+    ['instructions', 'base_instructions'].includes(key) && entry != null
+      ? { sha256: createHash('sha256').update(typeof entry === 'string' ? entry : JSON.stringify(entry)).digest('hex') }
+      : redactInstructions(entry)]));
+}
+
 const redactAuth = (v) => (v ? `${v.split(' ')[0]} <sha256:${createHash('sha256').update(v).digest('hex').slice(0, 12)}>` : null);
 
 /**
@@ -35,7 +44,7 @@ export async function startMockResponses({ script = [], logPath, port = 0 } = {}
     const entry = { transport, at: performance.now(), headers: { ...req.headers }, body, warmup: body?.generate === false };
     requests.push(entry);
     if (logPath) {
-      appendFileSync(logPath, JSON.stringify({ ...entry, headers: { ...entry.headers, authorization: redactAuth(entry.headers.authorization) } }) + '\n');
+      appendFileSync(logPath, JSON.stringify({ ...entry, headers: { ...entry.headers, authorization: redactAuth(entry.headers.authorization) }, body: redactInstructions(entry.body) }) + '\n');
     }
     return entry;
   };

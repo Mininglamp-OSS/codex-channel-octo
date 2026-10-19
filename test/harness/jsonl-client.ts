@@ -57,7 +57,7 @@ export class JsonlRpcClient {
     child.stdout!.setEncoding('utf8');
     child.stdout!.on('data', (d: string) => this.onData(d));
     child.stderr!.setEncoding('utf8');
-    child.stderr!.on('data', (d: string) => { this.stderr = (this.stderr + d).slice(-64_000); });
+    child.stderr!.on('data', (d: string) => { this.stderr += d; });
     this.exited = new Promise((resolve) => child.on('exit', (code, signal) => {
       this.exitInfo = { code, signal };
       for (const p of this.pending.values()) p.reject(new Error(`process exited (code=${code}, signal=${signal}) during ${p.method}`));
@@ -97,11 +97,14 @@ export class JsonlRpcClient {
     }
   }
 
-  private write(message: RpcMessage): void {
+  private write(message: RpcMessage): boolean {
     const raw = JSON.stringify(message);
-    this.transcript.push({ dir: 'out', at: performance.now(), message, raw, incarnation: this.incarnation });
-    if (this.exitInfo || !this.child.stdin!.writable) return;
-    this.child.stdin!.write(raw + '\n');
+    if (this.exitInfo || !this.child.stdin!.writable) return false;
+    this.child.stdin!.write(raw + '\n', error => {
+      if (error) { if (message.id !== undefined) { this.pending.get(message.id)?.reject(error); this.pending.delete(message.id); } return; }
+      this.transcript.push({ dir: 'out', at: performance.now(), message, raw, incarnation: this.incarnation });
+    });
+    return true;
   }
 
   request(method: string, params: unknown, opts: { timeoutMs?: number } = {}): Promise<unknown> {
@@ -114,7 +117,7 @@ export class JsonlRpcClient {
         resolve: (v) => { clearTimeout(timer); resolve(v); },
         reject: (e) => { clearTimeout(timer); reject(e); },
       });
-      this.write({ id, method, params });
+      try { if (!this.write({ id, method, params })) throw new Error('process is not writable'); } catch (e) { clearTimeout(timer); this.pending.delete(id); reject(e); }
     });
   }
 

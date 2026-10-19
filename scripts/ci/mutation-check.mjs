@@ -4,18 +4,17 @@
  * B defect or breaks a locked A behavior in a throwaway copy of the working tree;
  * the named lock tests must then FAIL with an executed assertion (not a load
  * error), and the unmutated copy must pass. Results are written to
- * test/evidence/dev01/mutation/.
+ * the ignored artifacts/mutation/ directory.
  *   node scripts/ci/mutation-check.mjs [mutationId ...]
  */
-import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-// Current-run output (default: git-ignored artifacts/mutation); the committed
-// snapshot under test/evidence/dev01/mutation is not rewritten.
+// Current-run output stays outside tracked test inputs.
 const OUT = resolve(ROOT, process.env.DEV01_MUTATION_DIR ?? join('artifacts', 'mutation'));
 
 export const MUTATIONS = [
@@ -58,8 +57,8 @@ export const MUTATIONS = [
 ];
 
 function copyTree() {
-  const dir = mkdtempSync(join(tmpdir(), 'dev01-mut-'));
-  cpSync(ROOT, dir, { recursive: true, filter: (src) => !/\/(node_modules|\.git|\.cache|dist|dist-test|coverage)(\/|$)/.test(src.slice(ROOT.length)) });
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'dev01-mut-')));
+  cpSync(ROOT, dir, { recursive: true, filter: (src) => !/\/(node_modules|\.git|\.cache|dist|dist-test|coverage|artifacts)(\/|$)/.test(src.slice(ROOT.length)) });
   symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'), 'dir');
   return dir;
 }
@@ -69,15 +68,27 @@ function runTests(dir, m) {
   try { report = JSON.parse(r.stdout.slice(r.stdout.indexOf('{'))); } catch { report = null; }
   const cases = (report?.testResults ?? []).flatMap((f) => f.assertionResults.map((a) => ({ file: f.name.slice(dir.length + 1), title: a.fullName, status: a.status, failure: (a.failureMessages ?? []).join('\n').split('\n')[0] })));
   const loadErrors = (report?.testResults ?? []).filter((f) => f.status === 'failed' && f.assertionResults.length === 0).map((f) => f.message);
-  return { exit: r.status, cases, loadErrors };
+  return { exit: r.status, signal: r.signal, cases, loadErrors };
 }
 
-const only = process.argv.slice(2);
+export function selectMutations(ids) {
+  const unknown = ids.filter(id => !MUTATIONS.some(m => m.id === id));
+  if (unknown.length) throw new Error(`unknown mutation: ${unknown.join(', ')}`);
+  const selected = MUTATIONS.filter(m => !ids.length || ids.includes(m.id));
+  if (!selected.length) throw new Error('empty mutation selection');
+  return selected;
+}
+export function mutationKilled(run) {
+  return run.exit === 1 && !run.signal && !run.loadErrors.length
+    && run.cases.some(c => c.status === 'failed' && /^(?:AssertionError|Error: expect\()/m.test(c.failure));
+}
+function main() {
+const selected = selectMutations(process.argv.slice(2));
 mkdirSync(OUT, { recursive: true });
 const summary = [];
 const control = copyTree();
 try {
-  for (const m of MUTATIONS.filter((x) => only.length === 0 || only.includes(x.id))) {
+  for (const m of selected) {
     const baseline = runTests(control, m);
     const dir = copyTree();
     try {
@@ -87,8 +98,8 @@ try {
       writeFileSync(path, text.replace(m.find, m.replace));
       const mutated = runTests(dir, m);
       const executedFailures = mutated.cases.filter((c) => c.status === 'failed');
-      const killed = executedFailures.length > 0 && mutated.loadErrors.length === 0;
-      const controlPassed = baseline.cases.some((c) => c.status === 'passed') && !baseline.cases.some((c) => c.status === 'failed') && baseline.loadErrors.length === 0;
+      const killed = mutationKilled(mutated);
+      const controlPassed = baseline.exit === 0 && !baseline.signal && baseline.cases.some((c) => c.status === 'passed') && !baseline.cases.some((c) => c.status === 'failed') && baseline.loadErrors.length === 0;
       const result = { id: m.id, rows: m.rows, file: m.file, filter: m.filter, controlPassed, killed, executedFailures, mutatedLoadErrors: mutated.loadErrors, controlCases: baseline.cases.length };
       writeFileSync(join(OUT, `${m.id}.json`), JSON.stringify(result, null, 2) + '\n');
       summary.push({ id: m.id, rows: m.rows, controlPassed, killed, failingCases: executedFailures.map((c) => c.title) });
@@ -101,4 +112,7 @@ try {
   rmSync(control, { recursive: true, force: true });
 }
 writeFileSync(join(OUT, 'summary.json'), JSON.stringify({ generatedAt: new Date().toISOString(), node: process.version, mutations: summary }, null, 2) + '\n');
-process.exit(summary.every((s) => s.controlPassed && s.killed) ? 0 : 1);
+process.exit(summary.length > 0 && summary.every((s) => s.controlPassed && s.killed) ? 0 : 1);
+
+}
+if (process.argv[1] === fileURLToPath(import.meta.url)) main();

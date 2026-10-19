@@ -82,7 +82,7 @@ describe('T12 / T15 transport timers (A@dd12980 behavior)', () => {
     s.disconnect();
   });
 
-  it('T15: three consecutive sub-5 s connections stop reconnecting and surface a rapid-disconnect error', async () => {
+  it('T15: three consecutive sub-5 s connections surface a refresh error; explicit disconnect stops reconnecting', async () => {
     const errors: string[] = [];
     const { s } = await open({ onError: (e) => errors.push(e.message) });
     for (let i = 0; i < 3; i++) {
@@ -91,13 +91,14 @@ describe('T12 / T15 transport timers (A@dd12980 behavior)', () => {
       w.close();
       vi.advanceTimersByTime(1);
       if (i < 2) {
-        vi.advanceTimersByTime(60_000);
+        vi.advanceTimersByTime(7_500);
         const next = wsState.instances.at(-1)!;
         next.emit('open');
         next.emit('message', connack());
       }
     }
     expect(errors).toContain('Connect failed: rapid disconnect detected');
+    s.disconnect();
     const count = wsState.instances.length;
     vi.advanceTimersByTime(300_000);
     expect(wsState.instances.length).toBe(count);
@@ -111,7 +112,7 @@ describe('T12 / T15 transport timers (A@dd12980 behavior)', () => {
       const w = wsState.instances.at(-1)!;
       w.close();
       vi.advanceTimersByTime(1);
-      vi.advanceTimersByTime(60_000);
+      vi.advanceTimersByTime(7_500);
     }
     const w = wsState.instances.at(-1)!;
     w.emit('open');
