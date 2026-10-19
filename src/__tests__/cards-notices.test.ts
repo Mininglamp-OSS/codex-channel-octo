@@ -198,7 +198,7 @@ describe('WP-05 / PN-01–09 notice sink', () => {
   let store: SessionStore, router: SessionRouter, group: GroupContext, relay: StreamRelay, config: Config;
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(sendMessage).mockResolvedValue(undefined);
+    vi.mocked(sendMessage).mockResolvedValue({ message_id: '123', client_msg_no: 'client-msg-001', message_seq: 1 });
     config=makeConfig({sdk:{toolProgress:true}});
     const adapter=createAdapter(':memory:');
     store=new SessionStore(adapter); store.init();
