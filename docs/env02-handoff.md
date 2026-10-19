@@ -171,3 +171,5 @@ Review reconciliation:
 Default configuration byte comparison is now against integrated main f3ca765 rather than superseded dd12980. It includes the current recovery-validation dependency graph. Isolated test fixture runs use no model/provider calls, no shared service writes and no production restarts. The ENV-01-only launcher remains explicitly pinned to CLI 0.142.3; current SDK 0.163.0 compatibility is separately tested through the managed synthetic CLI fixture, not represented as a rerun of the unavailable historical native binary.
 
 The PR remains draft. Live identity/channel inventory, real refresh/WS protocol, cursor inclusion, retention/deletion contract, and native 0.142.3 profile-smoke prerequisites still require their dedicated acceptance environment. This patch fixes code review defects; it does not claim those live gates are passed.
+
+CI follow-up: build checkout fetches full history so the pinned-main configuration comparison can read f3ca765. The first hosted run exposed the previous shallow checkout limitation; its failed attempt remains historical and is not counted as passing validation.
