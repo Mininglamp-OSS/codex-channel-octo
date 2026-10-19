@@ -10,6 +10,23 @@ function canonicalMessageId(value: unknown): string | undefined {
   return /^[1-9]\d{0,18}$/.test(id) && BigInt(id) <= 9223372036854775807n ? id : undefined;
 }
 
+/** Evidence must contain the server payload, never a fabricated replacement. */
+function decodePayload(value: unknown): Record<string, unknown> {
+  if (typeof value === 'string') {
+    if (!value.length || value.length > 256 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value) ||
+        Buffer.from(value, 'base64').toString('base64') !== value) {
+      throw new Error('Readback incomplete: invalid/oversized payload');
+    }
+    try { value = JSON.parse(Buffer.from(value, 'base64').toString('utf8')); }
+    catch { throw new Error('Readback incomplete: malformed payload'); }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      Buffer.byteLength(JSON.stringify(value)) > 256 * 1024) {
+    throw new Error('Readback incomplete: invalid/oversized payload');
+  }
+  return value as Record<string, unknown>;
+}
+
 export interface EvidenceOptions {
   apiUrl: string;
   botToken: string;
@@ -48,7 +65,7 @@ export async function readback(options: EvidenceOptions): Promise<ReadbackEviden
   const cursorMode = options.cursorMode ?? 'inclusive';
   const lowWatermark = options.lowWatermark ?? 1;
   const maxPages = options.maxPages ?? 10000;
-  if (!['inclusive', 'exclusive'].includes(cursorMode) || !isAllowedApiUrl(options.apiUrl) || !options.channelId || ![1, 2].includes(options.channelType) ||
+  if (!['inclusive', 'exclusive'].includes(cursorMode) || !isAllowedApiUrl(options.apiUrl) || typeof options.botToken !== 'string' || !options.botToken || !options.channelId || ![1, 2].includes(options.channelType) ||
       !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000 ||
       !Number.isSafeInteger(lowWatermark) || lowWatermark < 1 ||
       !Number.isSafeInteger(maxPages) || maxPages < 1) throw new Error('Invalid evidence readback options');
@@ -67,6 +84,7 @@ export async function readback(options: EvidenceOptions): Promise<ReadbackEviden
       throw new Error('Readback incomplete: malformed or oversized page');
     }
     for (const message of response.messages) {
+      decodePayload(message?.payload);
       if (!message || typeof message !== 'object' || !canonicalMessageId(message.message_id)) {
         throw new Error('Readback incomplete: invalid message identity');
       }
@@ -104,14 +122,7 @@ export async function readback(options: EvidenceOptions): Promise<ReadbackEviden
       }
       sequences.add(seq); ids.add(messageId);
       next = Math.min(next, seq);
-      let payload = row.payload ?? {};
-      if (typeof payload === 'string') {
-        if (payload.length > 256 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload)) {
-          throw new Error('Readback incomplete: invalid/oversized payload');
-        }
-        try { payload = JSON.parse(Buffer.from(payload, 'base64').toString('utf8')); }
-        catch { throw new Error('Readback incomplete: malformed payload'); }
-      }
+      const payload = decodePayload(row.payload);
       if (seq >= lowWatermark) messages.push({ message_seq: seq, messageId,
         senderUid: redact(row.from_uid, options.botToken) as string, serverTimestamp: Number(row.timestamp),
         channelId: options.channelId, channelType: options.channelType,
@@ -136,7 +147,8 @@ function redact(value: unknown, secret: string): unknown {
   if (typeof value === 'string') return value.split(secret).join('[REDACTED]')
     .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]').replace(/\b(?:bf_|app_|sk-)[A-Za-z0-9_-]+/g, '[REDACTED]');
   if (Array.isArray(value)) return value.map(v => redact(v, secret));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) =>
-    [key, /authorization|token|secret|password|api.?key/i.test(key) ? '[REDACTED]' : redact(item, secret)]));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !/authorization|token|secret|password|api.?key/i.test(key) && redact(key, secret) === key)
+    .map(([key, item]) => [key, redact(item, secret)]));
   return value;
 }

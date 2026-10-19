@@ -106,3 +106,20 @@ it('fails closed on a real gap under inclusive mode', async () => {
   mock([{ messages: [row(3)] }, { messages: [row(3), row(1)] }]);
   await expect(readback({ ...options, cursorMode: 'inclusive' })).rejects.toThrow('gap');
 });
+
+it.each([undefined, null, 42, true, [], 'null', Buffer.from('null').toString('base64'), Buffer.from('[]').toString('base64'), Buffer.from('42').toString('base64')])('rejects missing or unsupported payload %j', async payload => {
+  mock([{ messages: [row(1)] }, { messages: [{ ...row(1), payload }] }]);
+  await expect(readback(options)).rejects.toThrow(/payload/);
+});
+it('also rejects missing payload in the authoritative probe', async () => {
+  const calls = mock([{ messages: [{ ...row(1), payload: null }] }]);
+  await expect(readback(options)).rejects.toThrow(/payload/);
+  expect(calls).toHaveLength(1);
+});
+it('omits credential keys recursively without merging colliding redacted keys', async () => {
+  const payload = { content: 'retained', nested: { 'prefix-fixture-token-suffix': 'hidden', 'sk-example': 'hidden2', sessionToken: 'hidden3', ordinary: 'fixture-token' } };
+  mock([{ messages: [row(1)] }, { messages: [{ ...row(1), payload }] }]);
+  const result = await readback(options);
+  expect(result.messages[0].payload).toEqual({ content: 'retained', nested: { ordinary: '[REDACTED]' } });
+  expect(JSON.stringify(result)).not.toMatch(/fixture-token|sk-example|sessionToken|hidden/);
+});

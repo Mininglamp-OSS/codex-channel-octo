@@ -14,8 +14,9 @@ export function sanitize(value, secrets = []) {
       .replace(/\b(?:bf_|app_|sk-)[a-zA-Z0-9_-]+/g, '[REDACTED]');
   }
   if (Array.isArray(value)) return value.map(v => sanitize(v, secrets));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) =>
-    [k, /authorization|token|secret|password|api.?key/i.test(k) ? '[REDACTED]' : sanitize(v, secrets)]));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
+    .filter(([k]) => !/authorization|token|secret|password|api.?key/i.test(k) && sanitize(k, secrets) === k)
+    .map(([k, v]) => [k, sanitize(v, secrets)]));
   return value;
 }
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -118,16 +119,21 @@ export async function startCapture(options) {
     const url = new URL(req.url, 'http://127.0.0.1');
     const route = url.pathname;
     const send = ['/v1/bot/sendMessage', '/v1/bot/message/edit'].includes(route);
-    const post = ['/v1/bot/sendMessage', '/v1/bot/message/edit', '/v1/bot/register', '/v1/bot/heartbeat', '/v1/bot/messages/sync'].includes(route);
-    const group = route.match(/^\/v1\/bot\/groups\/([^/]+)\/members$/);
+    const post = ['/v1/bot/sendMessage', '/v1/bot/message/edit', '/v1/bot/register', '/v1/bot/heartbeat', '/v1/bot/messages/sync', '/v1/bot/typing', '/v1/bot/readReceipt'].includes(route);
+    const group = route.match(/^\/v1\/bot\/groups\/([^/]+)\/(?:members|mention_pref|md|threads\/[^/]+\/md)$/);
+    const upload = route === '/v1/bot/upload/credentials';
+    const userInfo = route === '/v1/bot/user/info';
+    const queryKeys = [...url.searchParams.keys()];
+    const singleQuery = key => queryKeys.length === 1 && queryKeys[0] === key && Boolean(url.searchParams.get(key)?.trim());
     const requestOrdinal = ++ordinal;
     const requestAt = Date.now();
     const refuse = (status, reason) => {
       emit({ event: 'refused', requestOrdinal, requestAt, route, method: req.method, reason, httpStatus: status, forwarded: false });
       res.writeHead(status); res.end('{}');
     };
-    const permittedQuery = route === '/v1/bot/register' && url.search === '?force_refresh=true';
-    if ((url.search && !permittedQuery) || (!post && !group) || req.method !== (post ? 'POST' : 'GET')) {
+    const permittedQuery = route === '/v1/bot/register' && url.search === '?force_refresh=true' ||
+      upload && singleQuery('filename') || userInfo && singleQuery('uid');
+    if ((url.search && !permittedQuery) || ((upload || userInfo) && !permittedQuery) || (!post && !group && !upload && !userInfo) || req.method !== (post ? 'POST' : 'GET')) {
       refuse(404, 'unsupported-route-method-or-query'); return;
     }
     if (!equal(String(req.headers.authorization ?? ''), `Bearer ${options.token}`)) { refuse(401, 'unauthorized'); return; }
@@ -152,6 +158,7 @@ export async function startCapture(options) {
       if (send) emit({ event: 'outcome', requestOrdinal, transportOutcome: 'failed', httpStatus: 400, forwarded: false });
       refuse(400, 'malformed-body'); return;
     }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) { refuse(400, 'malformed-body'); return; }
     let groupNo;
     try { if (group) groupNo = decodeURIComponent(group[1]); }
     catch { refuse(400, 'malformed-group-target'); return; }
@@ -160,9 +167,9 @@ export async function startCapture(options) {
       senderUid, requestBodyHash: hash(raw), clientMsgNo: body.client_msg_no,
       fixtureMarker: typeof body.payload?.content === 'string'
         ? body.payload.content.match(/\[DLY [a-zA-Z0-9_= /.-]{1,400}\]/)?.[0] : undefined };
-    if (send) emit({ ...record, event: 'request', bytesReceived: size });
+    emit({ ...record, event: 'request', method: req.method, bytesReceived: size });
     // No send/readback or membership call can accidentally escape the test inventory.
-    if ((send || route.endsWith('/messages/sync')) && !options.allowedTargets.some(t => t.channelId === target.channelId && t.channelType === target.channelType) ||
+    if ((send || ['/v1/bot/messages/sync', '/v1/bot/typing', '/v1/bot/readReceipt'].includes(route)) && !options.allowedTargets.some(t => t.channelId === target.channelId && t.channelType === target.channelType) ||
         group && !options.allowedTargets.some(t => t.channelType === 2 && t.channelId === groupNo)) {
       if (send) emit({ event: 'outcome', requestOrdinal, responseAt: Date.now(), httpStatus: 403, transportOutcome: 'failed', forwarded: false });
       refuse(403, 'target-outside-inventory'); return;
@@ -180,6 +187,10 @@ export async function startCapture(options) {
         responseChunks.push(chunk);
       }
       let text = Buffer.concat(responseChunks).toString('utf8');
+      if (upload && response.ok) {
+        const uploaded = parseOctoJson(text);
+        retainCredentials(uploaded?.credentials, secretValues, false);
+      }
       if (route === '/v1/bot/register' && response.ok) {
         const registered = parseOctoJson(text);
         retainCredentials(registered, secretValues);
@@ -195,7 +206,7 @@ export async function startCapture(options) {
       const validated = confirmation(route, text, body);
       outcome = response.ok && validated.responseMessageId ? 'confirmed'
         : [400, 401, 403, 404, 422, 429].includes(response.status) ? 'failed' : 'unknown';
-      if (send) emit({ event: 'outcome', requestOrdinal, transportOutcome: outcome,
+      emit({ event: 'outcome', route, requestOrdinal, transportOutcome: send ? outcome : (response.ok ? 'completed' : 'failed'),
         httpStatus: response.status, responseAt: Date.now(), ...validated,
         responseBodyHash: hash(text), bytesForwarded: size });
       res.writeHead(response.status, { 'Content-Type': 'application/json' });

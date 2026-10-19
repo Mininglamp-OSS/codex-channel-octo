@@ -159,10 +159,10 @@ it('redacts returned and rotated credentials from REST metadata, markers and WS 
       headers: { Authorization: 'Bearer fixture-secret' }, body: JSON.stringify({ channel_id: 'target', channel_type: 2,
         client_msg_no: `prefix-${secret}-suffix`, payload: { content: `[DLY f=${secret} s=000001/000001]` } }) });
     expect(records.filter(r => r.event === 'ws-frame')).toHaveLength(4);
-    expect(records.filter(r => r.event === 'request')).toHaveLength(secrets.length);
+    expect(records.filter(r => r.event === 'request' && r.route === '/v1/bot/sendMessage')).toHaveLength(secrets.length);
     expect(paths.slice(0, 2)).toEqual(['/v1/bot/register', '/v1/bot/register?force_refresh=true']);
     for (const secret of secrets) expect(JSON.stringify(records)).not.toContain(secret);
-    expect(records.filter(r => r.event === 'request').every(r => String(r.clientMsgNo).includes('[REDACTED]'))).toBe(true);
+    expect(records.filter(r => r.event === 'request' && r.route === '/v1/bot/sendMessage').every(r => String(r.clientMsgNo).includes('[REDACTED]'))).toBe(true);
     if (process.env.ENV02_EVIDENCE_DIR) writeFileSync(`${process.env.ENV02_EVIDENCE_DIR}/rotated-credentials-fixture.json`, JSON.stringify(records, null, 2));
   } finally { socket?.terminate(); await capture.close(); await new Promise<void>(resolve => remote.close(() => resolve())); }
 });
@@ -226,4 +226,56 @@ it.each(['/api/octo', '/api/octo/'])('preserves deployment prefix %s for support
     expect(records).toContainEqual(expect.objectContaining({ event: 'outcome', transportOutcome: 'confirmed', responseMessageId: '123' }));
     expect(JSON.stringify(records)).not.toMatch(/fixture-secret|fixture-im-token/);
   } finally { await capture.close(); }
+});
+
+it('omits credential-bearing keys recursively while retaining safe metadata', () => {
+  const input = { nested: { 'prefix-fixture-secret-suffix': 1, 'bf_example': 2, authorization: 3, ordinary: 'fixture-secret' } };
+  expect(sanitize(input, ['fixture-secret'])).toEqual({ nested: { ordinary: '[REDACTED]' } });
+});
+it('forwards real package clients for all auxiliary REST operations and records each response', async () => {
+  const api = await import('../octo/api.js');
+  const paths: string[] = [];
+  const upstream = createServer(async (req, res) => {
+    for await (const chunk of req) { void chunk; }
+    paths.push(req.url!);
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url?.includes('mention_pref')) res.end('{"effective":true}');
+    else if (req.url?.endsWith('/md')) res.end('{"content":"fixture document","version":1}');
+    else if (req.url?.endsWith('/members')) res.end('{"members":[{"uid":"member","name":"fixture","role":1}]}');
+    else if (req.url?.includes('/user/info')) res.end('{"uid":"member","name":"fixture"}');
+    else if (req.url?.includes('/upload/credentials')) res.end(JSON.stringify({ bucket: 'fixture', region: 'fixture', key: 'fixture-key', credentials: { tmpSecretId: 'rotated-id', tmpSecretKey: 'rotated-key', sessionToken: 'rotated-session' } }));
+    else res.end('{}');
+  });
+  servers.push(upstream);
+  await new Promise<void>(r => upstream.listen(0, '127.0.0.1', r));
+  const records: Record<string, unknown>[] = [];
+  const capture = await startCapture({ upstream: `http://127.0.0.1:${(upstream.address() as { port: number }).port}`,
+    token: 'fixture-secret', fixtureOnly: true, allowedTargets: [{ channelId: 'target', channelType: 2 }], record: (r: Record<string, unknown>) => records.push(r) });
+  servers.push(capture.server);
+  const params = { apiUrl: capture.url, botToken: 'fixture-secret', groupNo: 'target', channelId: 'target', channelType: 2 as const };
+  await api.sendTyping(params);
+  await api.sendReadReceipt({ ...params, messageIds: ['123'] });
+  expect(await api.getMentionPreference(params)).toBe(true);
+  expect((await api.getGroupMd(params)).content).toBe('fixture document');
+  expect((await api.getThreadMd({ ...params, shortId: 'thread / one' })).version).toBe(1);
+  expect(await api.getGroupMembers(params)).toHaveLength(1);
+  expect((await api.fetchUserInfo({ ...params, uid: 'member / one' }))?.name).toBe('fixture');
+  expect((await api.getUploadCredentials({ ...params, filename: 'file / one.txt' })).credentials.tmpSecretKey).toBe('rotated-key');
+  expect(paths).toEqual(['/v1/bot/typing', '/v1/bot/readReceipt', '/v1/bot/groups/target/mention_pref', '/v1/bot/groups/target/md', '/v1/bot/groups/target/threads/thread%20%2F%20one/md', '/v1/bot/groups/target/members', '/v1/bot/user/info?uid=member%20%2F%20one', '/v1/bot/upload/credentials?filename=file%20%2F%20one.txt']);
+  expect(records.filter(r => r.event === 'request')).toHaveLength(8);
+  expect(records.filter(r => r.event === 'outcome').map(r => r.transportOutcome)).toEqual(Array(8).fill('completed'));
+  // Upload credentials must remain redacted if echoed into later metadata.
+  await fetch(capture.url + '/v1/bot/typing', { method: 'POST', headers: { Authorization: 'Bearer fixture-secret' }, body: JSON.stringify({ channel_id: 'rotated-key', channel_type: 2 }) });
+  expect(JSON.stringify(records)).not.toMatch(/rotated-key|rotated-session|rotated-id|fixture-secret/);
+  const count = paths.length;
+  for (const path of ['/v1/bot/groups/outside/md', '/v1/bot/groups/outside/threads/id/md', '/v1/bot/groups/outside/mention_pref']) {
+    expect((await fetch(capture.url + path, { headers: { Authorization: 'Bearer fixture-secret' } })).status).toBe(403);
+  }
+  for (const path of ['/v1/bot/user/info', '/v1/bot/upload/credentials?filename=x&extra=y', '/v1/bot/user/info?uid=x&uid=y']) {
+    expect((await fetch(capture.url + path, { headers: { Authorization: 'Bearer fixture-secret' } })).status).toBe(404);
+  }
+  for (const path of ['/v1/bot/typing', '/v1/bot/readReceipt']) {
+    expect((await fetch(capture.url + path, { method: 'POST', headers: { Authorization: 'Bearer fixture-secret' }, body: JSON.stringify({ channel_id: 'outside', channel_type: 2 }) })).status).toBe(403);
+  }
+  expect(paths).toHaveLength(count);
 });
