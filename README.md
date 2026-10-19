@@ -296,7 +296,8 @@ After that, a bot's group conversation can be resumed in your terminal with `cod
 ## Development
 
 ```bash
-npm install
+npm ci              # reproduce the committed dependency lock
+npm run runtime:update  # refresh SDK + paired CLI to latest stable
 npm run build       # compile TypeScript and copy/chmod the JSONL proxy
 npm test            # vitest
 npm run lint        # eslint --max-warnings 0
@@ -306,6 +307,24 @@ npm run type-check  # tsc --noEmit
 ### Private operator diagnostics (opt-in)
 
 Set `sdk.privateDiagnostics: true` to retain local failure metadata correlated with task IDs. SDK message text is fingerprinted, never stored; public replies remain unchanged. Records use owner-only rotated files (three files of at most 1 MiB each). See [privacy, rotation, and interpretation](docs/private-diagnostics.md).
+
+### Codex runtime versions
+
+Fresh installs of the published adapter resolve `@openai/codex-sdk` from npm's stable `latest` tag. The SDK selects its own paired CLI; an unrelated globally installed `codex` is not used. The committed lockfile pins the tested pair for reproducible development builds (`npm ci`). An existing lockfile can keep an old runtime even after `npm install`.
+
+In a source/packaging checkout, explicitly refresh the runtime before testing and packaging:
+
+```bash
+npm ci
+npm run runtime:update
+npm run build
+npm test
+npm pack
+```
+
+`runtime:update` runs `npm update @openai/codex-sdk` and then `runtime:check`; it updates the checkout's lockfile while preserving the `latest` dependency tag. `runtime:check` resolves the CLI from the installed SDK, launches its actual `--version`, and reports SDK/CLI/native versions. It rejects missing or mismatched runtimes without invoking inference or requiring authentication. Do not copy old node_modules into a fresh install and assume the runtime was upgraded. This command changes dependencies; use a staging checkout and validate before deploying. It does not restart the gateway.
+
+CI covers both the committed lock and a refreshed latest stable runtime on Node 22/24, including strict types, native CLI startup, the real SDK/proxy/process regression suite and packaging. Future latest releases require a passing compatibility lane; an update failure must be reported, not silently presented as a successful upgrade. To deliberately reproduce an older release, use that release's committed lockfile. Never independently override the CLI version selected by the SDK.
 
 ## License
 
