@@ -1057,3 +1057,148 @@ describe("N4: the initial-send binding uses the current policy decision", () => 
     expect(ack.mock.calls[0][0]).toMatchObject({ policyAllows: false });
   });
 });
+
+// ─── XIN-2267 R2: bind failure after an accepted send ───────────────────────
+
+describe("E2: an accepted send whose binding fails is persisted ambiguous and suspends its capability", () => {
+  /** After card 1 is decided, the same capability is refused and another capability still works. */
+  async function assertFenced(r: Rig, sendsBefore: number) {
+    expect(r.queue.suspendedCapabilities()).toEqual(["automatic"]);
+    expect(r.queue.open(r.spec())).toBe("suspended");
+    await r.time.advance(5000);
+    expect(r.net.sends()).toHaveLength(sendsBefore);
+    const display = r.spec({ kind: "display", capability: "display" });
+    expect(r.queue.open(display)).toBe("opened");
+    r.queue.enqueue(display.cardId, frame("display"));
+    await r.time.advance(800);
+    expect(r.net.sends()).toHaveLength(sendsBefore + 1);
+    expect(r.queue.status(display.cardId)?.phase).toBe("active");
+  }
+
+  it.each([false, true])("ackMessage throws (markSendAmbiguous throws: %s)", async (persistThrows) => {
+    const r = rig();
+    vi.spyOn(r.store, "ackMessage").mockImplementationOnce(() => { throw new Error("storage"); });
+    const ambiguous = vi.spyOn(r.store, "markSendAmbiguous");
+    if (persistThrows) ambiguous.mockImplementationOnce(() => { throw new Error("storage"); });
+    const s = r.spec();
+    r.queue.open(s);
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    expect(r.net.sends()).toHaveLength(1);
+    expect(ambiguous).toHaveBeenCalledTimes(1);
+    expect(r.queue.status(s.cardId)).toMatchObject({ phase: "closed", outcome: "ambiguous" });
+    expect(storeRow(r, s.cardId)?.state).toBe(persistThrows ? "sending" : "ambiguous");
+    await assertFenced(r, 1);
+  });
+
+  it.each([false, true])("the server returns an already-bound message id: real identity_conflict (markSendAmbiguous throws: %s)",
+    async (persistThrows) => {
+      const r = rig();
+      const first = await activeCard(r);
+      const boundId = r.queue.status(first)?.messageId as string;
+      const ack = vi.spyOn(r.store, "ackMessage");
+      const ambiguous = vi.spyOn(r.store, "markSendAmbiguous");
+      if (persistThrows) ambiguous.mockImplementationOnce(() => { throw new Error("storage"); });
+      const s = r.spec();
+      r.queue.open(s);
+      r.net.reply({ status: 200, body: { message_id: boundId, client_msg_no: s.clientMsgNo } });
+      r.queue.enqueue(s.cardId, frame("b"));
+      await r.time.advance(800);
+      expect(r.net.sends()).toHaveLength(2);
+      expect(ack.mock.results[0]).toMatchObject({ type: "return", value: { kind: "identity_conflict" } });
+      expect(ambiguous).toHaveBeenCalledTimes(1);
+      expect(r.queue.status(s.cardId)).toMatchObject({ phase: "closed", outcome: "ambiguous" });
+      expect(storeRow(r, s.cardId)?.state).toBe(persistThrows ? "sending" : "ambiguous");
+      expect(r.queue.status(first)?.phase).toBe("active");
+      await assertFenced(r, 2);
+    });
+
+  it.each([false, true])("the reserved row is no longer bindable: real invalid_state (markSendAmbiguous throws: %s)",
+    async (persistThrows) => {
+      const r = rig();
+      const ack = vi.spyOn(r.store, "ackMessage");
+      const ambiguous = vi.spyOn(r.store, "markSendAmbiguous");
+      if (persistThrows) ambiguous.mockImplementationOnce(() => { throw new Error("storage"); });
+      const s = r.spec();
+      r.queue.open(s);
+      r.net.reply({ hold: true });
+      r.queue.enqueue(s.cardId, frame("a"));
+      await r.time.advance(800);
+      // The row reaches a terminal state while the accepted send is still in flight.
+      const storeCardId = r.queue.status(s.cardId)?.storeCardId as string;
+      expect(r.store.markSendFailed(storeCardId)).toEqual({ kind: "updated" });
+      r.net.release();
+      await r.time.advance(0);
+      expect(r.net.sends()).toHaveLength(1);
+      expect(ack.mock.results[0]).toMatchObject({ type: "return", value: { kind: "invalid_state" } });
+      expect(ambiguous).toHaveBeenCalledTimes(1);
+      expect(r.queue.status(s.cardId)).toMatchObject({ phase: "closed", outcome: "ambiguous" });
+      // The store refuses to move a terminal row; the in-memory fence still applies.
+      expect(storeRow(r, s.cardId)?.state).toBe("error");
+      await assertFenced(r, 1);
+    });
+});
+
+// ─── XIN-2267 R2: close or cancel in the microtask gap ──────────────────────
+
+describe("NB1: close or cancel right after the debounce wait never reports a store failure", () => {
+  function gapRig(depth: number, action: "close" | "cancel") {
+    const r = rig();
+    const reserve = vi.spyOn(r.store, "reserveMessage");
+    let armed = false;
+    let fired = false;
+    const act = () => {
+      if (action === "close") queue.close({ reason: "shutdown", deadlineMono: r.time.now() + 3000, signal: new AbortController().signal });
+      else queue.cancelNonterminal("turn-1");
+    };
+    const timers = {
+      setTimeout(callback: () => void, delayMs: number): unknown {
+        return r.time.timers.setTimeout(() => {
+          callback();
+          if (!armed || fired) return;
+          fired = true;
+          let chain = Promise.resolve();
+          for (let i = 1; i < depth; i++) chain = chain.then(() => undefined);
+          if (depth === 0) act(); else void chain.then(act);
+        }, delayMs);
+      },
+      clearTimeout(handle: unknown): void { r.time.timers.clearTimeout(handle); },
+    };
+    const queue = createWriteQueue({ api: r.api, store: r.store, policy: r.policy, pacer: r.pacer, clock: r.time.clock, timers });
+    const s = r.spec();
+    queue.open(s);
+    armed = true;
+    queue.enqueue(s.cardId, frame("a"));
+    return { r, queue, s, reserve };
+  }
+
+  it.each([
+    [0, "close"], [1, "close"], [2, "close"], [3, "close"],
+    [0, "cancel"], [1, "cancel"], [2, "cancel"], [3, "cancel"],
+  ] as const)("depth %i microtasks, %s", async (depth, action) => {
+    const { r, queue, s, reserve } = gapRig(depth, action);
+    await r.time.advance(800);
+    await r.time.advance(3000);
+    const status = queue.status(s.cardId);
+    expect(status?.outcome).not.toBe("store_failed");
+    if (status?.outcome === "skipped") {
+      expect(reserve).not.toHaveBeenCalled();
+      expect(r.net.sends()).toHaveLength(0);
+    } else {
+      // The send had already started before the fence: exactly one reservation and one transport.
+      expect(reserve).toHaveBeenCalledTimes(1);
+      expect(r.net.sends()).toHaveLength(1);
+    }
+  });
+
+  it("the one-microtask gap specifically yields skipped with zero reservations and sends", async () => {
+    for (const action of ["close", "cancel"] as const) {
+      const { r, queue, s, reserve } = gapRig(1, action);
+      await r.time.advance(800);
+      await r.time.advance(3000);
+      expect(queue.status(s.cardId)).toMatchObject({ phase: "closed", outcome: "skipped" });
+      expect(reserve).not.toHaveBeenCalled();
+      expect(r.net.sends()).toHaveLength(0);
+    }
+  });
+});

@@ -304,3 +304,74 @@ describe("T20: cooldown telemetry through the injected sink", () => {
     expect(time.pending()).toBe(0);
   });
 });
+
+// ─── XIN-2267 R2: timer arm overflow ────────────────────────────────────────
+
+describe("E3: every timer arm stays within the native timer range", () => {
+  const MAX_ARM = 2_147_483_647;
+
+  /** Models Node's native rule: a delay above 2^31-1 fires after 1 ms (and is flagged here). */
+  function overflowModel(time: ManualTime) {
+    const arms: number[] = [];
+    const timers = {
+      setTimeout(callback: () => void, delayMs: number): unknown {
+        arms.push(delayMs);
+        return time.timers.setTimeout(callback, delayMs > MAX_ARM ? 1 : delayMs);
+      },
+      clearTimeout(handle: unknown): void { time.timers.clearTimeout(handle); },
+    };
+    return { timers, arms, overflows: () => arms.filter((d) => d > MAX_ARM).length };
+  }
+
+  it("a ten-digit delta Retry-After without telemetry arms no overflowing timer and never spins", async () => {
+    const time = manualTime();
+    const model = overflowModel(time);
+    const pacer = createPacer({ clock: time.clock, timers: model.timers, rng: () => 0 });
+    const t0 = time.now();
+    const retryAfterMs = parseRetryAfter("9999999999", time.wall.nowUtcMs());
+    expect(retryAfterMs).toBe(9_999_999_999_000);
+    pacer.observe429(A, retryAfterMs, t0);
+    expect(pacer.inspect(A)?.eligibleAtMono).toBe(t0 + 9_999_999_999_000);
+    await time.advance(100);
+    expect(model.arms).toHaveLength(1);
+    // Ten full arms of virtual time: exactly one re-arm per elapsed arm, never an overflow.
+    for (let i = 0; i < 10; i++) await time.advance(MAX_ARM);
+    expect(model.overflows()).toBe(0);
+    expect(model.arms.length).toBeLessThanOrEqual(11);
+    expect(model.arms.every((d) => d <= MAX_ARM)).toBe(true);
+    expect(pacer.gate(A)).toEqual({ eligible: false, eligibleAtMono: t0 + 9_999_999_999_000 });
+  });
+
+  it("a far-future HTTP-date beyond 24.8 days is honoured untruncated with bounded arms", async () => {
+    const time = manualTime();
+    const model = overflowModel(time);
+    const pacer = createPacer({ clock: time.clock, timers: model.timers, rng: () => 0 });
+    const t0 = time.now();
+    const deltaMs = 30 * 24 * 3_600_000;
+    const date = new Date(time.wall.nowUtcMs() + deltaMs).toUTCString();
+    const retryAfterMs = parseRetryAfter(date, time.wall.nowUtcMs());
+    expect(retryAfterMs).toBe(deltaMs);
+    pacer.observe429(A, retryAfterMs, t0);
+    const woke: number[] = [];
+    pacer.subscribeWake(A, () => woke.push(time.now()));
+    await time.advanceTo(t0 + deltaMs - 1);
+    expect(pacer.gate(A).eligible).toBe(false);
+    expect(woke).toEqual([]);
+    await time.advanceTo(t0 + deltaMs);
+    expect(pacer.gate(A).eligible).toBe(true);
+    expect(woke).toEqual([t0 + deltaMs]);
+    expect(model.overflows()).toBe(0);
+    expect(model.arms.length).toBe(Math.ceil(deltaMs / MAX_ARM));
+  });
+
+  it("the telemetry slice path is also capped and overflow-free", async () => {
+    const time = manualTime();
+    const model = overflowModel(time);
+    const sink = createTelemetrySink({ wall: time.wall, mono: time.clock, write: () => undefined });
+    const pacer = createPacer({ clock: time.clock, timers: model.timers, rng: () => 0, telemetry: { sink, originRef: originRefOf } });
+    pacer.observe429(A, 9_999_999_999_000, time.now());
+    await time.advance(5 * 60_000);
+    expect(model.overflows()).toBe(0);
+    expect(model.arms.every((d) => d <= COOLDOWN_SLICE_MS)).toBe(true);
+  });
+});
