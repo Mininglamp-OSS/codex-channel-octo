@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { createCardApi, type StaleSequenceMatcher } from "../cards/api.js";
+import { createCardApi, serializeEditAuthored, type StaleSequenceMatcher } from "../cards/api.js";
 import type { BotRef, Limits, PolicySnapshot, RegistryData, WireState } from "../cards/contracts.js";
 import { migrateCardSchema } from "../cards/migrations.js";
 import { normalizeOrigin } from "../cards/origin.js";
@@ -444,7 +444,13 @@ describe("T11: policy is re-authorized after every wait", () => {
     r.realPolicy.invalidate("bot_setting");
     await r.time.advance(11_000);
     expect(r.net.edits()).toHaveLength(1);
-    expect(r.queue.status(s.cardId)).toMatchObject({ phase: "closed", outcome: "policy" });
+    // Only the write is dropped; the acknowledged card stays open for an independently authorized terminal.
+    expect(r.queue.status(s.cardId)).toMatchObject({ phase: "active" });
+    const result = r.queue.finalize(s.cardId, done());
+    await r.time.advance(1000);
+    // Still revoked: the terminal is re-authorized on its own and denied, with no closure exception.
+    expect(await result).toEqual({ outcome: "policy" });
+    expect(r.net.edits()).toHaveLength(1);
   });
 
   it("checks authorization after the debounce: a denial before the first send sends nothing", async () => {
@@ -607,18 +613,38 @@ describe("T15: ambiguous initial sends are never resent", () => {
 });
 
 describe("T16: §5.3 classification is preserved", () => {
-  it.each([
-    [401, "policy"], [403, "policy"], [404, "gone"],
-  ] as const)("edit %i -> %s without retry and the card is closed", async (status, outcome) => {
+  it("edit 404 -> gone without retry and the card record is closed", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ status: 404 });
+    r.queue.enqueue(id, frame("p"));
+    await r.time.advance(2000);
+    expect(r.net.edits()).toHaveLength(1);
+    expect(r.queue.status(id)).toMatchObject({ phase: "closed", outcome: "gone" });
+    expect(await r.queue.finalize(id, done())).toEqual({ outcome: "gone" });
+    expect(r.net.edits()).toHaveLength(1);
+  });
+
+  it.each([401, 403])("progress edit %i -> policy without retry; the write is dropped, not the card", async (status) => {
     const r = rig();
     const id = await activeCard(r);
     r.net.reply({ status });
     r.queue.enqueue(id, frame("p"));
     await r.time.advance(2000);
     expect(r.net.edits()).toHaveLength(1);
-    expect(r.queue.status(id)).toMatchObject({ phase: "closed", outcome });
-    expect(await r.queue.finalize(id, done())).toEqual({ outcome });
+    expect(r.metrics().filter((m) => m.name === "card_edit_total").map((m) => m.labels.code)).toEqual(["policy"]);
+    expect(r.queue.status(id)?.phase).toBe("active");
+  });
+
+  it.each([401, 403])("terminal edit %i -> policy without retry and the card is closed", async (status) => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ status });
+    const result = r.queue.finalize(id, done());
+    await r.time.advance(2000);
+    expect(await result).toEqual({ outcome: "policy", seq: 1 });
     expect(r.net.edits()).toHaveLength(1);
+    expect(r.queue.status(id)).toMatchObject({ phase: "closed", outcome: "policy" });
   });
 
   it.each([400, 422])("edit %i -> contract without retry; the card keeps its last frame and continues", async (status) => {
@@ -842,5 +868,192 @@ describe("T21: bounded drain and abort fencing", () => {
     expect(await result).toEqual({ outcome: "acked", seq: 1 });
     expect(r.queue.cancelNonterminal("turn-1")).toBe(0);
     expect(r.queue.cancelNonterminal("other")).toBe(0);
+  });
+});
+
+// ─── XIN-2263 review regressions ────────────────────────────────────────────
+
+describe("B1: a non-terminal policy denial drops the write, never the acknowledged card", () => {
+  it("deny a progress edit, re-allow, then the terminal is independently authorized and sent", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.policy.allowed = false;
+    r.queue.enqueue(id, frame("denied"));
+    await r.time.advance(800);
+    expect(r.net.edits()).toHaveLength(0);
+    expect(r.queue.status(id)).toMatchObject({ phase: "active", dirty: false });
+    expect(r.metrics().filter((m) => m.name === "card_edit_total").map((m) => m.labels.code)).toEqual(["policy"]);
+    r.policy.allowed = true;
+    const result = r.queue.finalize(id, done());
+    await r.time.advance(0);
+    expect(await result).toEqual({ outcome: "acked", seq: 1 });
+    expect(r.net.edits().map((e) => [seqOf(e), progressOf(e.body)])).toEqual([[1, "done"]]);
+  });
+
+  it("later progress is re-authorized on its own after a denied write", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.policy.allowed = false;
+    r.queue.enqueue(id, frame("denied"));
+    await r.time.advance(800);
+    r.policy.allowed = true;
+    r.queue.enqueue(id, frame("allowed"));
+    await r.time.advance(800);
+    expect(r.net.edits().map((e) => progressOf(e.body))).toEqual(["allowed"]);
+  });
+
+  it("a denial that persists to the terminal ends the card with policy and sends nothing", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.policy.allowed = false;
+    r.queue.enqueue(id, frame("denied"));
+    await r.time.advance(800);
+    const result = r.queue.finalize(id, done());
+    await r.time.advance(0);
+    expect(await result).toEqual({ outcome: "policy" });
+    expect(r.net.edits()).toHaveLength(0);
+  });
+});
+
+describe("B2: retries carry the exact frozen body even if the caller mutates its frame", () => {
+  type Mutable = { data: { progressText: string; phases: { actions: { detail: string }[] }[] } };
+
+  it("a progress frame mutated between attempts is resent byte-identical under the same seq", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const f = frame("v1");
+    r.net.reply({ status: 503 }, { status: 503 });
+    r.queue.enqueue(id, f);
+    await r.time.advance(800);
+    expect(r.net.edits()).toHaveLength(1);
+    const m = f as unknown as Mutable;
+    m.data.progressText = "MUTATED";
+    m.data.phases[0].actions[0].detail = "MUTATED-nested";
+    await r.time.advance(400);
+    const edits = r.net.edits();
+    expect(edits).toHaveLength(3);
+    expect(edits.map(seqOf)).toEqual([1, 1, 1]);
+    expect(new Set(edits.map((e) => e.body)).size).toBe(1);
+    expect(edits[2].body).not.toContain("MUTATED");
+  });
+
+  it("a frame mutated after enqueue but before the debounce elapses sends the enqueued snapshot", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const f = frame("snapshot");
+    r.queue.enqueue(id, f);
+    (f as unknown as Mutable).data.progressText = "MUTATED";
+    await r.time.advance(800);
+    expect(progressOf(r.net.edits()[0].body)).toBe("snapshot");
+  });
+
+  it("a terminal frame mutated between attempts keeps its exact body", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const f = done("final");
+    r.net.reply({ network: true });
+    const result = r.queue.finalize(id, f);
+    await r.time.advance(0);
+    (f as unknown as Mutable).data.progressText = "MUTATED";
+    await r.time.advance(200);
+    expect(await result).toEqual({ outcome: "acked", seq: 1 });
+    const edits = r.net.edits();
+    expect(edits).toHaveLength(2);
+    expect(edits[0].body).toBe(edits[1].body);
+    expect(progressOf(edits[1].body)).toBe("final");
+  });
+
+  it("an authored frame is snapshotted the same way and matches the real serializer output", async () => {
+    const r = rig();
+    const s = r.spec({ kind: "display", capability: "display" });
+    r.queue.open(s);
+    const card = { type: "AdaptiveCard", version: "1.5", $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+      body: [{ type: "TextBlock", text: "hello", wrap: true }] };
+    const authored = { k: "authored", profile: "octo/v1", card, plain: "hello" } as unknown as CardFrame;
+    r.queue.enqueue(s.cardId, authored);
+    await r.time.advance(800);
+    r.net.reply({ status: 502 });
+    const edit = { k: "authored", profile: "octo/v1", card: { ...card, body: [{ type: "TextBlock", text: "v1", wrap: true }] }, plain: "v1" };
+    const result = r.queue.finalize(s.cardId, edit as unknown as CardFrame);
+    await r.time.advance(0);
+    (edit.card.body[0] as { text: string }).text = "MUTATED";
+    edit.plain = "MUTATED";
+    await r.time.advance(200);
+    expect(await result).toEqual({ outcome: "acked", seq: 1 });
+    const edits = r.net.edits();
+    expect(edits).toHaveLength(2);
+    expect(edits[0].body).toBe(edits[1].body);
+    expect(edits[1].body).not.toContain("MUTATED");
+    const expected = serializeEditAuthored({ route: { channelId: "g1", channelType: 2 }, messageId: r.queue.status(s.cardId)?.messageId as string,
+      profile: "octo/v1", card: { ...card, body: [{ type: "TextBlock", text: "v1", wrap: true }] } as never, plain: "v1", seq: 1, transient: false });
+    expect(edits[1].body).toBe(expected.body);
+  });
+});
+
+describe("N3: no card reservation is left unsent", () => {
+  it("a drain that starts during the debounce skips the card before any reservation", async () => {
+    const r = rig();
+    const reserve = vi.spyOn(r.store, "reserveMessage");
+    const s = r.spec();
+    r.queue.open(s);
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(799);
+    const report = r.queue.drain({ reason: "shutdown", deadlineMono: r.time.now() + 3000, signal: new AbortController().signal });
+    await r.time.advance(3000);
+    await report;
+    expect(reserve).not.toHaveBeenCalled();
+    expect(r.net.sends()).toHaveLength(0);
+    expect(r.queue.status(s.cardId)).toMatchObject({ phase: "closed", outcome: "skipped" });
+  });
+
+  it("every reservation is followed by its transport attempt in the same turn", async () => {
+    const r = rig();
+    const reserve = vi.spyOn(r.store, "reserveMessage");
+    let sendsAtReserve = -1;
+    reserve.mockImplementation((input) => {
+      sendsAtReserve = r.net.sends().length;
+      return CardStore.prototype.reserveMessage.call(r.store, input);
+    });
+    const s = r.spec();
+    r.queue.open(s);
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    expect(sendsAtReserve).toBe(0);
+    expect(r.net.sends()).toHaveLength(1);
+  });
+
+  it("an initial send aborted at the drain deadline keeps its row as possibly sent; no SQL after the deadline", async () => {
+    const r = rig();
+    const s = r.spec();
+    r.queue.open(s);
+    r.net.reply({ hold: true });
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    const abandon = vi.spyOn(r.store, "abandonUnsent");
+    const ambiguous = vi.spyOn(r.store, "markSendAmbiguous");
+    const report = r.queue.drain({ reason: "shutdown", deadlineMono: r.time.now() + 3000, signal: new AbortController().signal });
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 1 });
+    expect(abandon).not.toHaveBeenCalled();
+    expect(ambiguous).not.toHaveBeenCalled();
+    expect(storeRow(r, s.cardId)?.state).toBe("sending");
+    expect(r.queue.status(s.cardId)).toMatchObject({ phase: "closed", outcome: "unresolved" });
+  });
+});
+
+describe("N4: the initial-send binding uses the current policy decision", () => {
+  it("passes the authorization at acknowledgement time to ackMessage", async () => {
+    const r = rig();
+    const ack = vi.spyOn(r.store, "ackMessage");
+    const s = r.spec();
+    r.queue.open(s);
+    r.net.reply({ hold: true });
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    r.policy.allowed = false;
+    r.net.release();
+    await r.time.advance(0);
+    expect(ack).toHaveBeenCalledTimes(1);
+    expect(ack.mock.calls[0][0]).toMatchObject({ policyAllows: false });
   });
 });

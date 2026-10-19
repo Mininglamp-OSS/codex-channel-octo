@@ -275,6 +275,21 @@ describe("T20: cooldown telemetry through the injected sink", () => {
     expect(m.some((x) => "bot_ref" in (x.labels ?? {}))).toBe(false);
   });
 
+  it("N5: slices after a server Retry-After extension carry the server_retry_after code", async () => {
+    const { time, pacer, metrics } = rig([0]);
+    const t0 = time.now();
+    pacer.observe429(A, undefined, t0);
+    await time.advance(500);
+    pacer.observe429(A, 120_000, time.now());
+    await time.advanceTo(t0 + 500 + 120_000);
+    const slices = metrics().filter((x) => x.name === "cooldown_slice_ms");
+    expect(slices[0].labels.code).toBe("client_backoff");
+    expect(slices[0].value).toBe(500);
+    expect(slices.slice(1).every((x) => x.labels.code === "server_retry_after")).toBe(true);
+    expect(slices.reduce((sum, x) => sum + x.value, 0)).toBe(120_500);
+    expect(metrics().filter((x) => x.name === "cooldown_start_total")).toHaveLength(1);
+  });
+
   it("different origins each record their own cooldown; shutdown closes open cooldowns", async () => {
     const { time, pacer, metrics } = rig([0]);
     pacer.observe429(A, undefined, time.now());
