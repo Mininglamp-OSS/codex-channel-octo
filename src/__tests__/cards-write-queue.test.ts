@@ -1202,3 +1202,108 @@ describe("NB1: close or cancel right after the debounce wait never reports a sto
     }
   });
 });
+
+// ─── XIN-2269 NB4: no new terminal authority after close or drain ───────────
+
+describe("NB4: finalize after close or drain never starts new store or transport work", () => {
+  const fenceAt = (r: Rig, ms: number) => ({ reason: "shutdown" as const, deadlineMono: r.time.now() + ms, signal: new AbortController().signal });
+
+  it("post-close finalize on an idle acknowledged card settles cancelled with zero reserveSequence and zero transport", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const reserveSeq = vi.spyOn(r.store, "reserveSequence");
+    const requests = r.net.requests.length;
+    r.queue.close(fenceAt(r, 3000));
+    const result = r.queue.finalize(id, done());
+    await r.time.advance(0);
+    expect(await result).toEqual({ outcome: "cancelled" });
+    await r.time.advance(5000);
+    expect(reserveSeq).not.toHaveBeenCalled();
+    expect(r.net.requests.length).toBe(requests);
+    expect(r.queue.status(id)).toMatchObject({ outcome: "cancelled", terminalPending: true, inflight: false });
+    expect(storeRow(r, id)).toMatchObject({ state: "active", seqReserved: 0, seqAcked: 0 });
+    // Absorbing: a repeated finalize returns the same settled result without new work.
+    expect(await r.queue.finalize(id, done("again"))).toEqual({ outcome: "cancelled" });
+    expect(r.net.requests.length).toBe(requests);
+  });
+
+  it("post-drain finalize on an idle acknowledged card settles cancelled with zero reserveSequence and zero transport", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const reserveSeq = vi.spyOn(r.store, "reserveSequence");
+    const requests = r.net.requests.length;
+    const report = r.queue.drain(fenceAt(r, 3000));
+    await r.time.advance(0);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 0 });
+    const result = r.queue.finalize(id, done());
+    await r.time.advance(0);
+    expect(await result).toEqual({ outcome: "cancelled" });
+    await r.time.advance(5000);
+    expect(reserveSeq).not.toHaveBeenCalled();
+    expect(r.net.requests.length).toBe(requests);
+    expect(r.queue.status(id)).toMatchObject({ terminalPending: true, inflight: false });
+  });
+
+  it("finalize after close while an older edit is in flight never adds a terminal edit; the owned edit still settles", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ hold: true });
+    r.queue.enqueue(id, frame("in-flight"));
+    await r.time.advance(800);
+    expect(r.net.heldCount()).toBe(1);
+    const reserveSeq = vi.spyOn(r.store, "reserveSequence");
+    const report = r.queue.drain(fenceAt(r, 3000));
+    const result = r.queue.finalize(id, done());
+    await r.time.advance(0);
+    expect(await result).toEqual({ outcome: "cancelled" });
+    r.net.release();
+    await r.time.advance(0);
+    expect(await report).toEqual({ settled: 1, aborted: 0, unresolved: 0 });
+    await r.time.advance(5000);
+    expect(reserveSeq).not.toHaveBeenCalled();
+    expect(r.net.edits().map((e) => progressOf(e.body))).toEqual(["in-flight"]);
+    expect(storeRow(r, id)).toMatchObject({ seqReserved: 1, seqAcked: 1 });
+    expect(r.queue.status(id)?.terminalPending).toBe(true);
+  });
+
+  it("a terminal accepted before close still drains and is sent within the deadline", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const terminal = r.queue.finalize(id, done());
+    r.queue.close(fenceAt(r, 3000));
+    await r.time.advance(0);
+    expect(await terminal).toEqual({ outcome: "acked", seq: 1 });
+    expect(r.net.edits().map((e) => progressOf(e.body))).toEqual(["done"]);
+    expect(storeRow(r, id)).toMatchObject({ seqReserved: 1, seqAcked: 1 });
+  });
+
+  it("a terminal accepted before close behind an in-flight edit is sent after it within the deadline", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ hold: true });
+    r.queue.enqueue(id, frame("older"));
+    await r.time.advance(800);
+    const terminal = r.queue.finalize(id, done());
+    const report = r.queue.drain(fenceAt(r, 3000));
+    await r.time.advance(100);
+    r.net.release();
+    await r.time.advance(0);
+    expect(await terminal).toEqual({ outcome: "acked", seq: 2 });
+    expect(await report).toEqual({ settled: 1, aborted: 0, unresolved: 0 });
+    expect(r.net.edits().map((e) => [seqOf(e), progressOf(e.body)])).toEqual([[1, "older"], [2, "done"]]);
+  });
+
+  it("finalize after close on a never-sent card settles skipped with no reservation", async () => {
+    const r = rig();
+    const s = r.spec();
+    r.queue.open(s);
+    r.queue.enqueue(s.cardId, frame("never"));
+    const reserve = vi.spyOn(r.store, "reserveMessage");
+    r.queue.close(fenceAt(r, 3000));
+    const result = r.queue.finalize(s.cardId, done());
+    await r.time.advance(5000);
+    expect(await result).toEqual({ outcome: "skipped" });
+    expect(reserve).not.toHaveBeenCalled();
+    expect(r.net.requests).toHaveLength(0);
+  });
+});
