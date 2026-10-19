@@ -10,7 +10,7 @@ const roots: string[] = [];
 afterEach(() => { vi.unstubAllEnvs(); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
 function config(): Config {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'profile-pinned-'))); roots.push(root);
-  return { baseDir: root, cwd: root, dataDir: root, botToken: 'synthetic', apiUrl: 'https://example.com', sdk: {}, rateLimit: { maxPerMinute: 10 }, context: { maxContextChars: 100, historyLimit: 10 } };
+  return { baseDir: root, cwd: root, dataDir: root, maxResponseChars: 524288, dispatchTimeoutMs: 10000, botToken: 'synthetic', apiUrl: 'https://example.com', sdk: {}, rateLimit: { maxPerMinute: 10 }, context: { maxContextChars: 100, historyLimit: 10 } };
 }
 async function drain(c: Config) { for await (const event of queryAgentEvents('synthetic', c)) void event; }
 it('rejects a pinned executable without an isolated root before SDK construction', async () => {
@@ -25,7 +25,7 @@ it('rejects a half-configured root instead of trusting a nonempty switch', async
   vi.stubEnv('CODEX_OCTO_TEST_CONFIG_PATH', '');
   await expect(drain(c)).rejects.toThrow('Invalid test profile configuration');
 });
-it.skipIf(process.platform === 'win32')('pins the native child while retaining real SDK/proxy managed stop proof', async () => {
+it.skipIf(process.platform === 'win32')('pins an executable script while retaining real SDK/proxy managed stop proof', async () => {
   const c = config(); const root = c.cwd;
   mkdirSync(join(root, 'config'), { mode: 0o700 });
   const path = join(root, 'config/config.json');

@@ -522,7 +522,7 @@ export async function* queryAgentEvents(
   ): AsyncIterable<AgentOutputEvent> {
     const attempt = attemptCount++;
     diagnosticRun = {mode:resumeId ? 'resume' : 'start', attempt, resumeId};
-    const scope = opts?.onManagedExecution ? new ExecutionScope(testExecutable) : undefined;
+    const scope = opts?.onManagedExecution ? new ExecutionScope(testExecutable, testExecutable ? 'executable' : 'node') : undefined;
     attemptScope = scope;
     if (scope) opts?.onManagedExecution?.(scope);
     const baseEnv = { ...(env ?? Object.fromEntries(Object.entries(process.env).filter((pair): pair is [string,string] => pair[1] !== undefined))) };
