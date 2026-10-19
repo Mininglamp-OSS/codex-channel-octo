@@ -10,7 +10,9 @@
     "src/__tests__/agent-bridge-events.test.ts",
     "src/__tests__/recoverable-notifications.test.ts",
     "src/__tests__/notification-reconciliation.test.ts",
-    "src/__tests__/output-selection.test.ts"
+    "src/__tests__/output-selection.test.ts",
+    "src/__tests__/profile-native-executable.test.ts",
+    "src/__tests__/profile-pinned-executable.test.ts"
   ],
   "exclude": [
     "node_modules",

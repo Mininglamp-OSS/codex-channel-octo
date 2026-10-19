@@ -8,3 +8,7 @@ config.json
 *.lock.pid
 .DS_Store
 *.log
+scripts/__pycache__/
+
+# Generated local test evidence (keep reports in PR/CI records).
+/evidence/
