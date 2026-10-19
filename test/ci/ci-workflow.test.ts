@@ -21,14 +21,16 @@ describe('CI workflow', () => {
   it('CI-01: push and pull_request on all branches plus workflow_dispatch', () => {
     expect(wf.on).toHaveProperty('workflow_dispatch');
     expect(wf.concurrency['cancel-in-progress']).toBe(true);
-    expect(wf.concurrency.group).toContain('github.event.pull_request.head.sha || github.sha');
+    expect(wf.concurrency.group).toContain('github.head_ref || github.ref_name');
+    expect(wf.concurrency.group).toContain('github.event.pull_request.head.repo.full_name || github.repository');
     expect(wf.on.push).toEqual({ branches: ['**'] });
     expect(wf.on.pull_request).toEqual({ branches: ['**'] });
   });
 
   it('CI-02: unit runs on a Node 22 / 24 matrix and uploads runner records', () => {
     expect(wf.jobs.unit.strategy?.matrix?.node).toEqual(['22', '24.10.0']);
-    expect(runs('unit')).toMatch(/npm test/);
+    expect(runs('unit')).toContain('npm run test:unit-records');
+    expect(runs('unit')).not.toMatch(/npm test/);
   });
 
   it('CI-03: the R8 §10.2 jobs exist with their commands', () => {

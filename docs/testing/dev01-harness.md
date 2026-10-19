@@ -30,6 +30,8 @@ The real-binary suite uses a loopback mock Responses service, a fresh temporary 
 
 Keep test code, small protocol fixtures, oracle input traces, expected golden results and their checksums in Git. The small historical bad-rejection fixture contains only protocol rows consumed by its regression, not a full run log. These inputs are needed to reproduce the tests.
 
+The combined default suite schedules files sequentially: checker/compiler subprocesses otherwise contend with the existing short timer tests on two-core runners. Compiler integration cases have a bounded 30-second budget; product timing assertions are unchanged. CI runs each unit selection once while emitting its records, and branch-scoped concurrency cancels superseded/duplicate in-repository events.
+
 Runner JSON/JUnit, model rollouts, raw capture logs, mutation receipts, package archives and local review notes are generated output. They belong under ignored `/artifacts/` or an external results directory; `/test/evidence/` is ignored. CI uploads reports as Actions artifacts. Vendor instruction prose in captured mock requests/rollouts is replaced with hashes. Review redaction before publishing additional evidence.
 
 Useful output overrides:

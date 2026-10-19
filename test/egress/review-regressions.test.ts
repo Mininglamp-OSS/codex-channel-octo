@@ -33,7 +33,7 @@ describe('review capability provenance regressions', () => {
     expect(execFileSync(process.execPath, [join(root, 'dist/handler.js')], { encoding: 'utf8' })).toContain('DELIVERED outside-egress body');
     const result = scan();
     expect(result.violations.length).toBeGreaterThan(0);
-  });
+  }, 30_000);
   it('EG-R2: mapped read-only selection and unrelated same-signature function stay clean', () => {
     const { scan } = fixture("import type * as api from './octo/api.js'; type Read = { [K in 'read' as `x${K}`]: (typeof api)[K] }; declare const r: Read; r.xread(); const unrelated = { xsendMessage(c: string,t: string) { return c+t; } }; unrelated.xsendMessage('a','b');");
     expect(scan().violations).toEqual([]);
