@@ -40,6 +40,7 @@ function config(mode: string): Config {
   return {
     baseDir: root, cwd: root, cwdBase: root, dataDir: join(root, 'data'),
     apiUrl: 'https://test.invalid', botToken: 'synthetic',
+    cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' },
     rateLimit: { maxPerMinute: 100 }, context: { historyLimit: 40, maxContextChars: 6000 },
     maxResponseChars: 524288, dispatchTimeoutMs: 10000,
     sdk: { sandboxMode: 'read-only', privateDiagnostics: true,
