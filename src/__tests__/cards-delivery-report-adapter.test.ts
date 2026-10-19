@@ -231,7 +231,7 @@ describe("SessionStore.readDeliveryParts", () => {
 
 describe("readDeliveryReport", () => {
   it("passes exactly the given turn ID to the read port", () => {
-    const reader = { readDeliveryParts: vi.fn((_turnId: string) => [row(0, "confirmed", "1")]) };
+    const reader = { readDeliveryParts: vi.fn<(turnId: string) => DeliveryPartRow[]>(() => [row(0, "confirmed", "1")]) };
     readDeliveryReport(reader, "turn-exact", { emptyNotice: false });
     expect(reader.readDeliveryParts).toHaveBeenCalledTimes(1);
     expect(reader.readDeliveryParts).toHaveBeenCalledWith("turn-exact");

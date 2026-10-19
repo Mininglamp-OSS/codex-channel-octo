@@ -210,6 +210,11 @@ export class SessionStore {
       this.adapter.prepare("UPDATE turn_outputs SET state='committed' WHERE turn_id=?").run(turnId);
     })();
   }
+  /** Read-only ledger view of one exact turn, ordered by part. Never returns payloads or keys. */
+  readDeliveryParts(turnId: string): ReadonlyArray<{ index: number; state: 'pending' | 'unknown' | 'confirmed'; messageId: string | null }> {
+    return this.adapter.prepare('SELECT part_index AS "index", state, message_id AS messageId FROM delivery_parts WHERE turn_id=? ORDER BY part_index')
+      .all(turnId) as Array<{ index: number; state: 'pending' | 'unknown' | 'confirmed'; messageId: string | null }>;
+  }
 
   init(): void {
     this.adapter.exec(SCHEMA);
