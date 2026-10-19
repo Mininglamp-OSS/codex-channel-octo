@@ -22,9 +22,68 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(result.stdout.count('exit=0'), 2)
 
     def test_adopted_zombie_is_reaped_without_false_failure(self):
-        result = self.invoke('import os,subprocess,sys,time;subprocess.Popen([sys.executable,"-c","pass"]);time.sleep(.15);os._exit(0)')
+        result = self.invoke('import os,subprocess,sys,time;child=subprocess.Popen([sys.executable,"-c","pass"]);os.waitid(os.P_PID,child.pid,os.WEXITED|os.WNOWAIT);os._exit(0)')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.count('exit=0'), 2)
+
+    def test_bounded_natural_descendant_teardown_is_not_a_leak(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = str(Path(directory) / 'natural')
+            inner = f'from pathlib import Path;import time;time.sleep(.4);Path({receipt!r}).write_text("done")'
+            result = self.invoke(f'import subprocess,sys;subprocess.Popen([sys.executable,"-c",{inner!r}],start_new_session=True)')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(Path(receipt).exists())
+
+    def test_inter_attempt_cancellation_prevents_another_spawn(self):
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            with self.subTest(signal=sig), tempfile.TemporaryDirectory() as directory:
+                receipt = str(Path(directory) / 'launches')
+                command = f'from pathlib import Path;p=Path({receipt!r});p.write_text(p.read_text()+"x" if p.exists() else "x")'
+                bootstrap = f"""import runpy,tempfile,os,signal,sys
+namespace=runpy.run_path({str(RUNNER)!r})
+original=tempfile.TemporaryDirectory
+class CancelBetween(original):
+ def __exit__(self,*args):
+  result=super().__exit__(*args)
+  os.kill(os.getpid(),{int(sig)})
+  return result
+tempfile.TemporaryDirectory=CancelBetween
+sys.argv=['supervisor','--attempts','2','--seconds','5','--grace','.1','--',sys.executable,'-c',{command!r}]
+sys.exit(namespace['main']())
+"""
+                result = subprocess.run([sys.executable, '-c', bootstrap], capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 128 + sig, result.stdout + result.stderr)
+                self.assertEqual(Path(receipt).read_text(), 'x')
+                self.assertNotIn('attempt 2/2', result.stdout)
+
+    def test_cancellation_during_attempt_preparation_prevents_spawn(self):
+        bootstrap = f"""import runpy,builtins,os,signal,sys
+namespace=runpy.run_path({str(RUNNER)!r})
+original=builtins.print
+def cancel(*args,**kwargs):
+ original(*args,**kwargs)
+ if args and ' start cap=' in str(args[0]):os.kill(os.getpid(),signal.SIGTERM)
+builtins.print=cancel
+sys.argv=['supervisor','--attempts','2','--',sys.executable,'-c','raise SystemExit(99)']
+sys.exit(namespace['main']())
+"""
+        result = subprocess.run([sys.executable, '-c', bootstrap], capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+
+    def test_cleanup_warning_preserves_original_failure_code(self):
+        bootstrap = f"""import runpy,sys
+namespace=runpy.run_path({str(RUNNER)!r})
+original=namespace['cleanup']
+def reported_incomplete(grace):
+ original(grace)
+ return False
+namespace['main'].__globals__['cleanup']=reported_incomplete
+sys.argv=['supervisor','--attempts','2','--',sys.executable,'-c','raise SystemExit(7)']
+sys.exit(namespace['main']())
+"""
+        result = subprocess.run([sys.executable, '-c', bootstrap], capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
+        self.assertIn('cleanup incomplete', result.stdout)
 
     def test_failure_stops_before_next_attempt(self):
         result = self.invoke('raise SystemExit(7)')
@@ -62,7 +121,7 @@ time.sleep(60)
         with tempfile.TemporaryDirectory() as evidence:
             receipt = Path(evidence) / 'receipt'
             code = f'import os,time;from pathlib import Path;Path({str(receipt)!r}).write_text(str(os.getpid())+"\\n"+os.environ["TMPDIR"]);time.sleep(60)'
-            child = subprocess.Popen([sys.executable, str(RUNNER), '--seconds', '5', '--grace', '.1', '--', sys.executable, '-c', code], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            child = subprocess.Popen([sys.executable, str(RUNNER), '--seconds', '30', '--grace', '.1', '--', sys.executable, '-c', code], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             try:
                 deadline = time.monotonic() + 5
                 while not receipt.exists() and time.monotonic() < deadline:

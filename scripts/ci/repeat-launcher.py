@@ -96,12 +96,16 @@ def main():
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, stop)
     for attempt in range(1, args.attempts + 1):
+        if interrupted:
+            return 128 + interrupted[0]
         started = time.monotonic()
         status = 1
         with tempfile.TemporaryDirectory(prefix='launcher-attempt-') as temporary:
             env = dict(os.environ, TMPDIR=temporary, TMP=temporary, TEMP=temporary)
             print(f'Launcher attempt {attempt}/{args.attempts} start cap={args.seconds}s grace={args.grace}s', flush=True)
             try:
+                if interrupted:
+                    return 128 + interrupted[0]
                 child = subprocess.Popen(command, env=env, start_new_session=True)
                 deadline = started + args.seconds
                 while child.poll() is None and not interrupted and time.monotonic() < deadline:
@@ -118,20 +122,31 @@ def main():
                 if exited:
                     # Adopted zombies are completed work, not live leaks.
                     reap()
+                    # Let the proxy finish its documented asynchronous teardown.
+                    settle = time.monotonic() + 2
+                    while children() and not interrupted and time.monotonic() < settle:
+                        reap()
+                        time.sleep(0.02)
+                    reap()
                 leaked = bool(children()) if exited else False
                 clean = cleanup(args.grace)
                 child.wait(timeout=1)
+                if interrupted and status == 0:
+                    status = 128 + interrupted[0]
                 if leaked and status == 0:
                     print('Launcher left descendants after exit; refusing a successful result', flush=True)
                     status = 1
                 if not clean:
                     print('Launcher cleanup incomplete; refusing further attempts', flush=True)
-                    status = 1
+                    if status == 0:
+                        status = 1
             except (OSError, subprocess.TimeoutExpired) as error:
                 print(f'Launcher supervision failed: {type(error).__name__}', flush=True)
                 cleanup(args.grace)
                 status = 1
             print(f'Launcher attempt {attempt}/{args.attempts} exit={status} duration={time.monotonic()-started:.3f}s', flush=True)
+        if interrupted and status == 0:
+            status = 128 + interrupted[0]
         if status:
             return status
     return 0
