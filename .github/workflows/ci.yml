@@ -44,6 +44,12 @@ jobs:
       - run: npm run type-check:mention-tests
       - run: npm run type-check:recovery-tests
       - run: npm run type-check:continuity-tests
+      - name: Type-check canonical options test contract
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop src/__tests__/agent-bridge-events.test.ts
+      - name: Type-check card telemetry tests
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --noUnusedLocals --noUnusedParameters --skipLibCheck --esModuleInterop src/__tests__/cards-telemetry-*.test.ts
+      - name: Type-check card pacer and write-queue tests
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --noUnusedLocals --noUnusedParameters --skipLibCheck --esModuleInterop src/__tests__/cards-pacer*.test.ts src/__tests__/cards-write-queue*.test.ts
 
   lint:
     name: ESLint (zero warnings)
@@ -70,6 +76,19 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: 'npm'
       - run: npm ci
+      - name: Repeat Unix launcher contracts
+        timeout-minutes: 10
+        run: |
+          for attempt in $(seq 1 20); do
+            echo "Launcher attempt ${attempt}/20"
+            start=$SECONDS
+            set +e
+            timeout --signal=KILL 30s npm run test -- src/__tests__/sdk-jsonl.test.ts src/__tests__/jsonl-proxy-path.test.ts --maxWorkers=1 --minWorkers=1
+            status=$?
+            set -e
+            echo "Launcher attempt ${attempt}/20 exit=${status} duration=$((SECONDS-start))s"
+            if [ "$status" -ne 0 ]; then exit "$status"; fi
+          done
       - run: npm test
 
   latest-sdk:
