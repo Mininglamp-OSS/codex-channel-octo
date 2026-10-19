@@ -55,7 +55,7 @@ describe('egress bypass scan: repository at DEV-01', () => {
 
   it('EG-03: the baseline records the R8 §0.3 bypass sites (router replySafe, command/progress/placeholder/error replies, StreamRelay)', () => {
     const files = new Set(boundary.baselinePermittedCallers.map((b) => b.file));
-    expect([...files].sort()).toEqual(['src/index.ts', 'src/session-router.ts', 'src/stream-relay.ts']);
+    expect([...files].sort()).toEqual(['src/index.ts', 'src/octo/evidence.ts', 'src/session-router.ts', 'src/stream-relay.ts']);
     expect(boundary.baselinePermittedCallers.find((b) => b.file === 'src/session-router.ts' && b.symbol === 'sendMessage')?.count).toBe(1);
   });
 });
@@ -66,6 +66,12 @@ describe('egress bypass scan: negative controls', () => {
 
   it('EG-04: the clean fixture (egress module only) passes', () => {
     expect(codes('clean')).toEqual([]);
+  });
+  it('EG-SEMANTIC: unresolved types fail closed even when there are no detected capability references', () => {
+    const invalid = scanEgress(fixtureConfig('semantic-error'));
+    expect(invalid.usages).toEqual([]);
+    expect(invalid.violations.map(v => v.code)).toContain('unanalyzable-source');
+    expect(scanEgress(fixtureConfig('semantic-valid')).violations).toEqual([]);
   });
   it('EG-05: an unauthorized sendRichTextMessage call fails', () => {
     expect(codes('richtext')).toContain('unauthorized-call:src/tool.ts:sendRichTextMessage');

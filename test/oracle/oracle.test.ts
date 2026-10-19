@@ -91,4 +91,27 @@ describe('ORACLE-01..08 frozen traces', () => {
     expect(r.verdict).toBe('fail');
     expect(r.violations.map((v: { code: string }) => v.code)).toContain('missing-confirmed-segment');
   });
+  it('ORACLE-RC-CURSOR: repeated cursors and cycles remain incomplete even with distinct complete records', () => {
+    const f = fixtures.find(x => x.id === 'ORACLE-01')!;
+    const original = structuredClone(f.trace) as {inventory:{pages:Array<{cursor:string;next:string|null;records:unknown[]}>;declaredPageCount:number}};
+    expect(evaluateDelivery(original, f.ledger).verdict).toBe('pass');
+    const records = original.inventory.pages.flatMap(p => p.records);
+    for (const cursors of [['c0','c0'], ['c0','c1','c0']]) {
+      const trace = structuredClone(original);
+      trace.inventory.pages = cursors.map((cursor,i) => ({cursor,next:cursors[i+1]??null,records:records.filter((_,j)=>j%cursors.length===i)}));
+      trace.inventory.declaredPageCount = cursors.length;
+      const r = evaluateDelivery(trace, f.ledger);
+      expect(r.verdict).toBe('pending');
+      expect(r.violations.map(v=>v.code)).toContain('incomplete-inventory');
+    }
+  });
+  it.each(['confirmed', 'suppressed', 'unknown'])('ORACLE-RC-EXPECTED: duplicate identity with outcome %s is malformed', outcome => {
+    const f = fixtures.find(x => x.id === 'ORACLE-01')!;
+    const trace = structuredClone(f.trace) as {expected:Array<{outcome:string}>};
+    trace.expected.push({...trace.expected[0], outcome});
+    const r = evaluateDelivery(trace, f.ledger);
+    expect(r.verdict).toBe('fail');
+    expect(r.violations.map(v=>v.code)).toContain('malformed-duplicate-expected-identity');
+  });
+
 });

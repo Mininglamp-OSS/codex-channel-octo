@@ -337,3 +337,6 @@ Mention admission compatibility: an oversized routing UID array is scanned for a
 ## DEV-01 test harness
 
 See [the harness guide](docs/testing/dev01-harness.md) for development-only runtime pins, verification commands, CI artifacts and gate contracts.
+## Source-checkout test tools
+
+See [Isolated test profiles and capture](docs/isolated-test-profiles.md) for profile lifecycle, protected capture/readback setup, runtime requirements and reproducible checks. These helpers are not included in the npm installation.

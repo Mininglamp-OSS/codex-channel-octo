@@ -57,6 +57,7 @@ export function evaluateDelivery(trace, captureInventory) {
     if (!['confirmed', 'suppressed', 'unknown'].includes(e.outcome)) v('malformed-expected-outcome', { outcome: e.outcome });
     const key = identityKey(identityOf(e));
     if (key === undefined) v('malformed-expected-identity', { identity: e.identity });
+    else if (expected.has(key)) v('malformed-duplicate-expected-identity', { identity: e.identity });
     else expected.set(key, e);
   }
   // A stored marker names a permitted identity only when its full parsed
@@ -72,7 +73,10 @@ export function evaluateDelivery(trace, captureInventory) {
   // 1. Inventory completeness: unbroken cursor chain, declared page count, no overlap.
   const inv = trace.inventory;
   let complete = inv.complete === true && inv.pages.length === inv.declaredPageCount;
+  const cursors = new Set();
   for (let i = 0; i < inv.pages.length; i++) {
+    if (typeof inv.pages[i].cursor !== 'string' || !inv.pages[i].cursor || cursors.has(inv.pages[i].cursor)) complete = false;
+    cursors.add(inv.pages[i].cursor);
     const next = inv.pages[i + 1];
     if (next ? inv.pages[i].next !== next.cursor : inv.pages[i].next !== null) complete = false;
   }

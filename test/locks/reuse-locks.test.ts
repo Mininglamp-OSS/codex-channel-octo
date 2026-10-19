@@ -110,10 +110,12 @@ describe('REST client locks', () => {
 
   it('EP-13: group members GET encodes the group number and accepts {members:[]} or a bare array', async () => {
     rest = await FakeOctoRest.start({});
-    rest.setRoute('GET', '/v1/bot/groups/g%20x/members', () => ({ status: 200, body: { members: [{ uid: 'a', name: 'A', role: 1 }] } }));
+    rest.setRoute('GET', '/v1/bot/groups/g%2Fx%3Fy%23z/members', () => ({ status: 200, body: { members: [{ uid: 'a', name: 'A', role: 1 }] } }));
     rest.setRoute('GET', '/v1/bot/groups/g2/members', () => ({ status: 200, body: [{ uid: 'b', name: 'B', role: 2 }] }));
     rest.setRoute('GET', '/v1/bot/groups/g3/members', () => ({ status: 200, body: { members: null } }));
-    expect(await getGroupMembers({ apiUrl: rest.url, botToken: 'bf', groupNo: 'g x' })).toEqual([{ uid: 'a', name: 'A', role: 1 }]);
+    const encodedMembers = await getGroupMembers({ apiUrl: rest.url, botToken: 'bf', groupNo: 'g/x?y#z' }).catch(() => undefined);
+    expect(rest.requests[0].rawPath).toBe('/v1/bot/groups/g%2Fx%3Fy%23z/members');
+    expect(encodedMembers).toEqual([{ uid: 'a', name: 'A', role: 1 }]);
     expect(await getGroupMembers({ apiUrl: rest.url, botToken: 'bf', groupNo: 'g2' })).toEqual([{ uid: 'b', name: 'B', role: 2 }]);
     expect(await getGroupMembers({ apiUrl: rest.url, botToken: 'bf', groupNo: 'g3' })).toEqual([]);
   });

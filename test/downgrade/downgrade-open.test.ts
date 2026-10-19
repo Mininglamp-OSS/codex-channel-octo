@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildBaseline } from '../../scripts/downgrade/build-baseline.mjs';
-import { seedPopulatedDb, applyMigrations, openWithBaseline, semanticInventory, ORIGINAL_TABLES } from '../../scripts/downgrade/harness.mjs';
+import { seedPopulatedDb, migrateAndOpenWithBaseline, semanticInventory, ORIGINAL_TABLES } from '../../scripts/downgrade/harness.mjs';
 import { pins } from '../harness/pins.js';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -53,8 +53,7 @@ describe('downgrade-open harness', () => {
     expect(migrations.head).toEqual([]);
     const db = await freshDb('actual');
     const before = semanticInventory(db);
-    applyMigrations(db, migrations.head);
-    const r = await openWithBaseline(db, baseline.distDir);
+    const r = await migrateAndOpenWithBaseline(db, baseline.distDir, migrations.head);
     expect(r.errors).toEqual([]);
     expect(r.corePaths).toEqual(['history', 'append', 'sdk-mapping', 'reset', 'document-state', 'group-context', 'cleanExpired']);
     expect(r.inventoryBefore).toEqual(before);
@@ -63,12 +62,11 @@ describe('downgrade-open harness', () => {
   it('DG-04: an additive fixture migration (new table + nullable column) keeps the dd12980 core paths and original-table semantics', async () => {
     const db = await freshDb('additive');
     const before = semanticInventory(db);
-    applyMigrations(db, [
+    const r = await migrateAndOpenWithBaseline(db, baseline.distDir, [
       'CREATE TABLE IF NOT EXISTS dev01_fixture_additions (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL)',
       "INSERT INTO dev01_fixture_additions VALUES ('x', 1)",
       'ALTER TABLE messages ADD COLUMN dev01_fixture_note TEXT',
-    ]);
-    const r = await openWithBaseline(db, baseline.distDir, { ignoreColumns: { messages: ['dev01_fixture_note'] } });
+    ], { ignoreColumns: { messages: ['dev01_fixture_note'] } });
     expect(r.errors).toEqual([]);
     expect(r.inventoryBefore).toEqual(before);
   });
@@ -82,8 +80,18 @@ describe('downgrade-open harness', () => {
     ['rename-column', ['ALTER TABLE reset_barriers RENAME COLUMN reset_seq TO barrier_seq']],
   ])('DG-05 negative control (%s): a destructive migration is detected by the dd12980 core paths', async (name, sql) => {
     const db = await freshDb(`neg-${name}`);
-    applyMigrations(db, sql as string[]);
-    const r = await openWithBaseline(db, baseline.distDir);
+    const r = await migrateAndOpenWithBaseline(db, baseline.distDir, sql as string[]);
     expect(r.errors.length, name).toBeGreaterThan(0);
   });
+  it('DG-06: a silent original-row rewrite is rejected against the pre-migration snapshot even when core paths pass', async () => {
+    const db = await freshDb('silent-rewrite');
+    const before = semanticInventory(db);
+    const r = await migrateAndOpenWithBaseline(db, baseline.distDir, ["UPDATE messages SET content='silently changed' WHERE session_id='u_alice' AND role='assistant'"]);
+    expect(r.inventoryBefore).toEqual(before);
+    expect(r.inventoryAfterMigration).not.toEqual(before);
+    expect(r.errors).toEqual([{ path: 'semantic-conservation', error: 'original table semantics changed during migration' }]);
+    expect(r.corePaths).toContain('history');
+    expect(r.corePaths).toContain('group-context');
+  });
+
 });

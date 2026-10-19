@@ -13,7 +13,7 @@
  * references must equal the explicit baseline exactly.
  */
 import ts from 'typescript';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,7 +33,13 @@ export function scanEgress(cfg) {
   const root = resolve(cfg.root);
   const rel = (p) => relative(root, p).split(sep).join('/');
   const files = listTs(join(root, cfg.srcDir ?? 'src'));
-  const options = { module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, target: ts.ScriptTarget.ES2022, noEmit: true, skipLibCheck: true, allowJs: true };
+  const configPath = join(root, 'tsconfig.json');
+  const config = existsSync(configPath) ? ts.readConfigFile(configPath, ts.sys.readFile) : undefined;
+  const parsed = config && !config.error ? ts.parseJsonConfigFileContent(config.config, ts.sys, root) : undefined;
+  const configErrors = [...(config?.error ? [config.error] : []), ...(parsed?.errors ?? [])];
+  const options = { module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    target: ts.ScriptTarget.ES2022, strict: true, lib: ['lib.es2022.d.ts'], skipLibCheck: true,
+    ...parsed?.options, noEmit: true, allowJs: true, checkJs: false };
   const program = ts.createProgram(files, options);
   const checker = program.getTypeChecker();
   const boundary = new Set(cfg.boundaryModules);
@@ -73,8 +79,9 @@ export function scanEgress(cfg) {
   const violations = [];
   for (const file of boundary) if (!program.getSourceFiles().some(sf => rel(sf.fileName) === file)) violations.push({ code: 'missing-boundary-module', file, symbol: '*' });
   if (!primitives.size) violations.push({ code: 'empty-primitive-boundary', file: '', symbol: '*' });
-  const diagnostics = program.getSyntacticDiagnostics().filter(d => d.file && !rel(d.file.fileName).startsWith('..'));
-  for (const d of diagnostics) violations.push({ code: 'unanalyzable-source', file: rel(d.file.fileName), symbol: '*' });
+  const diagnostics = [...configErrors, ...program.getOptionsDiagnostics(), ...program.getSyntacticDiagnostics(), ...program.getSemanticDiagnostics()]
+    .filter(d => !d.file || !rel(d.file.fileName).startsWith('..'));
+  for (const d of diagnostics) violations.push({ code: 'unanalyzable-source', file: d.file ? rel(d.file.fileName) : 'tsconfig.json', symbol: '*' });
 
   // Callable capabilities retain declaration identity through renamed/mapped
   // properties. Structural signature equality alone never creates provenance.

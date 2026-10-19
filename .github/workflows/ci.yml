@@ -260,6 +260,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # The pinned-main default-configuration comparison needs its commit.
           fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -268,6 +269,8 @@ jobs:
       - run: npm ci
       - run: npm run runtime:check
       - run: npm run build
+      - run: python3 -m unittest discover -s scripts -p test_profile_test.py
+      - run: node scripts/check_profile_compat.mjs
       - run: test -f dist/codex-jsonl-proxy.mjs && test -x dist/codex-jsonl-proxy.mjs
       - run: npm pack --json > package-info.json
       - run: node -e "const fs=require('fs');const info=JSON.parse(fs.readFileSync('package-info.json'))[0];if(!info.files.some(file=>file.path==='dist/codex-jsonl-proxy.mjs'&&(file.mode&73)))process.exit(1)"

@@ -14,3 +14,7 @@ config.json
 /*.tgz
 
 /test/evidence/
+scripts/__pycache__/
+
+# Generated local test evidence (keep reports in PR/CI records).
+/evidence/

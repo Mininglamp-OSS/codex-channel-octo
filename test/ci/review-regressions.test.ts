@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { beginVectors, assertPureVectors } from '../../scripts/goldens/stub-purity.mjs';
-import { mutationKilled, selectMutations } from '../../scripts/ci/mutation-check.mjs';
+import { mutationKilled, mutationControlPassed, selectMutations } from '../../scripts/ci/mutation-check.mjs';
 import { runParityGate } from '../../scripts/ci/parity-matrix-gate.mjs';
 import { buildTestIndex, validateMatrix, verifyAgainstJUnit } from '../../scripts/parity/validate-matrix.mjs';
 import { checkSrcDiff } from '../../scripts/ci/check-src-diff.mjs';
@@ -39,9 +39,21 @@ describe('review gate integrity', () => {
   it('RC-G2: unknown mutations fail before running, and environment failures cannot kill a mutant', () => {
     expect(() => selectMutations(['M99-typo'])).toThrow(/unknown mutation/);
     expect(selectMutations([])).toHaveLength(12);
-    const run = { exit: 1, signal: null, loadErrors: [], cases: [{ status: 'failed', failure: 'Error: ENOENT: missing file' }] };
-    expect(mutationKilled(run)).toBe(false);
-    expect(mutationKilled({ ...run, cases: [{ status: 'failed', failure: 'AssertionError: expected true to be false' }] })).toBe(true);
+    const mutation = { targets: [{ file: 'test/target.test.ts', name: 'target' }] };
+    const target = { file: 'test/target.test.ts', name: 'target', title: 'suite target', status: 'failed', failure: 'Error: ENOENT: missing file' };
+    const run = { exit: 1, signal: null, loadErrors: [], cases: [target] };
+    expect(mutationKilled(run, mutation)).toBe(false);
+    expect(mutationKilled({ ...run, cases: [{ ...target, failure: 'AssertionError: expected true to be false' }] }, mutation)).toBe(true);
+    const control = { ...run, exit: 0, cases: [{ ...target, status: 'passed', failure: '' }] };
+    expect(mutationControlPassed(control, mutation)).toBe(true);
+    expect(mutationControlPassed({ ...control, cases: [] }, mutation)).toBe(false);
+    expect(mutationControlPassed({ ...control, cases: [{...target,status:'pending'}] }, mutation)).toBe(false);
+    const unrelated = { ...target, name: 'unrelated', failure: 'AssertionError: unrelated failure' };
+    expect(mutationKilled({ ...run, cases: [unrelated, ...control.cases] }, mutation)).toBe(false);
+    expect(mutationKilled({ ...run, cases: [unrelated, {...target, failure:'AssertionError: target failure'}] }, mutation)).toBe(false);
+    expect(mutationKilled({ ...run, cases: [{...target, file:'other.test.ts', failure:'AssertionError: wrong file'}] }, mutation)).toBe(false);
+    expect(mutationControlPassed(control, { targets: [...mutation.targets, {file:'test/target.test.ts',name:'second target'}] })).toBe(false);
+
   });
   it.each([null, 1])('RC-G3: stale JUnit is removed and unsuccessful child status %s cannot approve', status => {
     const out = temp();

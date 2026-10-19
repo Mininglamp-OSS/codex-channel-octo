@@ -90,10 +90,15 @@
       "file": "src/stream-relay.ts",
       "symbol": "sendTyping",
       "count": 2
+    },
+    {
+      "file": "src/octo/evidence.ts",
+      "symbol": "postJson",
+      "count": 1
     }
   ],
   "analysisBudget": {
-    "cuts": 2,
-    "reachCuts": 4401
+    "cuts": 5,
+    "reachCuts": 6122
   }
 }

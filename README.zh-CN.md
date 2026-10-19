@@ -281,3 +281,6 @@ Apache-2.0
 ## DEV-01 test harness
 
 See [the harness guide](docs/testing/dev01-harness.md) for development-only runtime pins, verification commands, CI artifacts and gate contracts.
+## 源码测试工具
+
+隔离配置、生命周期控制、抓取与回读以及验证命令，参见[隔离测试配置与抓取说明](docs/isolated-test-profiles.md)（英文）。这些测试辅助工具不包含在 npm 安装包中。

@@ -79,10 +79,22 @@ export function semanticInventory(dbPath, opts = {}) {
   }
 }
 
+/** Own the snapshot/migration ordering so callers cannot compare two migrated states. */
+export async function migrateAndOpenWithBaseline(dbPath, distDir, statements, opts = {}) {
+  const preMigrationInventory = semanticInventory(dbPath, opts);
+  applyMigrations(dbPath, statements);
+  return openWithBaseline(dbPath, distDir, { ...opts, preMigrationInventory });
+}
+
 /** Reopen with the baseline build and run its core paths; every path asserts its outcome. */
 export async function openWithBaseline(dbPath, distDir, opts = {}) {
-  const inventoryBefore = semanticInventory(dbPath, opts);
+  if (!opts.preMigrationInventory) throw new Error('pre-migration inventory required');
+  const inventoryBefore = structuredClone(opts.preMigrationInventory);
+  const inventoryAfterMigration = semanticInventory(dbPath, opts);
   const errors = [];
+  if (JSON.stringify(inventoryBefore) !== JSON.stringify(inventoryAfterMigration)) {
+    errors.push({ path: 'semantic-conservation', error: 'original table semantics changed during migration' });
+  }
   const corePaths = [];
   const { createAdapter } = await load(distDir, 'db-adapter.js');
   const { SessionStore } = await load(distDir, 'session-store.js');
@@ -104,7 +116,7 @@ export async function openWithBaseline(dbPath, distDir, opts = {}) {
       expect(store.buildHistoryPrefix('u_alice', 10).includes('alpha question'), 'DM history lost');
       expect(store.buildSegmentedHistoryPrefix('g_fixture', 10).includes('bravo answer'), 'group history lost');
     });
-    if (!store) return { errors, corePaths, inventoryBefore };
+    if (!store) return { errors, corePaths, inventoryBefore, inventoryAfterMigration };
     path('append', () => {
       store.appendUser('u_alice', 'after downgrade', 20, 'Alice');
       expect(store.buildHistoryPrefix('u_alice', 10).endsWith('[user Alice]: after downgrade'), 'append not readable');
@@ -141,5 +153,5 @@ export async function openWithBaseline(dbPath, distDir, opts = {}) {
     console.error = quiet;
     try { store?.close(); } catch { /* already closed */ }
   }
-  return { errors, corePaths, inventoryBefore };
+  return { errors, corePaths, inventoryBefore, inventoryAfterMigration };
 }
