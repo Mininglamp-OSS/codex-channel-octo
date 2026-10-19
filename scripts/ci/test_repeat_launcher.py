@@ -59,6 +59,11 @@ sys.exit(namespace['main']())
     def test_cancellation_during_attempt_preparation_prevents_spawn(self):
         bootstrap = f"""import runpy,builtins,os,signal,sys
 namespace=runpy.run_path({str(RUNNER)!r})
+original_spawn=namespace['subprocess'].Popen
+def tracked_spawn(*args,**kwargs):
+ builtins.print('UNEXPECTED_SPAWN',flush=True)
+ return original_spawn(*args,**kwargs)
+namespace['subprocess'].Popen=tracked_spawn
 original=builtins.print
 def cancel(*args,**kwargs):
  original(*args,**kwargs)
@@ -69,6 +74,7 @@ sys.exit(namespace['main']())
 """
         result = subprocess.run([sys.executable, '-c', bootstrap], capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 143, result.stdout + result.stderr)
+        self.assertNotIn('UNEXPECTED_SPAWN', result.stdout)
 
     def test_cleanup_warning_preserves_original_failure_code(self):
         bootstrap = f"""import runpy,sys
