@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/__tests__/agent-bridge-events.test.ts",
+    "src/__tests__/safe-recovery.test.ts",
+    "src/__tests__/native-error.test.ts",
+    "src/__tests__/private-diagnostics.test.ts",
+    "src/__tests__/private-diagnostics-platform.test.ts",
+    "src/__tests__/private-diagnostics-no-text.test.ts",
+    "src/__tests__/private-diagnostics-config.test.ts",
+    "src/__tests__/private-diagnostics-io.test.ts",
+    "src/__tests__/execution-bridge.test.ts",
+    "src/__tests__/execution-scope.test.ts",
+    "src/__tests__/execution-adversarial.test.ts",
+    "src/__tests__/inbound-wiring.test.ts",
+    "src/__tests__/prompt-safety.test.ts",
+    "src/__tests__/session-continuity.test.ts"
+  ],
+  "exclude": ["node_modules", "dist", "coverage"]
+}

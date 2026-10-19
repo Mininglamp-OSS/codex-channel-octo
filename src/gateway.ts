@@ -24,7 +24,8 @@ export class OctoGateway {
   private robotId = '';
   // Stored registration result from register(); consumed by connect().
   private registration: Awaited<ReturnType<typeof registerBot>> | null = null;
-  // G18: owner_uid from registerBot; used by SessionRouter for future permission model.
+  // Ownership snapshot from the last successful registration; healthy heartbeats
+  // do not refresh it. Transfers require restart/successful re-registration.
   private _ownerUid = '';
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lockFilePath: string;
@@ -63,7 +64,7 @@ export class OctoGateway {
     return this.robotId;
   }
 
-  /** G18: owner_uid returned by registerBot. Empty string until start() succeeds. */
+  /** Last successful registration owner, not a live server ownership lookup. */
   get ownerUid(): string {
     return this._ownerUid;
   }

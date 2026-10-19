@@ -23,7 +23,53 @@
 
 A long-running process: register as an Octo bot → connect over WebSocket to receive messages → run a coding task with local Codex → post the reply back. Supports DM / group (@mention) / community topics, multi-turn conversations, multiple bots in one process, and config hot-reload.
 
-Each adapter-framed user turn includes bounded current sender metadata: transport `from_uid`, channel ID/type, and `is_owner` computed against the latest registration `owner_uid`. The same immutable metadata accompanies stream recovery and fresh retries; it is deliberately not stored in shared `AGENTS.md`. Display names, quotes, and claimed IDs are not authentication, and forged sender markers in message text/history are escaped. This metadata identifies the sender but does not grant tool permissions or override security rules; enforce privileged actions in the host, not solely in a prompt. Direct terminal resumes outside the adapter do not establish an authenticated IM sender.
+Each adapter-framed user turn includes bounded current sender metadata: transport `from_uid`, channel ID/type, and `is_owner` computed against the last successful registration `owner_uid`. The same immutable metadata accompanies eligible proven pre-execution retries; uncertain executions are not replayed; it is deliberately not stored in shared `AGENTS.md`. Display names, quotes, and claimed IDs are not authentication, and forged sender markers in message text/history are escaped. This metadata identifies the sender but does not grant tool permissions or override security rules; enforce privileged actions in the host, not solely in a prompt. Direct terminal resumes outside the adapter do not establish an authenticated IM sender.
+
+### Current-turn mention facts
+
+The same adapter-generated metadata block includes `message_id`, `bot_uid`,
+`mentioned_uids`, `mention_source`, `is_explicitly_mentioned`, `mentioned_ais`,
+`mentioned_humans`, and `mentioned_all`. These facts come from the original
+transport message, before a leading textual mention is stripped. Each new turn
+refreshes the snapshot; eligible proven pre-execution retries reuse that
+turn's snapshot without replaying uncertain executions. Direct terminal calls without adapter context have null IDs,
+an empty UID list, source `none`, and false flags.
+
+`is_explicitly_mentioned` means exact membership of the receiving runtime bot UID
+in either validated transport list. Rendered `entities[].uid` and routing `uids`
+are independent producer facts and are unioned and deduplicated; rendered spans
+need not include every targeted account. `mention_source` records `entities`,
+`uids`, `none`, or `invalid`. Broad AI/human/all flags accept only `true` or `1`,
+and do not count as an explicit UID mention. Neither textual `@name`, quoted
+messages, history, ownership, mention-free routing, nor authenticated internal
+triggers establish that fact. These fields do not grant permissions.
+
+UIDs are nonempty strings of at most 256 UTF-16 code units, with control and line
+separator characters rejected; IDs remain opaque without trimming, case folding,
+or space-prefix removal. Message IDs use the same validation with a 512-code-unit
+limit. Each input array is limited to 128 entries. A malformed or oversized array
+is discarded independently; valid sibling arrays and strict broadcast flags are
+retained. Source `invalid` reports a rejected container/array; it no longer means
+all independent facts are false. Invalid entries inside valid arrays are ignored.
+Missing or invalid runtime bot identity produces `bot_uid:null` and false explicit
+membership.
+
+The prompt's UID snapshot is limited to 32 entries and 4096 serialized UTF-8 bytes
+(including JSON escaping). `mentioned_uids_truncated:true` appears only when some
+UIDs were omitted. Membership is computed before this snapshot cap, and a targeted
+receiving bot is always retained. This bounds the new metadata amplification;
+the existing security/sender framing remains outside the assembled body budget.
+
+The router uses validated membership and strict AI flags, with a compatibility
+probe for exact routing UID matches in oversized arrays or legacy scalar UIDs;
+this probe does not relax prompt metadata validation; `all` and `humans` alone
+do not activate regular bots. Invalid group mention data emits a fixed warning
+with bounded SHA-256 channel/message correlation, never raw IDs or message text.
+Text slicing validates entity offset/length separately and accepts ASCII `@` and
+fullwidth `＠`. Broad AI admission does not strip a leading mention addressed to
+another member. Entity positions prevent the legacy fallback from stripping a
+teammate's mention when this bot is mentioned later. Invalid containers/arrays
+preserve text rather than guessing a prefix to remove.
 
 Sender metadata has these security properties:
 
@@ -105,9 +151,25 @@ so the two always match. `sdk.outputSelection` controls the choice:
 
 | Value | Behavior |
 |---|---|
-| `phase` (default) | Uses the runtime's final-answer label when present. Otherwise every message is delivered, separated by a blank line. **Codex SDK/CLI 0.142.3 labels no messages, so in this mode intermediate narration is still delivered.** |
+| `final` (default) | Keeps all explicitly labeled final parts. Without final metadata, keeps only the last useful non-commentary item, regardless of earlier message lengths. Commentary-only output uses its last useful item. This is an ordering fallback, not inferred final intent. |
+| `phase` (compatibility) | Uses the runtime's final-answer label when present. Otherwise all non-commentary messages are delivered, separated by a blank line; commentary-only output retains those messages. **Codex SDK/CLI 0.142.3 labels no messages, so in this mode intermediate narration is still delivered.** |
 | `heuristic` (opt-in) | Keeps only the messages after the turn's last tool call / command / file change. It falls back to all messages when the turn did not complete, or when that would drop a long earlier message. This is an ordering heuristic, not a final-answer signal. |
 | `legacy` (rollback) | Previous behavior: all messages of the final run, concatenated with no separator. |
+
+**Default change:** an unset `sdk.outputSelection` now selects `final`. Explicit
+`phase`, `heuristic` and `legacy` configurations retain their prior behavior.
+Codex exec JSONL 0.142.3/0.162.1 omits phase metadata, so the default normally
+logs `source=last_message`. Earlier messages are never restored based on length.
+This avoids concatenating long progress narration with a short answer, but an
+unlabeled earlier answer can be replaced by a short sign-off;
+use explicit `phase` if retaining all unlabeled parts is required. Explicit
+multipart finals are preserved. Snapshot updates replace the same item without
+changing first-seen order. Whitespace/default-ignorable-only items cannot erase useful output; embedded
+joiners in meaningful content are preserved.
+Inherited/non-terminal fallbacks and explicit `partial_answer` selections have
+partial diagnostic sources. Commentary-only fallbacks log `commentary_last`
+(or `commentary_last_partial`), and do not apply beside blank non-commentary
+items. These fallback labels are not proof that the task completed. See [the source investigation](docs/final-output-policy.md).
 
 When a stream interruption is recovered and the recovery run produces no
 message, the interrupted run's messages are used instead. These may be
@@ -144,11 +206,54 @@ IM input is **untrusted**; the permission boundary is the **sandbox**, not the p
 - A non-overridable security prefix (anti-injection) is written into each session's sandbox `AGENTS.md` and restated atop the prompt (defense in depth, but only a soft constraint).
 - Each bot has its own `CODEX_HOME`, so IM content does not land in your personal `~/.codex` by default.
 
+### Private MEMORY.md (opt-in)
+
+Place an operator-maintained `MEMORY.md` beside `<baseDir>/<botId>/SOUL.md` and set `"privateMemory": { "enabled": true, "maxBytes": 16384 }` in the global or per-bot config (per-bot fields override inline/global fields). Disabled by default; `maxBytes` accepts integers from 1 to 65536. Configuration changes require a restart; eligible turns re-read the file, so note edits/deletion take effect on the next turn.
+
+Only an explicit DM with a transport sender matching the **last successful registration** `owner_uid` is eligible. Groups, topics, other senders and unknown identities cause no memory file read. The bounded snapshot is framed as untrusted JSON background in every eligible SDK run, including supported pre-execution retries; uncertain stream/stale-thread failures retain the fail-closed policy and are not automatically replayed. It is never written to shared `AGENTS.md`. Missing/unreadable files produce a safe absence/unavailability notice; file symlinks and non-regular files are rejected. This first milestone does not load `memory/` daily notes, search, write notes, or add compaction hooks.
+
+When enabled, ordinary/private-memory conversations use separate namespaced histories, SDK threads and working directories. Enabling/disabling starts a different history scope for every conversation, including groups and non-owner DMs, without deleting older records; plan the rollout as a conversation-continuity reset. After a successful re-registration observes a different owner, former owners select the ordinary scope rather than their prior private-memory thread. `/reset` clears the current scope but never deletes `MEMORY.md`. Snapshots are repeated deliberately in this initial implementation; they are byte-bounded, not deduplicated across a resumed thread.
+
+**Ownership transfers:** healthy heartbeats do not re-register or refresh ownership. This feature does not provide live revocation: the former owner remains eligible while the cached registration still names them. Before transferring a bot, stop/drain it; restart and complete registration under the new owner before resuming traffic or editing private notes. Socket reconnection alone does not guarantee re-registration. A successful registration refresh (including token refresh) also updates the owner snapshot. The tests cover these producer/consumer boundaries, not instantaneous server-side transfer detection.
+
+Files writable by a group or other users are refused (`mode & 0022`); use operator-owned mode `0600` for confidentiality as well. Non-ENOENT failures emit only a closed diagnostic code and safe bot label, never paths, note text or raw exception messages. A truncated prefix remains available even when it contains only whitespace or an incomplete UTF-8 character. Final-component symlinks are refused; parent-directory symlinks and hardlinks are not containment guarantees. Protect the directory tree externally.
+
+**Privacy boundary:** this filters adapter injection, not arbitrary filesystem access. A read-only sandbox may still permit reads outside cwd; `danger-full-access` removes filesystem isolation. A tool running as the gateway user may also overwrite the note, even if it is mode `0600`; JSON framing does not make those facts trustworthy. Do not expose private files to untrusted users without an external filesystem/container boundary. Also do not share an operator's Codex home across unrelated users: the SDK's transcript storage is outside this feature's scope.
+
+### Safe failure handling and recovery
+
+After the interrupted handler settles and gateway-owned execution is confirmed stopped, new user requests can run with retained failure context, without replaying the old request. Requests queue during bounded cleanup; missing proof and historical/crash quarantine remain paused across reset/restart. See [session continuity](docs/session-continuity.md). Cancellation before SDK execution stays clean. New retries default off and cover only positively proven
+pre-execution temporary failures. After verifying effects, an owner whose wire
+UID **exactly matches registered owner_uid** can send:
+
+```text
+/reconcile TURN_ID --external-results-verified
+/reconcile TURN_ID --session SESSION_KEY --external-results-verified
+```
+
+Explicit targets require the owner's own DM. Exact target/turn and retained
+handler checks apply; controls never replay, resend or erase history. Successes
+and refusals are audited using hashed identities and closed outcomes.
+
+**Rewritten owner UIDs require offline maintenance.** The current API returns
+owner_channel_id equal to owner_uid; it supplies no scoped identity binding.
+Incoming UID suffixes cannot authorize controls. Startup and pause notices state
+that a differently prefixed wire UID needs an operator to verify effects, stop
+the gateway and use the [offline helper](docs/issue-26-safe-recovery.md). This may
+interrupt every bot in the supervisor. A UID registered with its prefix already
+works by exact equality. Prompt is_owner metadata is advisory, not this ACL.
+
+Quarantined traffic has its own bounded aggregate budget plus sender/session
+limits; it cannot exhaust healthy model admission or admit unlimited senders.
+Active rows retain the normal budget. Paused group chatter remains in the bounded
+context cache; control commands do not. The 300-second dispatch timeout can be
+adjusted for long tasks without waiving execution reconciliation.
+
 ### Unicode JSONL transport compatibility
 
 On macOS/Linux, an executable proxy escapes raw U+2028/U+2029 in CLI stdout before the SDK's `readline` reader. These are legal JSON string characters, but Node v24.10.0 treats them as line endings and can split valid events, yielding `Failed to parse item` and killing the SDK child. Escaping preserves the decoded event contents, including command output; UTF-8 chunks, stdin, stderr, backpressure and signals are forwarded. The proxy resolves the CLI dependency belonging to the installed SDK. Windows retains direct SDK launch; this Unix workaround is not a validated Windows fix.
 
-JSONL parse failures are logged as redacted categories, not rejected event payloads or subprocess stderr. Known threads may resume at most once; uncertain side effects prevent a fresh replay. Invalid events are never silently discarded. Tests reproduce the Node reader behavior and use the real SDK with synthetic executable fixtures, without model/network requests or private notes.
+JSONL parse failures are logged as redacted categories, not rejected event payloads or subprocess stderr. New user-authored turns may reuse the known thread; interrupted turns are never automatically resumed or replayed. Invalid events are never silently discarded. Tests reproduce the Node reader behavior and use the real SDK with synthetic executable fixtures, without model/network requests or private notes.
 
 If the proxy is missing, non-regular or not executable, the adapter warns once with `npm run build` instructions and falls back to direct SDK launch; this fallback does not provide the Unicode workaround. `dev` builds/copies the proxy before starting the TypeScript watcher (re-run build after editing the `.mjs`), and `prepack` builds before packaging. CI validates executable package contents and runs tests on Node 22 and 24.10.0. Bootstrap resolution failures emit a fixed actionable diagnostic, without paths or raw stderr. Logs retain built-in error classes and allowlisted OS/Node error codes; mutable error names/codes are not trusted as safe text.
 
@@ -191,13 +296,40 @@ After that, a bot's group conversation can be resumed in your terminal with `cod
 ## Development
 
 ```bash
-npm install
+npm ci              # reproduce the committed dependency lock
+npm run runtime:update  # refresh SDK + paired CLI to latest stable
 npm run build       # compile TypeScript and copy/chmod the JSONL proxy
 npm test            # vitest
 npm run lint        # eslint --max-warnings 0
 npm run type-check  # tsc --noEmit
 ```
 
+### Private operator diagnostics (opt-in)
+
+Set `sdk.privateDiagnostics: true` to retain local failure metadata correlated with task IDs. SDK message text is fingerprinted, never stored; public replies remain unchanged. Records use owner-only rotated files (three files of at most 1 MiB each). See [privacy, rotation, and interpretation](docs/private-diagnostics.md).
+
+### Codex runtime versions
+
+Fresh installs of the published adapter resolve `@openai/codex-sdk` from npm's stable `latest` tag. The SDK selects its own paired CLI; an unrelated globally installed `codex` is not used. The committed lockfile pins the tested pair for reproducible development builds (`npm ci`). An existing lockfile can keep an old runtime even after `npm install`.
+
+In a source/packaging checkout, explicitly refresh the runtime before testing and packaging:
+
+```bash
+npm ci
+npm run runtime:update
+npm run build
+npm test
+npm pack
+```
+
+`runtime:update` runs `npm update @openai/codex-sdk` and then `runtime:check`; it updates the checkout's lockfile while preserving the `latest` dependency tag. `runtime:check` resolves the CLI from the installed SDK, launches its actual `--version`, and reports SDK/CLI/native versions. It rejects missing or mismatched runtimes without invoking inference or requiring authentication. Do not copy old node_modules into a fresh install and assume the runtime was upgraded. This command changes dependencies; use a staging checkout and validate before deploying. It does not restart the gateway.
+
+CI covers both the committed lock and a refreshed latest stable runtime on Node 22/24, including strict types, native CLI startup, the real SDK/proxy/process regression suite and packaging. Future latest releases require a passing compatibility lane; an update failure must be reported, not silently presented as a successful upgrade. To deliberately reproduce an older release, use that release's committed lockfile. Never independently override the CLI version selected by the SDK.
+
 ## License
 
 Apache-2.0
+
+Detailed private diagnostics require both `sdk.privateDiagnostics: true` and `sdk.privateDiagnosticsDetails: true` (both default off). Only bounded allowlisted metadata is retained, never arbitrary message text. The hardened writer requires POSIX no-follow/directory/nonblocking flags and a pre-existing local data directory; symlinked ancestors, hard links and files accessible to group/others are rejected. Missing required flags fail closed before creating files. Native Windows and network/FUSE filesystem compatibility are not established. See [private diagnostics](docs/private-diagnostics.md).
+
+Mention admission compatibility: an oversized routing UID array is scanned for an exact receiving-bot UID, and a legacy scalar UID is accepted only on exact equality. This does not relax the bounded prompt snapshot: rejected metadata remains `invalid` and does not claim an explicit mention. No substring matching is used. Rendered teammate spans at offset zero are preserved; a leading bot prefix can be removed when only later entities exist.

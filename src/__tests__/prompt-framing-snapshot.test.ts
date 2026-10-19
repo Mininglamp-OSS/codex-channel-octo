@@ -1,9 +1,9 @@
 /**
  * T26 — prompt framing snapshot. The strings passed to `runStreamed` for the
  * initial, stream-recovery and stale-resume fresh-retry attempts must stay
- * byte-identical to the pre-output-selection bridge. The digests below were
- * recorded from the baseline bridge (upstream main c66504e, after sender-context framing) with this same
- * script; any edit to the framing changes them.
+ * stable with the merged sender/document/private-memory security prefix. The
+ * digests include private-memory background guidance even when no snapshot is
+ * supplied; any edit to the shared framing changes them.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
@@ -67,45 +67,16 @@ async function drain(opts?: Parameters<typeof queryAgent>[4]): Promise<void> {
   for await (const t of queryAgent('USER BODY', cfg(), undefined, undefined, opts)) void t;
 }
 
-describe('T26: prompt framing is byte-identical to baseline', () => {
-  it('initial → stale-resume fresh retry → stream recovery', async () => {
-    scriptedRuns = [
-      async function* () {
-        throw new Error('thread not found');
-      },
-      async function* () {
-        yield { type: 'thread.started', thread_id: 't2' };
-        throw new Error(interrupt);
-      },
-      async function* () {
-        yield { type: 'item.completed', item: { id: 'item_0', type: 'agent_message', text: 'ok' } };
-        yield { type: 'turn.completed', usage: {} };
-      },
-    ];
-    await drain({ resume: 'old', fallbackRetryPrompt: 'FALLBACK BODY', onResumeFailed: () => {} });
-    expect(prompts).toHaveLength(3);
-    const [initial, fresh, recovery] = prompts;
-    expect(initial.endsWith('\n\n---\n\n[Current message — respond to this ONLY]\nUSER BODY')).toBe(true);
-    expect(fresh.endsWith('\n\n---\n\n[Current message — respond to this ONLY]\nFALLBACK BODY')).toBe(true);
-    expect(recovery.endsWith('\n\n---\n\n[Current message — respond to this ONLY]\n上次回复因连接中断未完成。请基于你已经完成的工作，直接继续并给出最终结论，不要重复已执行过的步骤。')).toBe(true);
-    expect([sha(initial), sha(fresh), sha(recovery)]).toEqual([
-      'b01540d157ba507fd228df1d6e34106bb6a1d3684056f7e4b69d77729544dbae',
-      '0b7280f2ea02869baa389892879efc006725a3d8ea6ab2522555ed1858a73234',
-      '229691360bd2f6078a7ba3f7185e2d2dd912d973a525962bafe0a4300382ba09',
-    ]);
-  });
-
-  it('fresh retry without a fallback prompt reuses the initial prompt', async () => {
-    scriptedRuns = [
-      async function* () {
-        throw new Error('thread not found');
-      },
-      async function* () {
-        yield { type: 'turn.completed', usage: {} };
-      },
-    ];
-    await drain({ resume: 'old', onResumeFailed: () => {} });
-    expect(prompts).toHaveLength(2);
-    expect(prompts[1]).toBe(prompts[0]);
-  });
+describe('T26: framing keeps sender and private-memory guidance on a successful run', () => {
+ it('keeps the sender block and current-message anchor in the initial prompt',async()=>{
+  scriptedRuns=[async function*(){yield {type:'turn.completed',usage:{}};}];
+  await drain();expect(prompts).toHaveLength(1);
+  expect(prompts[0].endsWith('\n\n---\n\n[Current message — respond to this ONLY]\nUSER BODY')).toBe(true);
+  expect(sha(prompts[0])).toBe('fffa3e75f14799f20c9bf99926b293bd0371dbee62fea0455f5dcee986233f34');
+ });
+ it('never emits fallback or continuation prompts when execution is uncertain',async()=>{
+  scriptedRuns=[async function*(){throw new Error(interrupt);}];
+  await expect(drain({resume:'old'})).rejects.toThrow();
+  expect(prompts).toHaveLength(1);expect(prompts[0]).not.toContain('FALLBACK BODY');
+ });
 });

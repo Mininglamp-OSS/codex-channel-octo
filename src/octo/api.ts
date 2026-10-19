@@ -1,3 +1,5 @@
+import { AgentFailure, type OctoEndpoint } from '../agent-failure.js';
+import { parseRetryAfter } from '../agent-recovery.js';
 // Forked from openclaw-channel-octo v1.0.13 (2026-06-04)
 // Source: https://github.com/Mininglamp-OSS/openclaw-channel-octo
 // Removed: COS upload, GROUP.md API, OBO, rich text, media, thread/group management,
@@ -22,11 +24,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  */
 const MAX_HISTORICAL_PAYLOAD_BASE64_LEN = 256 * 1024;
 
-/**
- * Generate a client-side idempotency key (UUID) for outbound messages.
- *
- * WuKongIM uses client_msg_no for server-side dedup — identical client_msg_no
- * values result in only one stored message.
+/** Local correlation UUID only. The bot endpoint may ignore/replace it;
+ * it does not establish server-side idempotency and must not justify resends.
  */
 export function generateClientMsgNo(): string {
   return randomUUID();
@@ -52,6 +51,51 @@ export function parseOctoJson<T>(text: string): T {
   return JSON.parse(safeText) as T;
 }
 
+const FIXED_ENDPOINTS: readonly OctoEndpoint[] = [
+  '/v1/bot/sendMessage', '/v1/bot/register', '/v1/bot/typing', '/v1/bot/heartbeat',
+  '/v1/bot/readReceipt', '/v1/bot/messages/sync', '/v1/bot/upload/credentials',
+];
+function safeEndpoint(path: string): OctoEndpoint {
+  const bare = path.split('?')[0];
+  if (FIXED_ENDPOINTS.includes(bare as OctoEndpoint)) return bare as OctoEndpoint;
+  if (/^\/v1\/bot\/groups\/[^/]+\/threads\/[^/]+\/md$/.test(bare)) return '/v1/bot/groups/:group/threads/:thread/md';
+  if (/^\/v1\/bot\/groups\/[^/]+\/md$/.test(bare)) return '/v1/bot/groups/:group/md';
+  if (/^\/v1\/bot\/groups\/[^/]+\/mention_pref$/.test(bare)) return '/v1/bot/groups/:group/mention_pref';
+  if (/^\/v1\/bot\/groups\/[^/]+\/members$/.test(bare)) return '/v1/bot/groups/:group/members';
+  return 'other';
+}
+function apiFailure(path: string, status?: number, detail: 'http_status' | 'invalid_json' | 'response_read' | 'network' = 'http_status', retryAfterMs?: number): AgentFailure {
+  const endpoint = safeEndpoint(path);
+  const delivery = endpoint === '/v1/bot/sendMessage';
+  return new AgentFailure({ stage: delivery ? 'delivery' : 'prepare',
+    category: status === 401 ? 'auth' : status === 403 ? 'permission' : status === 429 ? 'rate_limited'
+      : detail === 'network' ? 'network_transient' : delivery ? 'delivery_failed' : 'api_failed',
+    source: 'octo_api', evidence: 'structured', endpoint, detail,
+    ...(status !== undefined ? { httpStatus: status } : {}),
+    ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+  });
+}
+async function request(path: string, url: string, init: RequestInit): Promise<Response> {
+  try { return await fetch(url, init); }
+  catch {
+    if (init.signal?.aborted) throw new DOMException('Octo request cancelled', 'AbortError');
+    throw apiFailure(path, undefined, 'network');
+  }
+}
+async function responseText(path: string, response: Response): Promise<string> {
+  try { return await response.text(); }
+  catch { throw apiFailure(path, response.status, 'response_read'); }
+}
+async function rejectResponse(path: string, response: Response): Promise<never> {
+  // Never log server bodies or statusText: they may echo credentials or content.
+  try { await response.body?.cancel(); } catch { /* preserve the HTTP failure */ }
+  throw apiFailure(path, response.status, 'http_status', parseRetryAfter(response.headers?.get('retry-after') ?? undefined));
+}
+function parseResponse<T>(path: string, status: number, text: string): T {
+  try { return parseOctoJson<T>(text); }
+  catch { throw apiFailure(path, status, 'invalid_json'); }
+}
+
 export async function postJson<T>(
   apiUrl: string,
   botToken: string,
@@ -60,8 +104,8 @@ export async function postJson<T>(
   signal?: AbortSignal,
 ): Promise<T | undefined> {
   const url = `${apiUrl.replace(/\/+$/, "")}${path}`;
-  const effectiveSignal = signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
-  const response = await fetch(url, {
+  const effectiveSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(DEFAULT_TIMEOUT_MS)]) : AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+  const response = await request(path, url, {
     method: "POST",
     headers: {
       ...DEFAULT_HEADERS,
@@ -71,18 +115,10 @@ export async function postJson<T>(
     signal: effectiveSignal,
   });
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Octo API ${path} failed (${response.status}): ${text || response.statusText}`);
-  }
-
-  const text = await response.text();
+  if (!response.ok) return rejectResponse(path, response);
+  const text = await responseText(path, response);
   if (!text) return undefined;
-  try {
-    return parseOctoJson<T>(text);
-  } catch {
-    throw new Error(`Octo API ${path} returned invalid JSON: ${text.slice(0, 200)}`);
-  }
+  return parseResponse<T>(path, response.status, text);
 }
 
 // ─── Message Sending ────────────────────────────────────────────────────────
@@ -160,24 +196,15 @@ export async function getUploadCredentials(params: {
 }> {
   const base = params.apiUrl.replace(/\/+$/, "");
   const url = `${base}/v1/bot/upload/credentials?filename=${encodeURIComponent(params.filename)}`;
-  const effectiveSignal = params.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
-  const response = await fetch(url, {
+  const effectiveSignal = params.signal ? AbortSignal.any([params.signal, AbortSignal.timeout(DEFAULT_TIMEOUT_MS)]) : AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+  const path = '/v1/bot/upload/credentials';
+  const response = await request(path, url, {
     method: "GET",
     headers: { Authorization: `Bearer ${params.botToken}` },
     signal: effectiveSignal,
   });
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    // P1 from PR#34 review: server may echo request headers (incl. Authorization
-    // bearer token) on some error responses. Cap at 200 chars and strip any
-    // "Authorization" / "Bearer" tokens defensively before surfacing.
-    const sanitized = text
-      .slice(0, 200)
-      .replace(/Bearer\s+\S+/gi, "Bearer ***")
-      .replace(/(authorization"?\s*[:=]\s*"?)[^"\s,}]+/gi, "$1***");
-    throw new Error(`Octo API /v1/bot/upload/credentials failed (${response.status}): ${sanitized || response.statusText}`);
-  }
-  const data = await response.json() as Record<string, unknown>;
+  if (!response.ok) return rejectResponse(path, response);
+  const data = parseResponse<Record<string, unknown>>(path, response.status, await responseText(path, response));
   // Validate required fields to catch backend API changes early.
   const missing = ['bucket', 'region', 'key', 'credentials'].filter(k => !data[k]);
   if (missing.length > 0) {
@@ -266,21 +293,18 @@ async function getJson<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   const url = `${apiUrl.replace(/\/+$/, "")}${path}`;
-  const effectiveSignal = signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
-  const resp = await fetch(url, {
+  const effectiveSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(DEFAULT_TIMEOUT_MS)]) : AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
+  const resp = await request(path, url, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${botToken}`,
     },
     signal: effectiveSignal,
   });
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`Octo API ${path} failed (${resp.status}): ${text || resp.statusText}`);
-  }
-  const text = await resp.text();
+  if (!resp.ok) return rejectResponse(path, resp);
+  const text = await responseText(path, resp);
   if (!text) return {} as T;
-  return parseOctoJson<T>(text);
+  return parseResponse<T>(path, resp.status, text);
 }
 
 // ─── Read Receipt ──────────────────────────────────────────────────────────

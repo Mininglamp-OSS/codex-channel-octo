@@ -52,7 +52,9 @@ describe("postJson default timeout", () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const options = mockFetch.mock.calls[0][1] as RequestInit;
-    expect(options.signal).toBe(controller.signal);
+    expect(options.signal).not.toBe(controller.signal);
+    controller.abort();
+    expect(options.signal!.aborted).toBe(true);
   });
 
   it("rejects with abort error when timeout fires", async () => {
@@ -114,7 +116,7 @@ describe("postJson default timeout", () => {
     expect(url).toBe("https://api.example.com/v1/bot/test");
   });
 
-  it("throws on non-ok response with status and body", async () => {
+  it("preserves status without exposing response body", async () => {
     mockFetch.mockResolvedValue({
       ok: false,
       status: 404,
@@ -124,9 +126,7 @@ describe("postJson default timeout", () => {
 
     await expect(
       postJson("https://api.example.com", "token", "/v1/bot/missing", {}),
-    ).rejects.toThrow(
-      "Octo API /v1/bot/missing failed (404): endpoint not found",
-    );
+    ).rejects.toMatchObject({snapshot:{httpStatus:404,stage:'prepare',endpoint:'other'}});
   });
 
   it("returns undefined for empty response body", async () => {

@@ -89,7 +89,7 @@ describe('getUploadCredentials', () => {
       .rejects.toThrow(/failed \(403\)/);
   });
 
-  it('sanitizes Bearer token in error body (P1 from PR#34 review)', async () => {
+  it('withholds Bearer token and server body (P1 from PR#34 review)', async () => {
     fetchMock.mockResolvedValueOnce(mockErrorResponse(
       401,
       'unauthorized: Authorization: Bearer bf_secret_token_12345',
@@ -103,11 +103,11 @@ describe('getUploadCredentials', () => {
     expect(captured).toBeDefined();
     // Token MUST NOT appear in the surfaced error message.
     expect(captured!.message).not.toContain('bf_secret_token_12345');
-    // Sanitization replacement marker present.
-    expect(captured!.message).toContain('***');
+    expect(captured!.message).toContain('/v1/bot/upload/credentials');
+    expect(captured).toMatchObject({ snapshot: { stage: 'prepare', category: 'auth', httpStatus: 401 } });
   });
 
-  it('sanitizes JSON-quoted authorization header', async () => {
+  it('withholds JSON-quoted authorization header', async () => {
     fetchMock.mockResolvedValueOnce(mockErrorResponse(
       500,
       '{"error":"oops","authorization":"bf_secret_in_json"}',
@@ -120,7 +120,7 @@ describe('getUploadCredentials', () => {
     }
     expect(captured).toBeDefined();
     expect(captured!.message).not.toContain('bf_secret_in_json');
-    expect(captured!.message).toContain('***');
+    expect(captured).toMatchObject({ snapshot: { stage: 'prepare', category: 'api_failed', httpStatus: 500 } });
   });
 
   it('caps error body at 200 chars', async () => {

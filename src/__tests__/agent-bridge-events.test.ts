@@ -1,13 +1,17 @@
+import { fileURLToPath } from 'node:url';
+import { TurnFailure, classifyFailure } from '../agent-failure.js';
 /**
  * agent-bridge typed-event tests (queryAgentEvents) — mocked @openai/codex-sdk.
  * Covers work identity / first-sight seq, message phase and revisions, attempt
  * markers across recovery and fresh retry, and the canonical options contract.
  */
+import { OutputCollector, DEFAULT_OUTPUT_SELECTION_MODE } from '../output-selection.js';
 import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
 
 type Ev = Record<string, unknown>;
 let scriptedRuns: Array<() => AsyncGenerator<Ev>>;
 let runIdx: number;
+let constructorError: Error | undefined;
 
 function makeThread() {
   return {
@@ -22,6 +26,7 @@ function makeThread() {
 
 vi.mock('@openai/codex-sdk', () => ({
   Codex: class {
+    constructor() { if(constructorError) throw constructorError; }
     startThread() {
       return makeThread();
     }
@@ -31,10 +36,17 @@ vi.mock('@openai/codex-sdk', () => ({
   },
 }));
 
+vi.mock('../execution-scope.js', async importOriginal => {
+  const original = await importOriginal<typeof import('../execution-scope.js')>();
+  return {...original, ExecutionScope: class extends original.ExecutionScope {
+    constructor() { super(fileURLToPath(new URL('./fixtures/owned-cli.mjs', import.meta.url))); }
+  }};
+});
+
 import { queryAgent, queryAgentEvents } from '../agent-bridge.js';
 import type { AgentOutputEvent, QueryAgentOptions } from '../agent-bridge.js';
 import type { Config } from '../config.js';
-import type { SafeText } from '../prompt-safety.js';
+import type { ManagedExecution } from '../execution-scope.js';
 
 function cfg(): Config {
   return {
@@ -73,7 +85,19 @@ const staleErr = 'thread not found';
 
 beforeEach(() => {
   runIdx = 0;
+  constructorError = undefined;
   scriptedRuns = [];
+});
+
+it('retains positive non-execution proof for an earlier spawn retry scope',async()=>{
+  scriptedRuns=[async function*(){throw Object.assign(new Error('synthetic'),{code:'EAGAIN',syscall:'spawn proxy'});},async function*(){yield started('thread');yield {type:'turn.failed',error:{message:'synthetic failure'}};}];
+  const config=cfg();config.sdk.recovery={enabled:true,baseDelayMs:1,maxDelayMs:1};const scopes:ManagedExecution[]=[];
+  try{
+    await expect((async()=>{for await(const event of queryAgentEvents('current request',config,undefined,undefined,{onManagedExecution:scope=>{scopes.push(scope);}}))void event;})()).rejects.toMatchObject({report:{first:{stage:'spawn'},attempts:2}});
+    expect(scopes).toHaveLength(2);expect(runIdx).toBe(2);
+    expect(await scopes[0].waitForStopped(0)).toBe(true);
+    expect(await scopes[1].waitForStopped(0)).toBe(false); // Mocked SDK launches no gateway-owned process.
+  }finally{scopes.forEach(scope=>scope.dispose());}
 });
 
 describe('work events', () => {
@@ -149,10 +173,11 @@ describe('message events', () => {
       yield msg('item_1', 'b', { phase: 'commentary' });
       yield msg('item_2', 'c', { phase: 'final_answer' });
       yield msg('item_3', 'd', { phase: 'something_else' });
+      yield msg('item_4', 'e', { phase: 'partial_answer' });
       yield turnDone;
     }];
     const phases = (await events()).filter((e) => e.kind === 'message').map((e) => (e as { phase: string }).phase);
-    expect(phases).toEqual(['unknown', 'commentary', 'final_answer', 'unknown']);
+    expect(phases).toEqual(['unknown', 'commentary', 'final_answer', 'unknown', 'partial_answer']);
   });
 
   it('T2: a snapshot of the same item keeps its first-sight seq', async () => {
@@ -173,80 +198,32 @@ describe('message events', () => {
 });
 
 describe('attempt markers', () => {
-  it('T5: a stream without turn.completed ends with terminal no_terminal', async () => {
+  it('T5: EOF without turn.completed fails without an attempt_end', async () => {
     scriptedRuns = [async function* () {
       yield started('t1');
       yield msg('item_0', 'partial');
       yield item('item_1', 'command_execution', 'started', { command: 'sleep 60' });
     }];
-    const evs = await events();
+    const evs: AgentOutputEvent[] = [];
+    await expect((async () => {
+      for await (const event of queryAgentEvents('hi', cfg())) evs.push(event);
+    })()).rejects.toMatchObject({ report: {
+      attempts: 1, executionRisk: 'effects_observed',
+      final: { category: 'stream_interrupted', source: 'local' },
+    } });
     expect(evs[0]).toEqual({ kind: 'attempt_start', attempt: 0, reason: 'initial', continues: null });
-    expect(evs.at(-1)).toEqual({ kind: 'attempt_end', attempt: 0, terminal: 'no_terminal' });
+    expect(evs.some(event => event.kind === 'attempt_end')).toBe(false);
   });
 
-  it('T7: stream interrupt → recovery attempt continues the interrupted one; seq stays monotonic', async () => {
-    scriptedRuns = [
-      async function* () {
-        yield started('t1');
-        yield msg('item_0', 'lost');
-        throw new Error(interrupt);
-      },
-      async function* () {
-        yield started('t1');
-        yield msg('item_0', 'kept');
-        yield turnDone;
-      },
-    ];
-    const evs = await events();
-    expect(evs).toEqual([
-      { kind: 'attempt_start', attempt: 0, reason: 'initial', continues: null },
-      { kind: 'message', attempt: 0, itemId: 'item_0', seq: 0, text: 'lost', phase: 'unknown' },
-      { kind: 'attempt_start', attempt: 1, reason: 'stream_recovery', continues: 0 },
-      { kind: 'message', attempt: 1, itemId: 'item_0', seq: 1, text: 'kept', phase: 'unknown' },
-      { kind: 'attempt_end', attempt: 1, terminal: 'completed' },
-    ]);
-  });
+  it.each([{message:interrupt,resume:undefined,partial:false},{message:staleErr,resume:'old',partial:false},{message:interrupt,resume:'old',partial:true},{message:staleErr,resume:'old',partial:true}])('has no recovery attempt/end after $message (partial=$partial)',async({message,resume,partial})=>{
+ scriptedRuns=[async function*(){yield started('t');if(partial)yield msg('before','partial');throw new Error(message);}];const seen:AgentOutputEvent[]=[];
+ await expect((async()=>{for await(const e of queryAgentEvents('hi',cfg(),undefined,undefined,{resume}))seen.push(e);})()).rejects.toMatchObject({report:{attempts:1,decision:'blocked_uncertain'}});
+ expect(seen.map(e=>e.kind)).toEqual(partial?['attempt_start','message']:['attempt_start']);expect(runIdx).toBe(1);
+ });
 
-  it('T8: stale resume → fresh_retry with continues null (stale attempt not in lineage)', async () => {
-    scriptedRuns = [
-      async function* () {
-        yield msg('item_0', 'stale text');
-        throw new Error(staleErr);
-      },
-      async function* () {
-        yield started('t2');
-        yield msg('item_0', 'fresh');
-        yield turnDone;
-      },
-    ];
-    const evs = await events({ resume: 'old', fallbackRetryPrompt: 'with history', onResumeFailed: () => {} });
-    expect(evs.filter((e) => e.kind === 'attempt_start')).toEqual([
-      { kind: 'attempt_start', attempt: 0, reason: 'initial', continues: null },
-      { kind: 'attempt_start', attempt: 1, reason: 'fresh_retry', continues: null },
-    ]);
-  });
 
-  it('T7d: stale → fresh retry → stream recovery continues the fresh attempt', async () => {
-    scriptedRuns = [
-      async function* () {
-        throw new Error(staleErr);
-      },
-      async function* () {
-        yield started('t2');
-        throw new Error(interrupt);
-      },
-      async function* () {
-        yield started('t2');
-        yield turnDone;
-      },
-    ];
-    const evs = await events({ resume: 'old', onResumeFailed: () => {} });
-    expect(evs.filter((e) => e.kind === 'attempt_start')).toEqual([
-      { kind: 'attempt_start', attempt: 0, reason: 'initial', continues: null },
-      { kind: 'attempt_start', attempt: 1, reason: 'fresh_retry', continues: null },
-      { kind: 'attempt_start', attempt: 2, reason: 'stream_recovery', continues: 1 },
-    ]);
-  });
+
+
 
   it('T6: an error after partial output propagates (no attempt_end)', async () => {
     scriptedRuns = [async function* () {
@@ -257,36 +234,194 @@ describe('attempt markers', () => {
     const seen: AgentOutputEvent[] = [];
     await expect((async () => {
       for await (const ev of queryAgentEvents('hi', cfg())) seen.push(ev);
-    })()).rejects.toThrow('boom');
+    })()).rejects.toBeInstanceOf(TurnFailure);
     expect(seen.some((e) => e.kind === 'attempt_end')).toBe(false);
   });
 
-  it('a message observed mid-run does not block a stale-resume fresh retry (baseline gating)', async () => {
-    scriptedRuns = [
-      async function* () {
-        yield msg('item_0', 'early');
-        throw new Error(staleErr);
-      },
-      async function* () {
-        yield started('t2');
-        yield msg('item_0', 'fresh');
-        yield turnDone;
-      },
-    ];
-    const out: string[] = [];
-    for await (const t of queryAgent('hi', cfg(), undefined, undefined, { resume: 'old', onResumeFailed: () => {} })) out.push(t);
-    expect(out).toEqual(['fresh']);
+
+});
+
+describe('intermediate CLI notifications', () => {
+  const notification = (kind: 'stream' | 'item'): Ev => kind === 'stream'
+    ? { type: 'error', message: 'Reconnecting... 2/5 (synthetic transport interruption)' }
+    : item('warning', 'error', 'completed', {
+      message: 'Falling back from WebSockets to HTTPS transport. Synthetic interruption',
+    });
+
+  it.each(['stream', 'item'].flatMap(kind =>
+    ['absent', 'empty', 'spaces', 'formatting', 'erased', 'mixed-phases'].map(output => ({ kind, output })),
+  ))('rejects a silent completed turn ($kind, $output) without an attempt_end', async ({ kind, output }) => {
+    scriptedRuns = [async function* () {
+      yield started('thread');
+      yield item('work', 'file_change', 'completed', { changes: [] });
+      if (kind === 'stream') yield { type: 'error', message: 'authentication failed' };
+      else yield item('error', 'error', 'completed', { message: 'authentication failed' });
+      if (output === 'erased') yield msg('answer', 'discarded snapshot', {}, 'updated');
+      if (output === 'mixed-phases') yield msg('commentary', 'still working', { phase: 'commentary' });
+      if (output !== 'absent') yield msg('answer', (output === 'spaces' || output === 'mixed-phases') ? '  \n' : output === 'formatting' ? '\u200b\u2060' : '');
+      yield turnDone;
+    }];
+    const seen: AgentOutputEvent[] = [];
+    await expect((async () => {
+      for await (const event of queryAgentEvents('hi', cfg())) seen.push(event);
+    })()).rejects.toMatchObject({ report: { attempts: 1, decision: 'blocked_uncertain',
+      executionRisk: 'effects_observed', final: { category: 'auth' } } });
+    expect(seen.some(event => event.kind === 'attempt_end')).toBe(false);
+    expect(runIdx).toBe(1);
+  });
+
+  it.each(['stream', 'item'].flatMap(kind => [
+    ['authentication failed', 'auth'], ['quota exhausted', 'quota_exhausted'],
+    ['context window exceeded', 'context_limit'], ['invalid encrypted content', 'invalid_encrypted_content'],
+    ['permission denied', 'permission'], ['unrecognized synthetic error', 'unknown'],
+  ].map(([message, category]) => ({ kind, message, category }))))('retains $category on silent $kind completion', async ({ kind, message, category }) => {
+    scriptedRuns = [async function* () {
+      if (kind === 'stream') yield { type: 'error', message };
+      else yield item('error', 'error', 'completed', { message });
+      yield turnDone;
+    }];
+    await expect(events()).rejects.toMatchObject({ report: { attempts: 1, decision: 'blocked_uncertain', final: { category } } });
+    expect(runIdx).toBe(1);
+  });
+
+  it('keeps an earlier genuine failure when a later reconnect notice precedes silent completion', async () => {
+    scriptedRuns = [async function* () {
+      yield item('error', 'error', 'completed', { message: 'authentication failed' });
+      yield notification('stream'); yield turnDone;
+    }];
+    await expect(events()).rejects.toMatchObject({ report: { final: { category: 'auth' }, attempts: 1 } });
+  });
+
+  it('uses the configured output selection rules for compatibility whitespace replies', async () => {
+    scriptedRuns = [async function* () { yield notification('stream'); yield msg('answer', '  '); yield turnDone; }];
+    const config = cfg(); config.sdk.outputSelection = 'legacy';
+    const seen: AgentOutputEvent[] = [];
+    for await (const event of queryAgentEvents('hi', config)) seen.push(event);
+    expect(seen.at(-1)).toMatchObject({ kind: 'attempt_end', terminal: 'completed' });
+  });
+
+  it('logs one fixed deferred marker and a bounded recovery count without SDK text', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      scriptedRuns = [async function* () {
+        yield { type: 'error', message: 'SYNTHETIC_PRIVATE_ERROR' };
+        yield { type: 'error', message: 'SYNTHETIC_PRIVATE_ERROR_AGAIN' };
+        yield msg('answer', 'answer'); yield turnDone;
+      }];
+      await events();
+      expect(warn.mock.calls).toEqual([
+        ['[codex-channel-octo] CLI notification deferred'],
+        ['[codex-channel-octo] CLI notifications recovered', JSON.stringify({ count: 2 })],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('SYNTHETIC_PRIVATE');
+    } finally { warn.mockRestore(); }
+  });
+
+  it.each(['stream', 'item'] as const)('continues the same execution after a %s notification and snapshot revision', async kind => {
+    let drained = false;
+    scriptedRuns = [async function* () {
+      yield started('thread');
+      yield msg('answer', 'early text', {}, 'updated');
+      yield item('work', 'command_execution', 'started', { command: 'synthetic' });
+      yield notification(kind);
+      yield notification(kind);
+      yield msg('answer', 'completed answer');
+      yield turnDone;
+      drained = true;
+    }];
+    const text = [];
+    for await (const part of queryAgent('hi', cfg(), undefined, undefined, { resume: 'existing-thread' })) text.push(part);
+    expect(text).toEqual(['completed answer']);
+    expect(drained).toBe(true);
+    expect(runIdx).toBe(1);
+  });
+
+  it.each(['stream', 'item'] as const)('uses a later turn.failed instead of the earlier %s notification', async kind => {
+    scriptedRuns = [async function* () {
+      yield started('thread');
+      yield notification(kind);
+      yield msg('answer', 'must not be published');
+      yield item('work', 'file_change', 'completed', { changes: [] });
+      yield { type: 'turn.failed', error: { message: 'authentication failed' } };
+    }];
+    const seen: AgentOutputEvent[] = [];
+    await expect((async () => {
+      for await (const event of queryAgentEvents('hi', cfg(), undefined, undefined)) seen.push(event);
+    })()).rejects.toMatchObject({ report: {
+      attempts: 1, decision: 'blocked_uncertain', executionRisk: 'effects_observed',
+      final: { source: 'sdk_event', category: 'auth' },
+    } });
+    expect(seen.some(event => event.kind === 'attempt_end')).toBe(false);
+    expect(runIdx).toBe(1);
+  });
+
+  it.each(['stream', 'item', 'none'] as const)('rejects partial output followed by EOF (%s notification)', async kind => {
+    scriptedRuns = [async function* () {
+      yield started('thread');
+      if (kind !== 'none') yield notification(kind);
+      yield msg('answer', 'must not be published');
+    }];
+    const published: string[] = [];
+    await expect((async () => {
+      for await (const text of queryAgent('hi', cfg())) published.push(text);
+    })()).rejects.toBeInstanceOf(TurnFailure);
+    expect(published).toEqual([]);
+    expect(runIdx).toBe(1);
+  });
+
+  it.each(['stream', 'item'] as const)('preserves a process exception after a %s notification', async kind => {
+    scriptedRuns = [async function* () {
+      yield started('thread');
+      yield notification(kind);
+      yield turnDone;
+      throw new Error('Codex Exec exited with code 1: SYNTHETIC_PRIVATE_STDERR');
+    }];
+    await expect(events()).rejects.toMatchObject({ report: {
+      attempts: 1, final: { stage: 'process_exit', category: 'process_exit' },
+    } });
+    expect(runIdx).toBe(1);
+  });
+
+  it.each(['stream', 'item'] as const)('does not hide a %s error arriving after turn.completed', async kind => {
+    scriptedRuns = [async function* () {
+      yield started('thread');
+      yield msg('answer', 'must not be published');
+      yield turnDone;
+      yield notification(kind);
+    }];
+    await expect(events()).rejects.toBeInstanceOf(TurnFailure);
+    expect(runIdx).toBe(1);
+  });
+
+  it('still rejects a terminal failure following turn.completed', async () => {
+    scriptedRuns = [async function* () {
+      yield started('thread');
+      yield turnDone;
+      yield { type: 'turn.failed', error: { message: 'permission denied' } };
+    }];
+    await expect(events()).rejects.toMatchObject({ report: { final: { category: 'permission' } } });
+  });
+
+  it('retains cancellation and closes the iterator while a notification is pending', async () => {
+    const controller = new AbortController();
+    let closed = false;
+    scriptedRuns = [async function* () {
+      try {
+        yield started('thread');
+        yield notification('stream');
+        controller.abort();
+        controller.signal.throwIfAborted();
+      } finally { closed = true; }
+    }];
+    await expect(events({ signal: controller.signal })).rejects.toMatchObject({ report: { decision: 'cancelled' } });
+    expect(closed).toBe(true);
+    expect(runIdx).toBe(1);
   });
 });
 
 describe('T14: queryAgent wrapper keeps baseline string output', () => {
   it('yields only the completed run, first-seen order, non-empty, snapshot-overwritten', async () => {
     scriptedRuns = [
-      async function* () {
-        yield started('t1');
-        yield msg('item_0', 'lost');
-        throw new Error(interrupt);
-      },
       async function* () {
         yield started('t1');
         yield msg('item_0', 'a1', {}, 'updated');
@@ -309,43 +444,267 @@ describe('T25: one canonical options contract', () => {
     expectTypeOf<Parameters<typeof queryAgent>>().toEqualTypeOf<Parameters<typeof queryAgentEvents>>();
   });
 
-  it('preserves every existing option field', () => {
+  it('exposes only supported query options', () => {
+    expectTypeOf<Extract<keyof QueryAgentOptions, 'onResumeFailed' | 'fallbackRetryPrompt'>>().toEqualTypeOf<never>();
     expectTypeOf<QueryAgentOptions>().toEqualTypeOf<{
       resume?: string;
       onSessionId?: (id: string, prompt: string) => void;
       groupInstructions?: string;
-      senderContext?: SafeText;
-      onResumeFailed?: () => void;
-      fallbackRetryPrompt?: string;
+      senderContext?: import('../prompt-safety.js').SafeText;
+      signal?: AbortSignal;
+      deadline?: number;
+      diagnosticId?: string;
+      assertPublishable?: () => void;
+      onExecutionRisk?: (risk: import('../agent-failure.js').ExecutionRisk) => void;
+      privateMemoryContext?: import('../prompt-safety.js').SafeText;
+      onManagedExecution?: (execution: import('../execution-scope.js').ManagedExecution) => void;
+      interruptedTurn?: import('../turn-context.js').InterruptedTurn;
     }>();
   });
 
-  it('options flow through the wrapper (onSessionId, onResumeFailed)', async () => {
-    scriptedRuns = [
-      async function* () {
-        throw new Error(staleErr);
-      },
-      async function* () {
-        yield started('t-new');
-        yield msg('item_0', 'ok');
-        yield turnDone;
-      },
-    ];
-    const ids: string[] = [];
-    const reportedPrompts: string[] = [];
-    let cleared = 0;
-    const out: string[] = [];
-    for await (const t of queryAgent('hi', cfg(), undefined, undefined, {
-      resume: 'old',
-      fallbackRetryPrompt: 'fresh document context',
-      onSessionId: (id, prompt) => { ids.push(id); reportedPrompts.push(prompt); },
-      onResumeFailed: () => cleared++,
-    })) out.push(t);
-    expect(out).toEqual(['ok']);
-    expect(ids).toEqual(['t-new']);
-    expect(reportedPrompts).toHaveLength(1);
-    expect(reportedPrompts[0]).toContain('fresh document context');
-    expect(reportedPrompts[0]).not.toContain('\n\nhi');
-    expect(cleared).toBe(1);
+  it('onSessionId observes the current attempt without a replay callback',async()=>{
+ const session=vi.fn();scriptedRuns=[async function*(){yield started('t');yield turnDone;}];
+ await events({resume:'t',onSessionId:session});expect(session).toHaveBeenCalledWith('t',expect.stringContaining('hi'));
+ });
+});
+
+// The real bridge sees SDK-style id/type/text items with no phase property.
+describe('unlabeled SDK events through default output selection', () => {
+  it.each([false, true])('excludes progress (tool boundary=%s)', async withTool => {
+    scriptedRuns = [async function* () {
+      yield started('thread');
+      yield msg('progress', 'I will inspect the code. '.repeat(500));
+      if (withTool) yield item('tool', 'command_execution', 'completed', { command: 'true' });
+      yield msg('answer', 'The fix is complete.');
+      yield turnDone;
+    }];
+    const collector = new OutputCollector();
+    const observed = await events();
+    for (const event of observed) collector.push(event);
+    expect(observed.filter(e => e.kind === 'message').map(e => e.phase)).toEqual(['unknown', 'unknown']);
+    expect(collector.select({ mode: DEFAULT_OUTPUT_SELECTION_MODE, maxChars: 1000 }))
+      .toMatchObject({ text: 'The fix is complete.', source: 'last_message', droppedMessageCount: 1 });
+  });
+
+  it('normalizes an agent_message started without text at the real bridge boundary', async () => {
+    scriptedRuns = [async function* () {
+      yield started('thread');
+      yield msg('answer', 'Useful answer');
+      yield { type: 'item.started', item: { id: 'unfinished', type: 'agent_message' } };
+      yield turnDone;
+    }];
+    const observed = await events();
+    expect(observed.find(e => e.kind === 'message' && e.itemId === 'unfinished'))
+      .toMatchObject({ text: '' });
+    const collector = new OutputCollector();
+    observed.forEach(event => collector.push(event));
+    expect(collector.select({ mode: DEFAULT_OUTPUT_SELECTION_MODE, maxChars: 1000 }).text).toBe('Useful answer');
+  });
+});
+
+// Provenance is local only and must not acquire execution/retry authority.
+import { createHash } from 'node:crypto';
+import { privateDiagnosticRow } from '../private-diagnostics.js';
+import { failureReply } from '../agent-failure.js';
+describe('detailed SDK diagnostics through the bridge',()=>{
+ const id='3f8d62cf-fca8-4e92-a0a0-cdb5db5c6ab2';
+ async function failed(config:Config,resume?:string) {
+  try {for await(const ev of queryAgentEvents('PRIVATE_PROMPT',config,undefined,undefined,{resume,diagnosticId:id}))void ev;}
+  catch(error){expect(error).toBeInstanceOf(TurnFailure);return error as TurnFailure;}
+  throw Error('expected failure');
+ }
+ it.each(['item.started','item.updated','item.completed','turn.failed','error','exception'])('captures %s before classification and preserves the failure',async type=>{
+  const fields={message:'PRIVATE_SDK_FAILURE',code:'invalid_encrypted_content',status:400,exitCode:9,signal:'SIGTERM',stderr:'PRIVATE_STDERR'};
+  scriptedRuns=[async function*(){yield started('PRIVATE_THREAD');yield {type:'turn.started',turn_id:'PRIVATE_TURN'};
+   if(type==='exception')throw Object.assign(new Error(fields.message),fields);
+   if(type.startsWith('item.'))yield {type,item:{...fields,id:'error',type:'error'}};
+   else if(type==='turn.failed')yield {type,error:fields};else yield {type,...fields};
+  }];
+  const config=cfg();config.sdk={privateDiagnostics:true,privateDiagnosticsDetails:true,recovery:{enabled:true}};
+  const error=await failed(config,'PRIVATE_RESUME');
+  expect(error.report).toMatchObject({diagnosticId:id,attempts:1,decision:'blocked_uncertain',final:{category:'unknown'}});
+  const row=privateDiagnosticRow(error.report,error);
+  expect(row).toMatchObject({diagnosticId:id,sdk:{event:type.startsWith('item.')?'item.error':type,detail:{code:fields.code,status:400,
+   exitCode:9,signal:'SIGTERM',exitSource:'own_field',eventSubtype:type,mode:'resume',attempt:0,
+   resumeFingerprint:createHash('sha256').update('PRIVATE_RESUME').digest('hex'),
+   threadFingerprint:createHash('sha256').update('PRIVATE_THREAD').digest('hex'),turnFingerprint:createHash('sha256').update('PRIVATE_TURN').digest('hex')}}});
+  expect(JSON.stringify(row)).not.toMatch(/PRIVATE_|stderr/);expect(JSON.stringify(error)).not.toMatch(/PRIVATE_|"sdk":|Fingerprint|exitCode/);
+  expect(failureReply(error.report)).not.toMatch(/PRIVATE_|"sdk":|Fingerprint|exitCode/);expect(runIdx).toBe(1);
+ });
+ it.each([[undefined,undefined],[true,undefined],[false,true],[undefined,true],[true,true]])('requires both flags (private=%s, detailed=%s)',async(enabled,detailed)=>{
+  scriptedRuns=[async function*(){yield started('PRIVATE_THREAD');yield {type:'turn.failed',error:{message:'rate limit exceeded',status:429}};}];
+  const config=cfg();config.sdk={privateDiagnostics:enabled,privateDiagnosticsDetails:detailed};const error=await failed(config);
+  const row=privateDiagnosticRow(error.report,error);
+  if(enabled)expect(row).toHaveProperty('sdk');else expect(row).not.toHaveProperty('sdk');
+  if(enabled&&detailed){expect(row).toMatchObject({sdk:{detail:{mode:'start',attempt:0,templateId:'rate_limit',status:429}}});expect(row).not.toHaveProperty('sdk.detail.resumeFingerprint');}
+  else expect(row).not.toHaveProperty('sdk.detail');
+  expect(error.report).toMatchObject({diagnosticId:id,attempts:1,final:{category:'rate_limited',httpStatus:429}});expect(runIdx).toBe(1);
+ });
+ it('keeps the final retry attempt correlation distinct',async()=>{
+  scriptedRuns=[async function*(){throw Object.assign(new Error('spawn synthetic'),{code:'EAGAIN',syscall:'spawn proxy'});},
+   async function*(){yield started('new-thread');yield {type:'error',message:'PRIVATE_FINAL'};}];
+  const config=cfg();config.sdk={privateDiagnostics:true,privateDiagnosticsDetails:true,recovery:{enabled:true,baseDelayMs:1,maxDelayMs:1}};
+  const error=await failed(config);
+  expect(error.report).toMatchObject({attempts:2,final:{category:'unknown'}});
+  expect(privateDiagnosticRow(error.report,error)).toMatchObject({sdk:{event:'error',detail:{mode:'start',attempt:1,threadFingerprint:createHash('sha256').update('new-thread').digest('hex')}}});
+  expect(runIdx).toBe(2);
+ });
+});
+
+describe('notice correlation without broader suppression',()=>{
+ it('records only a fixed notice ID then still throws the real failure',async()=>{
+  const warning=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  const config=cfg();config.sdk={privateDiagnostics:true,privateDiagnosticsDetails:true};
+  scriptedRuns=[async function*(){yield {type:'item.completed',item:{id:'notice',type:'error',message:'Model metadata for `PRIVATE_MODEL` not found. Defaulting to fallback metadata.'}};
+   yield {type:'turn.failed',error:{message:'PRIVATE_REAL_FAILURE with notice keywords model metadata'}};}];
+  let caught:unknown;
+  try{for await(const event of queryAgentEvents('request',config))void event;}catch(error){caught=error;}finally{warning.mockRestore();}
+  expect(caught).toBeInstanceOf(TurnFailure);const failure=caught as TurnFailure;
+  expect(privateDiagnosticRow(failure.report,failure)).toMatchObject({sdk:{event:'turn.failed',detail:{noticeTemplateId:'model_metadata_notice'}}});
+  expect(JSON.stringify(privateDiagnosticRow(failure.report,failure))).not.toMatch(/PRIVATE_/);expect(runIdx).toBe(1);
+ });
+});
+
+describe('proxy correlation review regression',()=>{
+ it.each(['thread.started','turn.started'])('never executes a diagnostic descriptor trap on %s',async type=>{
+  let traps=0;
+  const event=new Proxy({type,thread_id:'PRIVATE_THREAD',turn_id:'PRIVATE_TURN'}, {
+   getOwnPropertyDescriptor(target,key){traps++;return Reflect.getOwnPropertyDescriptor(target,key);},
+  });
+  scriptedRuns=[async function*(){yield event;yield {type:'error',message:'PRIVATE_FAILURE'};}];
+  const config=cfg();config.sdk={privateDiagnostics:true,privateDiagnosticsDetails:true};let caught:unknown;
+  try{for await(const value of queryAgentEvents('request',config))void value;}catch(error){caught=error;}
+  expect(traps).toBe(0);expect(caught).toBeInstanceOf(TurnFailure);const failure=caught as TurnFailure;
+  const row=privateDiagnosticRow(failure.report,failure);
+  expect(row).toMatchObject({sdk:{event:'error',detail:{mode:'start'}}});
+  expect(row).not.toHaveProperty('sdk.detail.threadFingerprint');expect(row).not.toHaveProperty('sdk.detail.turnFingerprint');
+ });
+});
+
+describe('review regressions: SDK accessors and hash-only provenance',()=>{
+ it.each([{}, {privateDiagnostics:true}, {privateDiagnostics:true,privateDiagnosticsDetails:true}])('reads SDK accessors once regardless of diagnostic flags %j',async sdk=>{
+  for (const type of ['item.started','item.updated','item.completed','turn.failed','error']) {
+   let typeReads=0,errorReads=0,messageReads=0;
+   const fields={get message(){if(++messageReads>1)throw Error('PRIVATE_SECOND_MESSAGE_READ');return 'rate limit exceeded';}};
+   const event={get type(){if(++typeReads>1)throw Error('PRIVATE_SECOND_TYPE_READ');return type;},
+    get error(){if(++errorReads>1)throw Error('PRIVATE_SECOND_ERROR_READ');return fields;},
+    get message(){return fields.message;},item:{id:'error',type:'error',get message(){return fields.message;}}};
+   runIdx=0;scriptedRuns=[async function*(){yield event;}];const config=cfg();config.sdk=sdk;let caught:unknown;
+   try{for await(const value of queryAgentEvents('request',config))void value;}catch(error){caught=error;}
+   expect(caught).toBeInstanceOf(TurnFailure);const failure=caught as TurnFailure;
+   expect(failure.report).toMatchObject({attempts:1,final:{category:'rate_limited',httpStatus:429}});
+   expect(typeReads).toBe(1);expect(messageReads).toBe(1);expect(errorReads).toBe(type==='turn.failed'?1:0);
+   if(sdk.privateDiagnostics)expect(privateDiagnosticRow(failure.report,failure)).toMatchObject({sdk:{event:type.startsWith('item.')?'item.error':type,
+    fingerprint:createHash('sha256').update('rate limit exceeded').digest('hex'),messageBytes:19}});
+  }
+ });
+ it('preserves original hash-only event and fingerprint when optional detail fields are a proxy',async()=>{
+  let traps=0;const message='stream closed before response.completed';
+  const fields=new Proxy({message},{getOwnPropertyDescriptor(target,key){traps++;return Reflect.getOwnPropertyDescriptor(target,key);}});
+  scriptedRuns=[async function*(){yield {type:'turn.failed',error:fields};}];const config=cfg();config.sdk={privateDiagnostics:true};let caught:unknown;
+  try{for await(const value of queryAgentEvents('request',config))void value;}catch(error){caught=error;}
+  const failure=caught as TurnFailure;expect(failure).toBeInstanceOf(TurnFailure);expect(traps).toBe(0);
+  expect(failure.report.final.category).toBe('stream_interrupted');
+  const row=privateDiagnosticRow(failure.report,failure);
+  expect(row).toMatchObject({sdk:{event:'turn.failed',fingerprint:createHash('sha256').update(message).digest('hex'),messageBytes:39,fingerprintTruncated:false}});
+  expect(row).not.toHaveProperty('sdk.detail');
+ });
+});
+
+
+describe('SDK construction diagnostic coverage',()=>{
+ it.each([{}, {privateDiagnostics:true}, {privateDiagnosticsDetails:true}, {privateDiagnostics:true,privateDiagnosticsDetails:true}])('preserves construction failure behavior %j',async sdk=>{
+  constructorError=Object.assign(new Error('PRIVATE_CONSTRUCTION_FAILURE'),{code:'ENOENT'});
+  const config=cfg();config.sdk={...sdk,recovery:{enabled:true}};let caught:unknown;
+  try{for await(const value of queryAgentEvents('request',config,undefined,undefined,{resume:'PRIVATE_RESUME'}))void value;}catch(error){caught=error;}
+  expect(caught).toBe(constructorError);expect(caught).not.toBeInstanceOf(TurnFailure);expect(runIdx).toBe(0);
+  const report={diagnosticId:'3f8d62cf-fca8-4e92-a0a0-cdb5db5c6ab2',attempts:1,decision:'not_attempted' as const,executionRisk:'unknown' as const,
+   first:{stage:'inference' as const,category:'unknown' as const,source:'sdk_exception' as const,evidence:'unknown' as const},
+   final:{stage:'inference' as const,category:'unknown' as const,source:'sdk_exception' as const,evidence:'unknown' as const}};
+  const row=privateDiagnosticRow(report,caught);
+  if(sdk.privateDiagnostics && sdk.privateDiagnosticsDetails){
+   expect(row).toMatchObject({sdk:{event:'exception',code:'ENOENT',detail:{code:'ENOENT',mode:'resume',attempt:0,eventSubtype:'exception',
+    resumeFingerprint:createHash('sha256').update('PRIVATE_RESUME').digest('hex')}}});
+  }else expect(row).not.toHaveProperty('sdk');
+  expect(JSON.stringify(row)).not.toMatch(/PRIVATE_/);
+ });
+});
+
+
+describe('constructor prototype-proxy review regressions',()=>{
+ it.each(['throw','mutate'])('never traverses an error prototype during constructor diagnostics: %s',async behavior=>{
+  for(const sdk of [{}, {privateDiagnostics:true}, {privateDiagnostics:true,privateDiagnosticsDetails:true}]){
+   let traps=0;const original=new Error('PRIVATE_ORIGINAL');const replacement=new Error('PRIVATE_REPLACEMENT');
+   Object.setPrototypeOf(original,new Proxy(Error.prototype,{getPrototypeOf(){traps++;if(behavior==='throw')throw replacement;original.message='PRIVATE_MUTATED';return Error.prototype;}}));
+   constructorError=original;const config=cfg();config.sdk=sdk;let caught:unknown;
+   try{for await(const value of queryAgentEvents('request',config))void value;}catch(error){caught=error;}
+   expect(caught).toBe(original);expect(traps).toBe(0);expect(original.message).toBe('PRIVATE_ORIGINAL');expect(runIdx).toBe(0);
+  }
+ });
+});
+
+
+describe('stream catch diagnostic reflection regressions', () => {
+ it.each([false, true])('does not traverse a proxy prototype (details=%s)', async detailed => {
+  let traps = 0;
+  const original = new Error('PRIVATE_ORIGINAL');
+  Object.setPrototypeOf(original, new Proxy(Error.prototype, {
+   getPrototypeOf() { traps++; throw new Error('PRIVATE_REPLACEMENT'); },
+  }));
+  scriptedRuns = [async function* () { throw original; }];
+  const config = cfg(); config.sdk = {privateDiagnostics:true, privateDiagnosticsDetails:detailed};
+  let caught: unknown;
+  try { for await (const value of queryAgentEvents('request', config)) void value; } catch (error) { caught=error; }
+  expect(traps).toBe(0); expect(runIdx).toBe(1);
+  expect(caught).toBeInstanceOf(TurnFailure);
+  expect((caught as TurnFailure).report.final.category).toBe('unknown');
+ });
+ it('never executes a caught error message getter', async () => {
+  let reads = 0; const original = new Error();
+  Object.defineProperty(original, 'message', {get() { reads++; throw new Error('PRIVATE_GETTER'); }});
+  scriptedRuns = [async function* () { throw original; }];
+  const config=cfg(); config.sdk={privateDiagnostics:true,privateDiagnosticsDetails:true};
+  let caught:unknown;
+  try { for await(const value of queryAgentEvents('request',config))void value; } catch(error) {caught=error;}
+  expect(reads).toBe(0);expect(caught).toBeInstanceOf(TurnFailure);expect(runIdx).toBe(1);
+ });
+});
+
+
+describe('DOMException private diagnostic compatibility', () => {
+ it.each(['AbortError','TimeoutError'])('preserves %s classification and exception fingerprints', async name => {
+  for(const sdk of [{}, {privateDiagnostics:true}, {privateDiagnostics:true,privateDiagnosticsDetails:true}]) {
+   const message='PRIVATE_DOM_MESSAGE';scriptedRuns=[async function*(){throw new DOMException(message,name);}];runIdx=0;
+   const config=cfg();config.sdk=sdk;let caught:unknown;
+   try {for await(const value of queryAgentEvents('request',config))void value;}catch(error){caught=error;}
+   expect(caught).toBeInstanceOf(TurnFailure);const failure=caught as TurnFailure;
+   expect(failure.report.final).toMatchObject({category:name==='AbortError'?'cancelled':'timeout',evidence:'structured'});
+   const row=privateDiagnosticRow(failure.report,failure);
+   if(sdk.privateDiagnostics) expect(row).toMatchObject({sdk:{event:'exception',fingerprint:createHash('sha256').update(message).digest('hex')}});
+   else expect(row).not.toHaveProperty('sdk');
+   expect(JSON.stringify(row)).not.toContain(message);expect(runIdx).toBe(1);
+  }
+ });
+ it.each(['AbortError','TimeoutError'])('captures a native %s constructor error only with detailed opt-in', async name=>{
+  const error=new DOMException('PRIVATE_CONSTRUCTOR_DOM',name);constructorError=error;
+  const config=cfg();config.sdk={privateDiagnostics:true,privateDiagnosticsDetails:true};let caught:unknown;
+  try{for await(const value of queryAgentEvents('request',config))void value;}catch(e){caught=e;}
+  expect(caught).toBe(error);expect(runIdx).toBe(0);
+  const snapshot=classifyFailure(error);
+  expect(privateDiagnosticRow({diagnosticId:'3f8d62cf-fca8-4e92-a0a0-cdb5db5c6ab2',attempts:0,decision:'not_attempted',executionRisk:'proven_not_started',first:snapshot,final:snapshot},error))
+   .toHaveProperty('sdk.fingerprint');
+ });
+});
+
+describe('single-read event types across progress paths',()=>{
+ it.each(['command_execution','web_search','reasoning','todo_list'])(
+  'reads the %s event discriminant once',async itemType=>{
+   for(const type of ['item.started','item.completed']) {
+    let reads=0;const event={get type(){if(++reads>1)throw Error('PRIVATE_SECOND_READ');return type;},
+     item:{id:'progress',type:itemType,command:'synthetic',query:'synthetic'}};
+    runIdx=0;scriptedRuns=[async function*(){yield event;yield {type:'item.completed',item:{id:'final',type:'agent_message',text:'done'}};yield {type:'turn.completed',usage:{}};}];
+    const output=[];for await(const value of queryAgentEvents('request',cfg(),undefined,()=>{})) output.push(value);
+    expect(reads).toBe(1);expect(output).toContainEqual(expect.objectContaining({kind:'message',text:'done'}));
+   }
   });
 });

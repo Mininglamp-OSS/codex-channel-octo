@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 vi.mock('../octo/api.js', () => ({
-  sendMessage: vi.fn().mockResolvedValue(undefined),
+  sendMessage: vi.fn().mockResolvedValue({message_id:'123',message_seq:1}),
   sendTyping: vi.fn().mockResolvedValue(undefined),
   sendReadReceipt: vi.fn().mockResolvedValue(undefined),
   getGroupMembers: vi.fn().mockResolvedValue([]),
@@ -154,11 +154,12 @@ describe('output selection wiring', () => {
 
   it('T13: delivery and history receive the same selected text in every mode', async () => {
     const expected = {
+      final: 'The answer is 42.',
       phase: 'Let me check.\n\nThe answer is 42.',
       heuristic: 'The answer is 42.',
       legacy: 'Let me check.The answer is 42.',
     } as const;
-    for (const mode of ['phase', 'heuristic', 'legacy'] as const) {
+    for (const mode of ['final', 'phase', 'heuristic', 'legacy'] as const) {
       vi.clearAllMocks();
       const config = makeConfig({}, { outputSelection: mode });
       setup(config);
@@ -172,12 +173,36 @@ describe('output selection wiring', () => {
     }
   });
 
-  it('default mode is phase (all unlabeled messages, delimited)', async () => {
+  it('default mode final filters unlabeled narration without a tool boundary', async () => {
     const config = makeConfig();
     setup(config);
     script([start(), m('a', 0, 'one'), m('b', 1, 'two'), end()]);
     await run(config);
-    expect(historyInputs()).toEqual(['one\n\ntwo']);
+    expect(historyInputs()).toEqual(['two']);
+    expect(sentContents()).toEqual(['two']);
+    expect(relayInputs()).toEqual(['two']);
+  });
+
+  it('publishes and stores only the short tail after long unlabeled output', async () => {
+    const config = makeConfig();
+    setup(config);
+    const answer = 'answer '.repeat(200);
+    script([start(), m('a', 0, answer), w('tool', 1), m('b', 2, 'Done.'), end()]);
+    await run(config);
+    const expected = 'Done.';
+    expect(relayInputs()).toEqual([expected]);
+    expect(historyInputs()).toEqual([expected]);
+    expect(sentContents().join('')).toBe(expected);
+  });
+
+  it('returns the no-response notice without publishing or storing labeled commentary beside blank output', async () => {
+    const config = makeConfig();
+    setup(config);
+    script([start(), m('blank', 0, ' \n'), { ...m('c', 1, 'INTERNAL progress'), phase: 'commentary' }, end()]);
+    await run(config);
+    expect(historyInputs()).toEqual([]);
+    expect(sentContents()).toEqual(['[No response generated. Please try rephrasing your question.]']);
+    expect(sentContents().join('')).not.toContain('INTERNAL');
   });
 
   it('T6: a throw after partial output → error notice, nothing delivered, nothing stored', async () => {
@@ -187,7 +212,7 @@ describe('output selection wiring', () => {
     await run(config);
     expect(relayInputs()).toEqual([]);
     expect(appendSpy).not.toHaveBeenCalled();
-    expect(sentContents()).toEqual(['An error occurred while processing your message. Please try again.']);
+    expect(sentContents()).toEqual([expect.stringContaining('模型处理未完成')]);
   });
 
   it('empty selection → existing "No response generated" notice, nothing stored', async () => {
@@ -205,7 +230,7 @@ describe('output selection wiring', () => {
     setup(config);
     const warn = vi.spyOn(console, 'warn');
     const para = 'word '.repeat(700).trim(); // ~3.5k chars per paragraph
-    script([start(), m('a', 0, `${para}\n\n${para}`), m('b', 1, `${para}\n\n${para}`), end()]);
+    script([start(), m('a', 0, 'discarded narration'), m('b', 1, `${para}\n\n${para}\n\n${para}`), end()]);
     await run(config);
     const [input] = relayInputs();
     expect(input.length).toBeLessThanOrEqual(max);
@@ -268,9 +293,9 @@ describe('output selection wiring', () => {
     }
   });
 
-  it('T10: mention entities are computed on the selected text only', async () => {
+  it.each(['final', 'heuristic'] as const)('T10: mention entities use selected text (%s)', async mode => {
     vi.mocked(getGroupMembers).mockResolvedValue([{ uid: 'uid-alice', name: 'Alice', role: 0, robot: 0 }]);
-    const config = makeConfig({}, { outputSelection: 'heuristic' });
+    const config = makeConfig({}, { outputSelection: mode });
     setup(config);
     groupContext.learnMember(GROUP, 'uid-alice', 'Alice');
     script([

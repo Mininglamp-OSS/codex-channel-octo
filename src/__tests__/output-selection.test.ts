@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   OutputCollector,
+  DEFAULT_OUTPUT_SELECTION_MODE,
   capSelected,
   describeSelection,
   isSmallResponseLimit,
@@ -25,7 +26,7 @@ class Script {
   private next = 0;
   private readonly sight = new Map<string, number>();
 
-  start(reason: 'initial' | 'stream_recovery' | 'fresh_retry' = 'initial', continues: number | null = null): this {
+  start(reason: 'initial' | 'request_retry' = 'initial', continues: number | null = null): this {
     this.cur = this.next++;
     this.events.push({ kind: 'attempt_start', attempt: this.cur, reason, continues });
     return this;
@@ -52,7 +53,7 @@ class Script {
     this.events.push({ kind: 'attempt_end', attempt: this.cur, terminal });
     return this;
   }
-  select(mode: OutputSelectionMode = 'phase', maxChars = BIG) {
+  select(mode: OutputSelectionMode = DEFAULT_OUTPUT_SELECTION_MODE, maxChars = BIG) {
     const c = new OutputCollector();
     for (const ev of this.events) c.push(ev);
     return c.select({ mode, maxChars });
@@ -85,6 +86,11 @@ function baselineJoin(events: AgentOutputEvent[]): string {
 // ─── Selection table ─────────────────────────────────────────────────────────
 
 describe('selection table', () => {
+  it('uses the shipped default unless a compatibility mode is explicit', () => {
+    const script = s().start().msg('p', 'checking').msg('a', 'answer').end();
+    expect(script.select().text).toBe('answer');
+    expect(script.select('phase').text).toBe('checking\n\nanswer');
+  });
   it('T1: commentary → work → final, heuristic keeps only the final', () => {
     const sel = s().start().msg('m0', 'Let me check.').work('w1').msg('m2', 'The answer is 42.').end().select('heuristic');
     expect(sel.text).toBe('The answer is 42.');
@@ -93,15 +99,15 @@ describe('selection table', () => {
     expect(sel.messageIds).toEqual(['m2']);
   });
 
-  it('T1 (default phase mode on unlabeled messages): delivers all, delimited', () => {
-    const sel = s().start().msg('m0', 'Let me check.').work('w1').msg('m2', 'The answer is 42.').end().select();
+  it('T1 (explicit compatibility phase mode on unlabeled messages): delivers all, delimited', () => {
+    const sel = s().start().msg('m0', 'Let me check.').work('w1').msg('m2', 'The answer is 42.').end().select('phase');
     expect(sel.text).toBe('Let me check.\n\nThe answer is 42.');
     expect(sel.source).toBe('unclassified_all');
     expect(sel.droppedMessageCount).toBe(0);
   });
 
   it('T2: multiple snapshots of one item keep one entry, last text, first position', () => {
-    const sel = s().start().msg('a', 'v1').msg('b', 'second').msg('a', 'v2').end().select();
+    const sel = s().start().msg('a', 'v1').msg('b', 'second').msg('a', 'v2').end().select('phase');
     expect(sel.text).toBe('v2\n\nsecond');
     expect(sel.messageIds).toEqual(['a', 'b']);
   });
@@ -133,7 +139,7 @@ describe('selection table', () => {
   it('T9: all messages phased with finals → R1, only finals in seq order', () => {
     const sel = s().start()
       .msg('a', 'c1', 'commentary').work('w').msg('b', 'f1', 'final_answer').msg('c', 'f2', 'final_answer')
-      .end().select();
+      .end().select('phase');
     expect(sel.source).toBe('phase');
     expect(sel.text).toBe('f1\n\nf2');
     expect(sel.droppedMessageCount).toBe(1);
@@ -146,7 +152,7 @@ describe('selection table', () => {
   });
 
   it('T17: mixed commentary + unknown, no final → known commentary excluded, U selected', () => {
-    const sel = s().start().msg('a', 'c1', 'commentary').msg('b', 'u1').end().select();
+    const sel = s().start().msg('a', 'c1', 'commentary').msg('b', 'u1').end().select('phase');
     expect(sel.source).toBe('unclassified_all');
     expect(sel.text).toBe('u1');
   });
@@ -186,24 +192,24 @@ describe('selection table', () => {
   });
 
   it('R5: no messages → empty', () => {
-    const sel = s().start().work('w').end().select();
+    const sel = s().start().work('w').end().select('phase');
     expect(sel.source).toBe('empty');
     expect(sel.text).toBe('');
   });
 
   it('empty-text messages are ignored (baseline never yielded them)', () => {
-    const sel = s().start().msg('a', '').msg('b', 'real').end().select();
+    const sel = s().start().msg('a', '').msg('b', 'real').end().select('phase');
     expect(sel.text).toBe('real');
     expect(sel.messageIds).toEqual(['b']);
   });
 
   it('T15: artifacts slot stays empty (no outbound producer)', () => {
-    const sel = s().start().msg('a', 'hi').end().select();
+    const sel = s().start().msg('a', 'hi').end().select('phase');
     expect(sel.artifacts).toEqual([]);
   });
 
   it('describeSelection logs counts only, never message text', () => {
-    const sel = s().start().msg('a', 'SECRET TEXT').end().select();
+    const sel = s().start().msg('a', 'SECRET TEXT').end().select('phase');
     const line = describeSelection(sel, 'phase', 1);
     expect(line).toBe('[output-selection] mode=phase source=unclassified_all pool=primary kept=1 dropped=0 chars=11 truncated=false attempts=1');
     expect(line).not.toContain('SECRET');
@@ -215,7 +221,7 @@ describe('selection table', () => {
 describe('attempt eligibility', () => {
   it('T7a: I → R(I) with R producing messages → only R', () => {
     const sel = s().start().msg('item_0', 'from I')
-      .start('stream_recovery', 0).msg('item_0', 'from R').end().select();
+      .start('request_retry', 0).msg('item_0', 'from R').end().select('phase');
     expect(sel.text).toBe('from R');
     expect(sel.pool).toBe('primary');
     expect(sel.droppedMessageCount).toBe(1);
@@ -223,7 +229,7 @@ describe('attempt eligibility', () => {
 
   it('T7b: R empty, I has an unknown message → lineage', () => {
     const sel = s().start().msg('item_0', 'u1').work('item_1')
-      .start('stream_recovery', 0).end().select();
+      .start('request_retry', 0).end().select('phase');
     expect(sel.text).toBe('u1');
     expect(sel.pool).toBe('lineage');
     expect(sel.source).toBe('unclassified_all');
@@ -231,22 +237,22 @@ describe('attempt eligibility', () => {
 
   it('T7c: I(stale) → FR with FR empty → empty (stale attempt never eligible)', () => {
     const sel = s().start().msg('item_0', 'stale')
-      .start('fresh_retry', null).end().select();
+      .start('request_retry', null).end().select('phase');
     expect(sel.source).toBe('empty');
     expect(sel.text).toBe('');
   });
 
   it('T7d: I(stale) → FR → R(FR) with R empty → lineage is FR only', () => {
     const sel = s().start().msg('item_0', 'stale')
-      .start('fresh_retry', null).msg('item_0', 'fresh')
-      .start('stream_recovery', 1).end().select();
+      .start('request_retry', null).msg('item_0', 'fresh')
+      .start('request_retry', 1).end().select('phase');
     expect(sel.text).toBe('fresh');
     expect(sel.pool).toBe('lineage');
   });
 
   it('T7e: I commentary → R(I) commentary only → only R commentary (lineage unused)', () => {
     const sel = s().start().msg('item_0', 'c1', 'commentary')
-      .start('stream_recovery', 0).msg('item_0', 'c2', 'commentary').end().select();
+      .start('request_retry', 0).msg('item_0', 'c2', 'commentary').end().select('phase');
     expect(sel.text).toBe('c2');
     expect(sel.source).toBe('commentary_last_resort');
     expect(sel.pool).toBe('primary');
@@ -254,7 +260,7 @@ describe('attempt eligibility', () => {
 
   it('T7f: R empty, I commentary only → K_comm(L)', () => {
     const sel = s().start().msg('item_0', 'c1', 'commentary')
-      .start('stream_recovery', 0).end().select();
+      .start('request_retry', 0).end().select('phase');
     expect(sel.text).toBe('c1');
     expect(sel.source).toBe('commentary_last_resort');
     expect(sel.pool).toBe('lineage');
@@ -262,14 +268,14 @@ describe('attempt eligibility', () => {
 
   it('T8: a stale attempt never contributes, even with messages and a non-empty FR', () => {
     const sel = s().start().msg('item_0', 'stale')
-      .start('fresh_retry', null).msg('item_0', 'fresh').end().select();
+      .start('request_retry', null).msg('item_0', 'fresh').end().select('phase');
     expect(sel.text).toBe('fresh');
     expect(sel.droppedMessageCount).toBe(0);
   });
 
   it('heuristic R2 is not applied to the lineage pool', () => {
     const sel = s().start().msg('item_0', 'a').work('item_1').msg('item_2', 'b')
-      .start('stream_recovery', 0).end().select('heuristic');
+      .start('request_retry', 0).end().select('heuristic');
     expect(sel.source).toBe('unclassified_all');
     expect(sel.text).toBe('a\n\nb');
   });
@@ -280,13 +286,13 @@ describe('attempt eligibility', () => {
 describe('T14: legacy mode equals the baseline join', () => {
   const chains: Array<[string, Script]> = [
     ['I', s().start().msg('a', 'one').work('w').msg('b', 'two').end()],
-    ['I → R(I)', s().start().msg('a', 'lost').start('stream_recovery', 0).msg('a', 'kept').msg('b', '!').end()],
-    ['I(stale) → FR', s().start().msg('a', 'stale').start('fresh_retry', null).msg('a', 'fresh').end()],
-    ['I(stale) → FR → R(FR)', s().start().start('fresh_retry', null).msg('a', 'x').start('stream_recovery', 1).msg('a', 'y').end()],
+    ['I → R(I)', s().start().msg('a', 'lost').start('request_retry', 0).msg('a', 'kept').msg('b', '!').end()],
+    ['I(stale) → FR', s().start().msg('a', 'stale').start('request_retry', null).msg('a', 'fresh').end()],
+    ['I(stale) → FR → R(FR)', s().start().start('request_retry', null).msg('a', 'x').start('request_retry', 1).msg('a', 'y').end()],
     ['snapshots', s().start().msg('a', 'v1').msg('b', 'B').msg('a', 'v2').end()],
     ['phased', s().start().msg('a', 'c', 'commentary').msg('b', 'f', 'final_answer').end()],
     ['empty texts', s().start().msg('a', '').msg('b', 'B').end()],
-    ['R empty (no lineage in legacy)', s().start().msg('a', 'I').start('stream_recovery', 0).end()],
+    ['R empty (no lineage in legacy)', s().start().msg('a', 'I').start('request_retry', 0).end()],
   ];
   for (const [name, script] of chains) {
     it(name, () => {

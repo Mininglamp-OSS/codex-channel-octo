@@ -88,6 +88,7 @@ export interface MessagePayload {
 
 export interface SendMessageResult {
   message_id: string;  // string due to int64 protection in postJson
+  /** Server-generated; not guaranteed to echo the request correlation ID. */
   client_msg_no: string;
   message_seq: number;
 }

@@ -1,3 +1,5 @@
+import { TurnFailure } from '../agent-failure.js';
+import { privateDiagnosticRow } from '../private-diagnostics.js';
 /**
  * agent-bridge (codex) tests — pure unit tests with a mocked @openai/codex-sdk.
  * No real codex process is spawned: we feed synthetic ThreadEvent streams and
@@ -51,59 +53,76 @@ import {
   summarizeItem,
   buildThreadOptions,
   MAX_TOOL_PARAM_CHARS,
-  isStreamInterruptError,
 } from '../agent-bridge.js';
 import type { Config } from '../config.js';
-import { summarizeAgentError } from '../agent-errors.js';
+import { buildSenderContext } from '../sender-context.js';
+import { ChannelType, MessageType } from '../octo/types.js';
 
-describe('SDK JSONL failure recovery', () => {
-  const failure = () => new Error('Failed to parse item: SYNTHETIC_PRIVATE_OUTPUT', {
-    cause: new SyntaxError('Unterminated string in JSON at position 10'),
+describe('current-turn mention facts in actual SDK prompts', () => {
+  const sender = () => buildSenderContext({ message_id: 'current-message', message_seq: 1, from_uid: 'user',
+    channel_id: 'group', channel_type: ChannelType.Group, timestamp: 1,
+    payload: { type: MessageType.Text, content: '@bot request', mention: { uids: ['bot'] } },
+  }, 'owner', 'bot');
+
+  function currentMetadata(prompt: string) {
+    expect(prompt.match(new RegExp('^' + CURRENT_SENDER_ANCHOR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'gm'))).toHaveLength(1);
+    return JSON.parse(prompt.split(CURRENT_SENDER_ANCHOR + '\n')[1].split('\n')[0]);
+  }
+
+  it.each([undefined, 'existing-thread'])('includes explicit current mention facts on fresh/resumed calls (%s)', async (resume) => {
+    scriptedRuns = [async function* () { yield turnDone; }];
+    await collect(queryAgent('request', cfg(), undefined, undefined, { senderContext: sender(), resume }));
+    expect(currentMetadata(prompts[0])).toMatchObject({ message_id: 'current-message', bot_uid: 'bot',
+      mentioned_uids: ['bot'], mention_source: 'uids', is_explicitly_mentioned: true });
   });
-  it('resumes the same thread once without logging the rejected event', async () => {
-    const logs = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      scriptedRuns = [async function* () { yield started('jsonl-thread'); throw failure(); },
-        async function* () { yield msg('answer', 'recovered'); yield turnDone; }];
-      expect(await collect(queryAgent('request', cfg()))).toEqual(['recovered']);
-      expect(calls[1]).toMatchObject({ kind: 'resume', resumeId: 'jsonl-thread' });
-      expect(JSON.stringify(logs.mock.calls)).not.toContain('SYNTHETIC_PRIVATE_OUTPUT');
-    } finally { logs.mockRestore(); }
+
+  it.each([undefined, 'existing-thread'])('retains late bot membership in a bounded SDK metadata snapshot (%s)', async resume => {
+    scriptedRuns = [async function* () { yield turnDone; }];
+    const uids = Array.from({ length: 128 }, (_, n) => `${n}-` + '界'.repeat(250));
+    const bot = uids.at(-1)!;
+    const context = buildSenderContext({ message_id: 'bounded-message', message_seq: 1, from_uid: 'user',
+      channel_id: 'group', channel_type: ChannelType.Group, timestamp: 1,
+      payload: { type: MessageType.Text, content: 'request', mention: { uids } },
+    }, 'owner', bot);
+    await collect(queryAgent('request', cfg(), undefined, undefined, { senderContext: context, resume }));
+    const facts = currentMetadata(prompts[0]);
+    expect(facts).toMatchObject({ bot_uid: bot, is_explicitly_mentioned: true, mentioned_uids_truncated: true });
+    expect(facts.mentioned_uids).toContain(bot);
+    expect(facts.mentioned_uids.length).toBeLessThanOrEqual(32);
+    expect(Buffer.byteLength(JSON.stringify(facts.mentioned_uids))).toBeLessThanOrEqual(4096);
   });
-  it('never fresh-replays an uncertain action when parse-error recovery loses the thread', async () => {
-    scriptedRuns = [async function* () { throw failure(); },
-      async function* () { throw new Error('thread not found'); }];
-    await expect(collect(queryAgent('request', cfg(), undefined, undefined, { resume: 'existing' })))
-      .rejects.toThrow('thread not found');
-    expect(calls).toHaveLength(2);
-    expect(calls.every((call) => call.kind === 'resume')).toBe(true);
+
+  it('retains the same mention facts through a proven pre-spawn retry', async () => {
+    scriptedRuns = [async function* () { throw Object.assign(new Error('synthetic spawn failure'), { code: 'EAGAIN', syscall: 'spawn proxy' }); },
+      async function* () { yield turnDone; }];
+    const config = cfg(); config.sdk.recovery = { enabled: true, baseDelayMs: 1, maxDelayMs: 1 };
+    await collect(queryAgent('request', config, undefined, undefined, { senderContext: sender(), resume: 'existing' }));
+    expect(prompts).toHaveLength(2);
+    for (const prompt of prompts) expect(currentMetadata(prompt)).toMatchObject({ message_id: 'current-message',
+      bot_uid: 'bot', mentioned_uids: ['bot'], is_explicitly_mentioned: true });
   });
-  it('bounds malformed-event recovery to one attempt', async () => {
-    scriptedRuns = [async function* () { yield started('jsonl-thread'); throw failure(); },
-      async function* () { throw failure(); }];
-    let error: unknown;
-    try { await collect(queryAgent('request', cfg())); } catch (failure) { error = failure; }
-    expect(calls).toHaveLength(2);
-    expect(summarizeAgentError(error)).toBe('Codex SDK JSONL parse failure (incomplete-json)');
+
+  it('uses complete fail-closed defaults when there is no adapter context', async () => {
+    scriptedRuns = [async function* () { yield turnDone; }];
+    await collect(queryAgent('@bot request', cfg()));
+    expect(currentMetadata(prompts[0])).toEqual({ from_uid: null, channel_id: null, channel_type: null, is_owner: false,
+      message_id: null, bot_uid: null, mentioned_uids: [], mention_source: 'none',
+      is_explicitly_mentioned: false, mentioned_ais: false, mentioned_humans: false, mentioned_all: false });
   });
-  it('never classifies a recovery-run rejected payload as a stale thread', async () => {
-    const rejected = new Error('Failed to parse item: {"aggregated_output":"thread not found SYNTHETIC_PRIVATE_OUTPUT"}', {
-      cause: new SyntaxError('Unterminated string'),
-    });
-    scriptedRuns = [async function* () { throw new Error('stream closed before response.completed'); },
-      async function* () { throw rejected; },
-      async function* () { yield msg('replay', 'REPLAYED'); }];
-    const reset = vi.fn();
-    await expect(collect(queryAgent('request', cfg(), undefined, undefined, { resume: 'existing', onResumeFailed: reset })))
-      .rejects.toBe(rejected);
-    expect(calls.map((call) => call.kind)).toEqual(['resume', 'resume']);
-    expect(reset).not.toHaveBeenCalled();
-  });
-  it('does not retry an untracked thread', async () => {
-    scriptedRuns = [async function* () { throw failure(); }];
-    await expect(collect(queryAgent('request', cfg()))).rejects.toThrow('Failed to parse item:');
-    expect(calls).toHaveLength(1);
-  });
+});
+import { safePrivateMemorySnapshot } from '../prompt-safety.js';
+
+
+describe('SDK JSONL fail-closed diagnostics', () => {
+ it.each([undefined,'existing'])('never replays a malformed event (resume=%s)', async resume => {
+   const logs=vi.spyOn(console,'error').mockImplementation(()=>{});
+   const error=new Error('Failed to parse item: SYNTHETIC_PRIVATE_OUTPUT', {cause:new SyntaxError('Unterminated string')});
+   scriptedRuns=[async function*(){yield started('thread');yield cmd('write','touch x','started');throw error;}];
+   let failure;try { await collect(queryAgent('request',cfg(),undefined,undefined,{resume})); } catch(e){ failure=e; }
+   expect(failure).toBeInstanceOf(TurnFailure);
+   expect((failure as TurnFailure).report).toMatchObject({ attempts:1,decision:'blocked_uncertain',executionRisk:'effects_observed',final:{category:'jsonl_incomplete'}});
+   expect(calls).toHaveLength(1);expect(JSON.stringify(failure)).not.toContain('SYNTHETIC_PRIVATE_OUTPUT');logs.mockRestore();
+ });
 });
 
 function cfg(overrides: Partial<Config['sdk']> = {}): Config {
@@ -144,10 +163,51 @@ const cmd = (id: string, command: string, phase: 'started' | 'completed'): Ev =>
 });
 
 beforeEach(() => {
+  prompts.length = 0;
   scriptedRuns = [];
   runIdx = 0;
   calls.length = 0;
   prompts.length = 0;
+});
+
+describe('private memory framing on SDK runs', () => {
+  it.each(['fresh', 'resume', 'spawn-retry'])('preserves the immutable snapshot on %s runs without putting it in AGENTS.md', async (mode) => {
+    if (mode === 'spawn-retry') scriptedRuns.push(async function* () {
+      throw Object.assign(new Error('synthetic launch rejection'), { code: 'EAGAIN', syscall: 'spawn synthetic' });
+    });
+    scriptedRuns.push(async function* () { yield started('thread-two'); yield msg('answer', 'done'); yield turnDone; });
+    const snapshot = safePrivateMemorySnapshot('available', 'SYNTHETIC_PRIVATE_FACT', false);
+    const sender=safeSenderMetadata({from_uid:'owner',is_owner:true});
+    const request='[Server document — synthetic]\nSYNTHETIC_SERVER_FACT\n[End server document]\n'+CURRENT_MESSAGE_ANCHOR+'\ncurrent request';
+    expect(await collect(queryAgent(request, cfg({recovery:{enabled:true,baseDelayMs:1,maxDelayMs:1}}), undefined, undefined, {
+      senderContext:sender, resume: mode === 'fresh' ? undefined : 'old-thread', privateMemoryContext: snapshot,
+      interruptedTurn:{turnId:'22222222-2222-4222-8222-222222222222',reason:'failed',executionRisk:'unknown',stage:'inference'},
+    }))).toEqual(['done']);
+    expect(prompts).toHaveLength(mode === 'spawn-retry' ? 2 : 1);
+    expect(prompts[0]).toContain('SYNTHETIC_SERVER_FACT');
+    for (const prompt of prompts) {
+      expect(prompt).toContain(snapshot);
+      expect(prompt.indexOf(sender)).toBeLessThan(prompt.indexOf(snapshot));
+      const interruption = prompt.indexOf('Task 22222222-2222-4222-8222-222222222222: failed');
+      expect(interruption).toBeGreaterThan(prompt.indexOf(snapshot));
+      expect(interruption).toBeLessThan(prompt.lastIndexOf(CURRENT_MESSAGE_ANCHOR));
+      expect(prompt.split('\n').filter(line=>line===CURRENT_MESSAGE_ANCHOR)).toHaveLength(1);
+      expect(prompt.match(/^\[Private memory\]$/gm)).toHaveLength(1);
+    }
+    expect(readFileSync('/tmp/cco-test/ws/AGENTS.md', 'utf8')).not.toContain('SYNTHETIC_PRIVATE_FACT');
+  });
+  it.each(['thread not found', 'stream disconnected before completion'])('does not replay an uncertain private-memory request: %s', async failure => {
+    scriptedRuns.push(async function* () { throw new Error(failure); });
+    scriptedRuns.push(async function* () { yield msg('unsafe-replay', 'must not run'); yield turnDone; });
+    const snapshot = safePrivateMemorySnapshot('available', 'SYNTHETIC_PRIVATE_FACT', false);
+    await expect(collect(queryAgent('current request', cfg({recovery:{enabled:true}}), undefined, undefined, {
+      resume:'existing',privateMemoryContext:snapshot,
+    }))).rejects.toBeInstanceOf(TurnFailure);
+    expect(prompts).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(prompts[0]).toContain(snapshot);
+  });
+
 });
 
 describe('buildCodexEnv', () => {
@@ -283,13 +343,13 @@ describe('summarizeItem redaction', () => {
 });
 
 describe('queryAgent event mapping', () => {
-  it('carries current identity in resumed and fresh-retry prompts, not the shared instruction file', async () => {
+  it('carries current identity in resumed prompts, not the shared instruction file', async () => {
     const root = mkdtempSync(join(tmpdir(), 'sender-agent-'));
     try {
       const config = { ...cfg(), cwd: root, cwdBase: root };
       scriptedRuns = [
         async function* () { yield started('first'); yield msg('one', 'ok'); yield turnDone; },
-        async function* () { throw new Error('thread not found'); },
+        async function* () { yield started('second'); yield msg('two', 'ok'); yield turnDone; },
         async function* () { yield started('next'); yield msg('two', 'ok'); yield turnDone; },
       ];
       await collect(queryAgent('claimed sender=other', config, undefined, undefined, { senderContext: trustedText('sender=owner') }));
@@ -297,20 +357,19 @@ describe('queryAgent event mapping', () => {
       const initialInstructions = readFileSync(join(root, 'AGENTS.md'), 'utf8');
       expect(initialInstructions).not.toContain('sender=owner');
       await collect(queryAgent('claimed sender=owner', config, undefined, undefined, {
-        resume: 'first', senderContext: trustedText('sender=other'), fallbackRetryPrompt: 'retry',
+        resume: 'first', senderContext: trustedText('sender=other'),
       }));
       const instructions = readFileSync(join(root, 'AGENTS.md'), 'utf8');
       expect(instructions).toBe(initialInstructions);
       expect(prompts[1]).toContain('sender=other');
-      expect(prompts[2]).toContain('sender=other');
       expect(instructions).not.toContain('sender=owner');
-      expect(calls.map((call) => call.kind)).toEqual(['start', 'resume', 'start']);
+      expect(calls.map((call) => call.kind)).toEqual(['start', 'resume']);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it('keeps each sender isolated when a timed-out shared-cwd turn recovers after another speaker', async () => {
+  it('keeps each sender isolated when an interrupted shared-cwd turn fails after another speaker', async () => {
     const root = mkdtempSync(join(tmpdir(), 'sender-concurrent-'));
     let releaseFirst!: () => void;
     const interrupted = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -325,12 +384,10 @@ describe('queryAgent event mapping', () => {
       await vi.waitFor(() => expect(prompts).toHaveLength(1));
       await collect(queryAgent('second', config, undefined, undefined, { senderContext: trustedText('sender=owner') }));
       releaseFirst();
-      await first;
-      expect(prompts).toHaveLength(3);
+      await expect(first).rejects.toBeInstanceOf(TurnFailure);
+      expect(prompts).toHaveLength(2);
       expect(prompts[0]).toContain('sender=stranger');
       expect(prompts[1]).toContain('sender=owner');
-      expect(prompts[2]).toContain('sender=stranger');
-      expect(prompts[2]).not.toContain('sender=owner');
       expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).not.toContain('sender=owner');
     } finally {
       releaseFirst();
@@ -415,7 +472,7 @@ describe('queryAgent event mapping', () => {
       yield started('tid');
       yield { type: 'turn.failed', error: { message: 'boom' } };
     }];
-    await expect(collect(queryAgent('hi', cfg()))).rejects.toThrow('boom');
+    await expect(collect(queryAgent('hi', cfg()))).rejects.toBeInstanceOf(TurnFailure);
   });
 
   it('throws on a stream-level error event', async () => {
@@ -423,7 +480,7 @@ describe('queryAgent event mapping', () => {
       yield started('tid');
       yield { type: 'error', message: 'stream broke' };
     }];
-    await expect(collect(queryAgent('hi', cfg()))).rejects.toThrow('stream broke');
+    await expect(collect(queryAgent('hi', cfg()))).rejects.toBeInstanceOf(TurnFailure);
   });
 
   it('throws on an ErrorItem (item.type=error) instead of producing no output', async () => {
@@ -431,12 +488,11 @@ describe('queryAgent event mapping', () => {
       yield started('tid');
       yield { type: 'item.completed', item: { id: 'e1', type: 'error', message: 'tool blew up' } };
     }];
-    await expect(collect(queryAgent('hi', cfg()))).rejects.toThrow('tool blew up');
+    await expect(collect(queryAgent('hi', cfg()))).rejects.toBeInstanceOf(TurnFailure);
   });
 
   it.each([metadataNotice, modelChangeNotice])('drains a non-fatal notice before turn.started and returns the real reply: %s', async (notice) => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const onResumeFailed = vi.fn();
     const onSessionId = vi.fn();
     let drained = false;
     scriptedRuns = [async function* () {
@@ -449,13 +505,12 @@ describe('queryAgent event mapping', () => {
     }];
     try {
       const out = await collect(queryAgent('hi', cfg(), undefined, undefined, {
-        resume: 'valid-tid', onResumeFailed, onSessionId,
+        resume: 'valid-tid', onSessionId,
       }));
       expect(out).toEqual(['收到']);
       expect(drained).toBe(true);
-      expect(warn).toHaveBeenCalledWith(`[codex-channel-octo] non-fatal codex notice: ${notice}`);
+      expect(warn).toHaveBeenCalledWith('[codex-channel-octo] non-fatal codex model notice');
     expect(onSessionId).toHaveBeenCalledWith('valid-tid', expect.any(String));
-      expect(onResumeFailed).not.toHaveBeenCalled();
       expect(calls).toHaveLength(1);
     } finally {
       warn.mockRestore();
@@ -470,14 +525,16 @@ describe('queryAgent event mapping', () => {
     `Request failed: ${modelChangeNotice}`,
     `${modelChangeNotice} Authentication failed.`,
     modelChangeNotice.replace('switching back to `gpt-5.5`', 'switching back to `other-model`'),
-  ])('still throws for a genuine error resembling a fallback notice: %s', async (message) => {
+  ].flatMap(message => ['completed', 'failed'].map(terminal => ({ message, terminal }))))('does not mistake a genuine $terminal turn for a fallback notice: $message', async ({ message, terminal }) => {
     scriptedRuns = [async function* () {
       yield started('tid');
       yield { type: 'item.completed', item: { id: 'e1', type: 'error', message } };
-      yield msg('m1', 'must not be returned');
-      yield turnDone;
+      if (terminal === 'failed') {
+        yield msg('m1', 'must not be returned');
+        yield { type: 'turn.failed', error: { message } };
+      } else yield turnDone;
     }];
-    await expect(collect(queryAgent('hi', cfg()))).rejects.toThrow(message);
+    await expect(collect(queryAgent('hi', cfg()))).rejects.toBeInstanceOf(TurnFailure);
     expect(calls).toHaveLength(1);
   });
 
@@ -490,7 +547,7 @@ describe('queryAgent event mapping', () => {
       yield { type: 'turn.started' };
       yield { type, message: 'authentication failed', error: { message: 'authentication failed' } };
     }];
-    await expect(collect(queryAgent('hi', cfg()))).rejects.toThrow('authentication failed');
+    await expect(collect(queryAgent('hi', cfg()))).rejects.toBeInstanceOf(TurnFailure);
     expect(calls).toHaveLength(1);
   });
 
@@ -517,31 +574,10 @@ describe('queryAgent event mapping', () => {
     expect(out).toEqual(['first', 'second']);
   });
 
-  it('web_search is NOT a side effect — fresh-retry stays open after it', async () => {
-    const cleared: boolean[] = [];
-    scriptedRuns = [
-      async function* () {
-        yield started('tid');
-        yield { type: 'item.completed', item: { id: 'w1', type: 'web_search', query: 'q' } };
-        throw new Error('thread not found'); // stale resume AFTER a search
-      },
-      async function* () {
-        yield started('new');
-        yield msg('m', 'after-search recovery');
-        yield turnDone;
-      },
-    ];
-    const out = await collect(
-      queryAgent('hi', cfg(), undefined, undefined, {
-        resume: 'dead',
-        onResumeFailed: () => cleared.push(true),
-        fallbackRetryPrompt: 'h',
-      }),
-    );
-    expect(out.join('')).toBe('after-search recovery');
-    expect(cleared).toEqual([true]);
-    expect(calls.length).toBe(2); // resumed, then fresh retry
-  });
+  it('web_search does not prove absence of unobserved effects',async()=>{
+ scriptedRuns=[async function*(){yield started('t');yield {type:'item.completed',item:{id:'search',type:'web_search',query:'q'}};throw new Error('thread not found');}];
+ await expect(collect(queryAgent('hi',cfg(),undefined,undefined,{resume:'t'}))).rejects.toMatchObject({report:{executionRisk:'unknown',decision:'blocked_uncertain'}});expect(calls).toHaveLength(1);
+ });
 
   it('force-downgrade on AGENTS.md refresh failure also strips additionalDirectories', async () => {
     scriptedRuns = [async function* () {
@@ -569,7 +605,7 @@ describe('queryAgent event mapping', () => {
     const c = cfg({ sandboxMode: 'danger-full-access' });
     c.cwd = '/dev/null/ws';
     c.cwdBase = '/dev/null/ws';
-    await expect(collect(queryAgent('hi', c))).rejects.toThrow(/AGENTS.md refresh failed/);
+    await expect(collect(queryAgent('hi', c))).rejects.toThrow('AGENTS.md refresh failed');
     expect(calls).toHaveLength(0);
   });
 
@@ -604,369 +640,18 @@ describe('queryAgent event mapping', () => {
   });
 });
 
-describe('isResumeError discrimination (via recovery behavior)', () => {
-  // A non-stale error whose text merely contains "resume" must NOT trigger a
-  // fresh retry (would drop a valid thread + re-hit upstream). We assert the
-  // error propagates and no second run happens.
-  it('does not treat a generic error containing the word "resume" as stale', async () => {
-    const cleared: boolean[] = [];
-    scriptedRuns = [async function* () {
-      yield started('tid');
-      throw new Error('rate limited while running codex exec resume');
-    }];
-    await expect(
-      collect(
-        queryAgent('hi', cfg(), undefined, undefined, {
-          resume: 'valid-tid',
-          onResumeFailed: () => cleared.push(true),
-          fallbackRetryPrompt: 'h',
-        }),
-      ),
-    ).rejects.toThrow('rate limited');
-    expect(cleared).toEqual([]); // id NOT cleared
-    expect(calls.length).toBe(1); // NO fresh retry
-  });
-
-  it('treats "thread not found" as stale and recovers', async () => {
-    scriptedRuns = [
-      async function* () {
-        yield started('tid');
-        throw new Error('thread not found: abc');
-      },
-      async function* () {
-        yield started('new');
-        yield msg('m', 'ok');
-        yield turnDone;
-      },
-    ];
-    const out = await collect(
-      queryAgent('hi', cfg(), undefined, undefined, {
-        resume: 'dead',
-        fallbackRetryPrompt: 'h',
-      }),
-    );
-    expect(out.join('')).toBe('ok');
-    expect(calls.length).toBe(2);
-  });
+describe('Uncertain execution never automatically replays',()=>{
+ it.each(['thread not found','stream closed before response.completed','stream disconnected before completion',missingRolloutError].flatMap(message=>[false,true].map(effect=>({message,effect}))))('fails closed (effect=$effect): $message',async({message,effect})=>{
+ scriptedRuns=[async function*(){yield started('thread');if(effect)yield cmd('write','touch x','started');throw new Error(message);}];
+ await expect(collect(queryAgent('request',cfg({recovery:{enabled:true}}),undefined,undefined,{resume:'thread'}))).rejects.toMatchObject({report:{attempts:1,decision:'blocked_uncertain',executionRisk:effect?'effects_observed':'unknown'}});
+ expect(calls).toHaveLength(1);
+ });
+ it.each(['stream closed before response.completed','thread not found'])('does not infer safe execution from missing thread.started: %s',async message=>{
+ scriptedRuns=[async function*(){throw new Error(message);}];
+ await expect(collect(queryAgent('request',cfg()))).rejects.toMatchObject({report:{decision:'blocked_uncertain',executionRisk:'unknown'}});expect(calls).toHaveLength(1);
+ });
 });
 
-describe.each(['thread not found', missingRolloutError])('queryAgent stale-resume recovery: %s', (resumeError) => {
-  it('retries fresh (with fallback prompt) when resume fails before any side effect', async () => {
-    const cleared: boolean[] = [];
-    const sessionIds: string[] = [];
-    scriptedRuns = [
-      // run 1: resume — fails immediately, no output/side-effect
-      async function* () {
-        yield started('tid');
-        throw new Error(resumeError);
-      },
-      // run 2: fresh retry — succeeds
-      async function* () {
-        yield started('new-tid');
-        yield msg('m', 'recovered');
-        yield turnDone;
-      },
-    ];
-    const out = await collect(
-      queryAgent('hi', cfg(), undefined, undefined, {
-        resume: 'dead',
-        onResumeFailed: () => cleared.push(true),
-        onSessionId: (id) => sessionIds.push(id),
-        fallbackRetryPrompt: 'history + hi',
-      }),
-    );
-    expect(out.join('')).toBe('recovered');
-    expect(cleared).toEqual([true]);
-    expect(sessionIds).toEqual(['tid', 'new-tid']);
-    expect(calls).toHaveLength(2);
-    expect(calls[0]).toMatchObject({ kind: 'resume', resumeId: 'dead' });
-    expect(calls[1]).toMatchObject({ kind: 'start' });
-  });
-
-  it('does NOT fresh-retry when a side effect already happened (avoids duplicate work)', async () => {
-    const cleared: boolean[] = [];
-    scriptedRuns = [
-      async function* () {
-        yield started('tid');
-        yield cmd('c1', 'touch x', 'completed'); // side effect!
-        throw new Error(resumeError);
-      },
-    ];
-    await expect(
-      collect(
-        queryAgent('hi', cfg(), undefined, undefined, {
-          resume: 'dead',
-          onResumeFailed: () => cleared.push(true),
-          fallbackRetryPrompt: 'history + hi',
-        }),
-      ),
-    ).rejects.toThrow();
-    // id is still cleared (so next turn starts fresh) but no fresh retry ran.
-    expect(cleared).toEqual([true]);
-    expect(calls.length).toBe(1);
-  });
-
-  it('does not loop when the fresh retry also fails', async () => {
-    const onResumeFailed = vi.fn();
-    const fail = async function* () {
-      yield { type: 'error', message: resumeError };
-    };
-    scriptedRuns = [fail, fail];
-    await expect(collect(queryAgent('hi', cfg(), undefined, undefined, {
-      resume: 'dead', onResumeFailed,
-    }))).rejects.toThrow(resumeError);
-    expect(onResumeFailed).toHaveBeenCalledTimes(1);
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toMatchObject({ kind: 'start' });
-  });
-});
-
-// ─── isStreamInterruptError (Step 1) ─────────────────────────────────────────
-describe('isStreamInterruptError', () => {
-  it('matches stream-interrupt phrases', () => {
-    expect(isStreamInterruptError(new Error('stream closed before response.completed'))).toBe(true);
-    expect(isStreamInterruptError(new Error('stream disconnected before completion'))).toBe(true);
-    // Real log text: SDK wraps code 1 but the interrupt phrase is present.
-    expect(
-      isStreamInterruptError(
-        new Error(
-          'Codex Exec exited with code 1: Reconnecting... 1/5 (stream disconnected before completion: stream closed before response.completed)',
-        ),
-      ),
-    ).toBe(true);
-  });
-  it('is case-insensitive and accepts a raw string', () => {
-    expect(isStreamInterruptError('STREAM CLOSED BEFORE RESPONSE.COMPLETED')).toBe(true);
-  });
-  it('does NOT match non-interrupt errors', () => {
-    // A bare code-1 exit with no interrupt phrase must NOT be swallowed into recovery.
-    expect(isStreamInterruptError(new Error('Codex Exec exited with code 1: bad config'))).toBe(false);
-    expect(isStreamInterruptError(new Error('rate limit exceeded, retry later'))).toBe(false);
-    expect(isStreamInterruptError(new Error('thread not found'))).toBe(false);
-    expect(isStreamInterruptError(new Error('no session found'))).toBe(false);
-    expect(isStreamInterruptError(new Error('codex item error'))).toBe(false);
-  });
-});
-
-// ─── stream-interrupt recovery (Step 3) ──────────────────────────────────────
-const STREAM_ERR = 'stream closed before response.completed';
-describe('queryAgent stream-interrupt recovery', () => {
-  it('recovers by resuming the same thread after a mid-turn stream interrupt', async () => {
-    scriptedRuns = [
-      async function* () {
-        yield started('tid-1');
-        yield cmd('c1', 'ls', 'completed'); // side effect happened
-        throw new Error(STREAM_ERR);
-      },
-      async function* () {
-        // recovery run: resumes tid-1, no command re-run
-        yield msg('m1', 'final answer');
-        yield turnDone;
-      },
-    ];
-    const out = await collect(queryAgent('hi', cfg(), undefined, undefined, {}));
-    expect(out.join('')).toBe('final answer');
-    expect(calls.length).toBe(2);
-    expect(calls[1]).toMatchObject({ kind: 'resume', resumeId: 'tid-1' });
-  });
-
-  it('does NOT recover a non-interrupt error (no resume available)', async () => {
-    scriptedRuns = [
-      async function* () {
-        yield started('tid-1');
-        throw new Error('rate limit exceeded');
-      },
-    ];
-    await expect(collect(queryAgent('hi', cfg(), undefined, undefined, {}))).rejects.toThrow(
-      /rate limit/,
-    );
-    expect(calls.length).toBe(1);
-  });
-
-  it('recovers at most once (recovery run interrupts again → throws)', async () => {
-    scriptedRuns = [
-      async function* () {
-        yield started('tid-1');
-        throw new Error(STREAM_ERR);
-      },
-      async function* () {
-        // recovery run also interrupts
-        throw new Error(STREAM_ERR);
-      },
-    ];
-    await expect(collect(queryAgent('hi', cfg(), undefined, undefined, {}))).rejects.toThrow();
-    expect(calls.length).toBe(2); // no third attempt
-  });
-
-  it('recovers using opts.resume when interrupt hits before thread.started', async () => {
-    scriptedRuns = [
-      async function* () {
-        // no thread.started emitted before the interrupt
-        throw new Error(STREAM_ERR);
-      },
-      async function* () {
-        yield msg('m1', 'ok');
-        yield turnDone;
-      },
-    ];
-    const out = await collect(
-      queryAgent('hi', cfg(), undefined, undefined, { resume: 'prev-tid' }),
-    );
-    expect(out.join('')).toBe('ok');
-    expect(calls.length).toBe(2);
-    expect(calls[1]).toMatchObject({ kind: 'resume', resumeId: 'prev-tid' });
-  });
-
-  it('cannot recover a fresh turn interrupted before thread.started', async () => {
-    scriptedRuns = [
-      async function* () {
-        // fresh (no opts.resume), no thread.started, immediate interrupt
-        throw new Error(STREAM_ERR);
-      },
-    ];
-    await expect(collect(queryAgent('hi', cfg(), undefined, undefined, {}))).rejects.toThrow();
-    expect(calls.length).toBe(1); // cap.threadId undefined → no recovery
-  });
-
-  it('stale-resume → fresh-retry → stream interrupt recovers on the fresh thread id, not the stale one', async () => {
-    const cleared: boolean[] = [];
-    scriptedRuns = [
-      async function* () {
-        // main run: resume a stale id → resume error (not a stream interrupt)
-        throw new Error('thread not found');
-      },
-      async function* () {
-        // fresh-retry run: gets a NEW thread id, does work, then interrupts
-        yield started('fresh-tid');
-        yield cmd('c1', 'ls', 'completed');
-        throw new Error(STREAM_ERR);
-      },
-      async function* () {
-        // recovery run: must resume the FRESH id, not the stale opts.resume
-        yield msg('m1', 'recovered answer');
-        yield turnDone;
-      },
-    ];
-    const out = await collect(
-      queryAgent('hi', cfg(), undefined, undefined, {
-        resume: 'stale-tid',
-        onResumeFailed: () => cleared.push(true),
-        fallbackRetryPrompt: 'history + hi',
-      }),
-    );
-    expect(out.join('')).toBe('recovered answer');
-    expect(cleared).toEqual([true]);
-    expect(calls.length).toBe(3);
-    expect(calls[1]).toMatchObject({ kind: 'start' });
-    expect(calls[2]).toMatchObject({ kind: 'resume', resumeId: 'fresh-tid' });
-  });
-
-  it('does NOT recover with a stale id when fresh-retry interrupts before thread.started', async () => {
-    const cleared: boolean[] = [];
-    scriptedRuns = [
-      async function* () {
-        throw new Error('thread not found');
-      },
-      async function* () {
-        // fresh-retry interrupts BEFORE thread.started → cap.threadId stays undefined
-        throw new Error(STREAM_ERR);
-      },
-    ];
-    await expect(
-      collect(
-        queryAgent('hi', cfg(), undefined, undefined, {
-          resume: 'stale-tid',
-          onResumeFailed: () => cleared.push(true),
-          fallbackRetryPrompt: 'history + hi',
-        }),
-      ),
-    ).rejects.toThrow();
-    expect(cleared).toEqual([true]);
-    // main(resume stale-tid) + fresh-retry(start) = 2; NO third recovery call.
-    expect(calls.length).toBe(2);
-    expect(calls[0]).toMatchObject({ kind: 'resume', resumeId: 'stale-tid' });
-    expect(calls[1]).toMatchObject({ kind: 'start' });
-  });
-
-  it('recovery run failing with a resume error does not trigger another recovery', async () => {
-    scriptedRuns = [
-      async function* () {
-        yield started('tid-1');
-        throw new Error(STREAM_ERR);
-      },
-      async function* () {
-        // recovery run throws a resume-type error; must NOT loop into more recovery
-        throw new Error('thread not found');
-      },
-    ];
-    await expect(collect(queryAgent('hi', cfg(), undefined, undefined, {}))).rejects.toThrow();
-    expect(calls.length).toBe(2);
-  });
-
-  it('bounds stream recovery to once across a recovery→fresh-retry→re-interrupt chain', async () => {
-    const cleared: boolean[] = [];
-    scriptedRuns = [
-      async function* () {
-        // main resume run interrupts → recovery
-        yield started('tid-1');
-        throw new Error(STREAM_ERR);
-      },
-      async function* () {
-        // recovery run throws a resume error with NO side effect → bubbles to the
-        // outer stale-resume branch, which fresh-retries
-        throw new Error('thread not found');
-      },
-      async function* () {
-        // fresh-retry run interrupts again — but recovery is already spent, so it
-        // must NOT recover a second time
-        yield started('fresh-tid');
-        throw new Error(STREAM_ERR);
-      },
-    ];
-    await expect(
-      collect(
-        queryAgent('hi', cfg(), undefined, undefined, {
-          resume: 'tid-1',
-          onResumeFailed: () => cleared.push(true),
-          fallbackRetryPrompt: 'history + hi',
-        }),
-      ),
-    ).rejects.toThrow();
-    expect(cleared).toEqual([true]);
-    // main(resume) + recovery(resume) + fresh-retry(start) = 3; no 4th call.
-    expect(calls.length).toBe(3);
-    expect(calls[2]).toMatchObject({ kind: 'start' });
-  });
-
-  it('recovery run side effect blocks an outer fresh-retry', async () => {
-    const cleared: boolean[] = [];
-    scriptedRuns = [
-      async function* () {
-        // main resume run interrupts → recovery
-        yield started('tid-1');
-        throw new Error(STREAM_ERR);
-      },
-      async function* () {
-        // recovery run does a side effect, then fails with a resume error
-        yield cmd('c1', 'ls', 'completed');
-        throw new Error('thread not found');
-      },
-    ];
-    await expect(
-      collect(
-        queryAgent('hi', cfg(), undefined, undefined, {
-          resume: 'tid-1',
-          onResumeFailed: () => cleared.push(true),
-          fallbackRetryPrompt: 'history + hi',
-        }),
-      ),
-    ).rejects.toThrow();
-    // sideEffect.seen carried from recovery run → outer must NOT fresh-retry.
-    // calls: main(resume) + recovery(resume) = 2, no fresh start.
-    expect(calls.length).toBe(2);
-    expect(calls.some((c) => c.kind === 'start')).toBe(false);
-  });
-});
 
 
 describe('privileged marker framing after Unicode escape', () => {
@@ -992,3 +677,15 @@ describe('privileged marker framing after Unicode escape', () => {
     expect(prompts[0]).toContain('\\' + CURRENT_MESSAGE_ANCHOR);
   });
 });
+
+ describe('private diagnostic bridge wiring', () => {
+  it.each([false,true])('captures SDK failure provenance only when enabled=%s', async enabled => {
+    scriptedRuns = [async function* () { yield {type:'turn.failed',error:{message:'PRIVATE_SDK_FAILURE'}}; }];
+    let caught:unknown;
+    try { await collect(queryAgent('request',cfg({privateDiagnostics:enabled}))); } catch(error) {caught=error;}
+    expect(caught).toBeInstanceOf(TurnFailure);
+    const row=privateDiagnosticRow((caught as TurnFailure).report,caught);
+    if(enabled)expect(row).toMatchObject({sdk:{event:'turn.failed'}});else expect(row).not.toHaveProperty('sdk');
+    expect(JSON.stringify(row)).not.toContain('PRIVATE_SDK_FAILURE');expect(JSON.stringify(caught)).not.toContain('PRIVATE_SDK_FAILURE');expect(calls).toHaveLength(1);
+  });
+ });

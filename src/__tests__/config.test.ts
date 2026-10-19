@@ -70,6 +70,30 @@ function writeBotConfig(id: string, obj: Record<string, unknown>): void {
 
 // ─── 1. Defaults ────────────────────────────────────────────────────────────
 
+describe('privateMemory configuration', () => {
+  beforeEach(setup);
+  afterEach(teardown);
+  it('defaults off with a bounded per-bot budget', () => {
+    const config = loadConfig(writeConfig({ apiUrl: 'https://octo.example', botToken: 'token' }));
+    expect(resolveBotConfigs(config)[0].privateMemory).toEqual({ enabled: false, maxBytes: 16_384 });
+  });
+  it('merges global, inline and per-bot settings without loading notes at startup', () => {
+    const path = writeConfig({ apiUrl: 'https://octo.example', privateMemory: { enabled: true, maxBytes: 400 },
+      bots: [{ id: 'one', botToken: 'token', privateMemory: { maxBytes: 200 } }] });
+    writeBotConfig('one', { privateMemory: { enabled: false } });
+    expect(resolveBotConfigs(loadConfig(path))[0].privateMemory).toEqual({ enabled: false, maxBytes: 200 });
+  });
+  it.each([null, [], true, { enabled: 'true' }, { maxBytes: 0 }, { maxBytes: 65_537 }, { maxBytes: 1.5 }])('rejects malformed settings %j', (privateMemory) => {
+    expect(() => loadConfig(writeConfig({ apiUrl: 'https://octo.example', privateMemory }))).toThrow('Invalid privateMemory');
+  });
+  it('validates per-bot overrides at startup', () => {
+    const path = writeConfig({ apiUrl: 'https://octo.example', bots: [{ id: 'one', botToken: 'token', privateMemory: { maxBytes: -1 } }] });
+    expect(() => resolveBotConfigs(loadConfig(path))).toThrow('Invalid privateMemory');
+    writeBotConfig('one', { privateMemory: { enabled: 'true' } });
+    expect(() => resolveBotConfigs(loadConfig(writeConfig({ apiUrl: 'https://octo.example', bots: [{ id: 'one', botToken: 'token' }] })))).toThrow('Invalid privateMemory');
+  });
+});
+
 describe('loadConfig defaults', () => {
   beforeEach(setup);
   afterEach(teardown);

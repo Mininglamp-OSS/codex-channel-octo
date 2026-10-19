@@ -1,7 +1,7 @@
 {
   "name": "@mininglamp-oss/codex-channel-octo",
   "version": "0.1.0",
-  "description": "Bridge OpenAI Codex (via @openai/codex-sdk) to Octo IM — independent Node.js gateway",
+  "description": "Bridge OpenAI Codex (via @openai/codex-sdk) to Octo IM \u2014 independent Node.js gateway",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
@@ -16,7 +16,12 @@
     "LICENSE",
     "config.example.json",
     "config.bot.example.json",
-    "config.bot.docker.example.json"
+    "config.bot.docker.example.json",
+    "docs/issue-26-safe-recovery.md",
+    "docs/final-output-policy.md",
+    "docs/private-diagnostics.md",
+    "docs/session-continuity.md",
+    "scripts/check-codex-runtime.mjs"
   ],
   "repository": {
     "type": "git",
@@ -36,13 +41,18 @@
     "prepack": "npm run build",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",
-    "lint": "eslint src/ --max-warnings 0",
+    "type-check:mention-tests": "tsc --project tsconfig.mention-tests.json",
+    "lint": "eslint src/ scripts/ --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "type-check:recovery-tests": "tsc --project tsconfig.recovery-tests.json",
+    "type-check:continuity-tests": "tsc --project tsconfig.continuity-tests.json",
+    "runtime:check": "node scripts/check-codex-runtime.mjs",
+    "runtime:update": "npm update @openai/codex-sdk && npm run runtime:check"
   },
   "dependencies": {
-    "@openai/codex-sdk": "^0.142.0",
+    "@openai/codex-sdk": "latest",
     "better-sqlite3": "^12.10.0",
     "crypto-js": "^4.2.0",
     "curve25519-js": "^0.0.4",

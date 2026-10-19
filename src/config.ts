@@ -1,3 +1,4 @@
+import { validateRecovery, type RecoveryConfig } from './agent-recovery.js';
 /**
  * Configuration loading.
  *
@@ -68,6 +69,7 @@ export interface Config {
    * per-session cwd sandbox (which the agent can write). Unset = feature off.
    */
   groupConfigDir?: string;
+  privateMemory?: { enabled?: boolean; maxBytes?: number };
   sdk: {
     /** Codex model id (e.g. gpt-5.5). Omitted → codex default. */
     model?: string;
@@ -126,9 +128,18 @@ export interface Config {
      * stdout/stderr, no diff, no full args) — see agent-bridge.
      */
     toolProgress?: boolean;
+    /** Bounded pre-execution recovery. Default disabled. */
+    recovery?: RecoveryConfig;
+    /** Opt-in local failure metadata/fingerprints; never raw SDK or tool text. */
+    privateDiagnostics?: boolean;
+    /** Additional allowlisted SDK metadata; requires privateDiagnostics too. Default off. */
+    privateDiagnosticsDetails?: boolean;
     /**
      * How the user-facing reply is selected from a turn's agent messages:
-     * - `phase` (default): known final answers when the runtime labels them,
+     * - `final` (default): all explicitly labeled final parts, otherwise the last
+     *   useful non-commentary item regardless of earlier message lengths.
+     *   Ordering fallback, not a final signal.
+     * - `phase` (compatibility): known final answers when the runtime labels them,
      *   otherwise every message not known to be commentary, joined with a
      *   blank line. SDK/CLI 0.142.3 labels nothing, so commentary is still
      *   delivered.
@@ -189,10 +200,10 @@ export interface Config {
   /**
    * Per-message dispatch timeout in ms (#141). Bounds the full handler
    * pipeline (agent query + stream) under the per-session lock. If a turn
-   * hangs past this, the session lock is released (a hung turn would otherwise
-   * block every subsequent message on that session forever) and the user gets
-   * a one-shot apology. Does NOT cancel the in-flight turn — only unblocks the
-   * queue. Default 5 minutes.
+   * exceeds this, cancellation revokes its output/store authority immediately.
+   * Queued new requests can start after handler settlement and managed teardown
+   * proof; missing proof retains maintenance protection. Read from the global
+   * configuration (not a per-bot override). Default 5 minutes; <=0 disables it.
    */
   dispatchTimeoutMs: number;
   botBlocklist?: string[];
@@ -255,12 +266,14 @@ export interface BotOverride {
   apiUrl?: string;
   model?: string;
   systemPrompt?: string;
+  privateMemory?: Config['privateMemory'];
   botBlocklist?: string[];
   allowedBotUids?: string[];
   mentionFreeGroups?: string[];
 }
 
 type PartialConfig = {
+  privateMemory?: Config['privateMemory'];
   botToken?: string;
   apiUrl?: string;
   groupConfigDir?: string;
@@ -345,7 +358,17 @@ function readConfigFile(configFilePath: string): PartialConfig {
   return cleaned as PartialConfig;
 }
 
+function assertPrivateMemory(value: Config['privateMemory']): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || (value.enabled !== undefined && typeof value.enabled !== 'boolean')
+    || (value.maxBytes !== undefined && (!Number.isInteger(value.maxBytes) || value.maxBytes < 1 || value.maxBytes > 65_536))) {
+    throw new Error('Invalid privateMemory: enabled must be boolean and maxBytes an integer from 1 to 65536');
+  }
+}
+
 function mergeConfig(base: Config, override: PartialConfig): Config {
+  assertPrivateMemory(override.privateMemory);
   return {
     botToken: override.botToken ?? base.botToken,
     apiUrl: override.apiUrl ?? base.apiUrl,
@@ -357,6 +380,7 @@ function mergeConfig(base: Config, override: PartialConfig): Config {
     dataDir: base.dataDir,
     memoryBase: base.memoryBase,
     groupConfigDir: override.groupConfigDir ?? base.groupConfigDir,
+    privateMemory: { enabled: false, maxBytes: 16_384, ...base.privateMemory, ...override.privateMemory },
     sdk: {
       ...base.sdk,
       ...(override.sdk ?? {}),
@@ -577,6 +601,8 @@ export function resolveBotConfigs(config: Config): Config[] {
 
     const apiUrl = perBotFile.apiUrl ?? bot.apiUrl ?? config.apiUrl;
     const model = perBotFile.sdk?.model ?? bot.model ?? config.sdk.model;
+    assertPrivateMemory(bot.privateMemory);
+    assertPrivateMemory(perBotFile.privateMemory);
 
     const resolved: Config = {
       ...config,
@@ -594,6 +620,8 @@ export function resolveBotConfigs(config: Config): Config[] {
       mentionFreeGroups:
         perBotFile.mentionFreeGroups ?? bot.mentionFreeGroups ?? config.mentionFreeGroups,
       groupConfigDir: perBotFile.groupConfigDir ?? config.groupConfigDir,
+      privateMemory: { enabled: false, maxBytes: 16_384, ...config.privateMemory,
+        ...bot.privateMemory, ...perBotFile.privateMemory },
       sdk: {
         ...config.sdk,
         ...(perBotFile.sdk ?? {}),
@@ -729,7 +757,14 @@ function assertSdkEnums(id: string, sdk: Config['sdk']): void {
   check('approvalPolicy', sdk.approvalPolicy, ['never', 'on-request', 'on-failure', 'untrusted']);
   check('modelReasoningEffort', sdk.modelReasoningEffort, ['minimal', 'low', 'medium', 'high', 'xhigh']);
   check('webSearchMode', sdk.webSearchMode, ['disabled', 'cached', 'live']);
-  check('outputSelection', sdk.outputSelection, ['phase', 'heuristic', 'legacy']);
+  check('outputSelection', sdk.outputSelection, ['final', 'phase', 'heuristic', 'legacy']);
+  validateRecovery(sdk.recovery);
+  if (sdk.privateDiagnosticsDetails !== undefined && typeof sdk.privateDiagnosticsDetails !== 'boolean') {
+    throw new Error(`Bot "${id}": sdk.privateDiagnosticsDetails must be a boolean`);
+  }
+  if (sdk.privateDiagnostics !== undefined && typeof sdk.privateDiagnostics !== 'boolean') {
+    throw new Error(`Bot "${id}": sdk.privateDiagnostics must be a boolean`);
+  }
 }
 
 /**

@@ -11,6 +11,8 @@ import type { BotMessage } from '../octo/types.js';
 import { ChannelType, MessageType } from '../octo/types.js';
 import type { Config } from '../config.js';
 import { sendMessage } from '../octo/api.js';
+import { buildSenderContext } from '../sender-context.js';
+import { createHash } from 'node:crypto';
 
 const ROBOT_ID = 'bot-001';
 
@@ -20,7 +22,8 @@ function makeConfig(overrides?: Partial<Config>): Config {
     apiUrl: 'https://test.example.com',
     cwd: '/tmp',
     dataDir: '/tmp/data',
-    sdk: { allowedTools: [], permissionMode: 'bypassPermissions', settingSources: ['user'] },
+    sdk: {},
+    baseDir: '/tmp', maxResponseChars: 524288, dispatchTimeoutMs: 300000,
     rateLimit: { maxPerMinute: 5 },
     context: { maxContextChars: 6000, historyLimit: 40 },
     botBlocklist: ['blocked-bot-1'],
@@ -116,6 +119,129 @@ describe('SessionRouter', () => {
 
   // --- Mention gate ---
 
+  it('admits a producer-shaped routing mention without stripping a teammate span', async () => {
+    const msg = makeMsg({ payload: { type: MessageType.Text, content: '@Alice @bot-001 please look',
+      mention: { uids: ['alice', ROBOT_ID], entities: [{ uid: 'alice', offset: 0, length: 6 }] } } });
+    expect(await router.route(msg)).toMatchObject({ shouldProcess: true, cleanContent: msg.payload.content });
+    expect(JSON.parse(buildSenderContext(msg, 'owner', ROBOT_ID).split('\n')[1]))
+      .toMatchObject({ mentioned_uids: ['alice', ROBOT_ID], mention_source: 'entities', is_explicitly_mentioned: true });
+  });
+
+  it.each([
+    { entities: null, uids: [ROBOT_ID] },
+    { entities: [{ uid: ROBOT_ID }], uids: Array(129).fill('other') },
+    { uids: 'malformed', ais: true },
+    { entities: Array(129), ais: 1 },
+  ])('keeps valid independent admission facts and logs bounded correlation: %j', async mention => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const msg = makeMsg({ channel_id: 'SYNTHETIC_CHANNEL', message_id: 'SYNTHETIC_MESSAGE',
+        payload: { type: MessageType.Text, content: 'SYNTHETIC_BODY', mention: mention as unknown as BotMessage['payload']['mention'] } });
+      expect((await router.route(msg))?.shouldProcess).toBe(true);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0][0]).toBe('[codex-channel-octo] invalid mention metadata');
+      expect(JSON.parse(warn.mock.calls[0][1] as string)).toEqual({
+        mention_source: 'invalid', channelHash: createHash('sha256').update(msg.channel_id!).digest('hex'),
+        messageHash: createHash('sha256').update(msg.message_id).digest('hex'),
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('SYNTHETIC_');
+    } finally { warn.mockRestore(); }
+  });
+
+  it.each([
+    { uids: [...Array(128).fill('other'), ROBOT_ID] },
+    { uids: ROBOT_ID },
+  ])('admits exact legacy routing targets while keeping invalid metadata strict: %j', async mention => {
+    const msg = makeMsg({ payload: { type: MessageType.Text, content: 'request',
+      mention: mention as unknown as BotMessage['payload']['mention'] } });
+    expect((await router.route(msg))?.shouldProcess).toBe(true);
+    expect(JSON.parse(buildSenderContext(msg, 'owner', ROBOT_ID).split('\n')[1]))
+      .toMatchObject({ mention_source: 'invalid', is_explicitly_mentioned: false, mentioned_uids: [] });
+  });
+
+  it.each(['prefix-bot-001-suffix', 'BOT-001', 'bot-001 ', ['other']])(
+    'does not treat invalid routing payloads as substring matches: %j', async uids => {
+      const msg = makeMsg({ payload: { type: MessageType.Text, content: 'request',
+        mention: { uids } as unknown as BotMessage['payload']['mention'] } });
+      expect(await router.route(msg)).toBeNull();
+    });
+
+  it('strips a bot prefix when only a later teammate has a rendered entity', async () => {
+    const msg = makeMsg({ payload: { type: MessageType.Text, content: '@bot-001 @Alice look',
+      mention: { uids: [ROBOT_ID, 'alice'], entities: [{ uid: 'alice', offset: 9, length: 6 }] } } });
+    expect((await router.route(msg))?.cleanContent).toBe('@Alice look');
+  });
+
+  it('rejects an unusable mention with a fixed warning, without trusting humans/all as AI', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const msg = makeMsg({ channel_id: 'group-1', message_id: 'x'.repeat(513),
+        payload: { type: MessageType.Text, content: 'private', mention: { uids: 'invalid', humans: 1, all: 1 } as unknown as BotMessage['payload']['mention'] } });
+      expect(await router.route(msg)).toBeNull();
+      expect(warn).toHaveBeenCalledOnce();
+      expect(JSON.parse(warn.mock.calls[0][1] as string).messageHash).toBeNull();
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('private');
+    } finally { warn.mockRestore(); }
+  });
+
+  it.each(['entities', 'uids'])('strips a valid fullwidth leading mention using %s', async source => {
+    const msg = makeMsg({ payload: { type: MessageType.Text, content: '＠bot-001 hi',
+      mention: source === 'entities' ? { entities: [{ uid: ROBOT_ID, offset: 0, length: 8 }] } : { uids: [ROBOT_ID] } } });
+    expect((await router.route(msg))?.cleanContent).toBe('hi');
+  });
+
+  it.each([
+    [{ entities: [{ uid: ROBOT_ID, offset: 0, length: 8 }] }, true, true],
+    [{ entities: [{ uid: 'other', offset: 0, length: 8 }], uids: [ROBOT_ID] }, true, true],
+    [{ entities: [null], uids: [ROBOT_ID] }, true, true],
+    [{ ais: true }, true, false],
+    [{ all: 1, humans: 1 }, false, false],
+    [{ ais: 'false' }, false, false],
+    [{ uids: ROBOT_ID, ais: true }, true, false],
+  ])('uses the same structured mention facts for routing and attribution: %j', async (mention, passes, explicit) => {
+    const msg = makeMsg({ payload: { type: MessageType.Text, content: '@bot-001 hi',
+      mention: mention as unknown as NonNullable<BotMessage['payload']['mention']> } });
+    expect((await router.route(msg))?.shouldProcess ?? false).toBe(passes);
+    expect(JSON.parse(buildSenderContext(msg, 'owner', ROBOT_ID).split('\n')[1]).is_explicitly_mentioned).toBe(explicit);
+  });
+
+  it.each([-1, 0, 999, Infinity, NaN, 1.5, '8'])('never slices text using an invalid entity length %j', async (length) => {
+    const msg = makeMsg({ payload: { type: MessageType.Text, content: '@bot-001 hi',
+      mention: { entities: [{ uid: ROBOT_ID, offset: 0, length: length as number }] } } });
+    expect((await router.route(msg))?.cleanContent).toBe('@bot-001 hi');
+  });
+
+  it('retains text addressed to someone else on broad AI admission', async () => {
+    const msg = makeMsg({ payload: { type: MessageType.Text, content: '@other hi', mention: { ais: 1 } } });
+    expect((await router.route(msg))?.cleanContent).toBe('@other hi');
+  });
+
+  it.each([
+    ['ordinary request', 0, 4],
+    ['@other @bot-001 hi', 7, 8],
+    ['@bot-001 hi', -1, 8],
+    ['@bot-001 hi', 0.5, 8],
+    ['@bot-001 hi', '0', 8],
+    ['@🤖 hi', 0, 2],
+  ])('preserves text when entity coordinates cannot safely identify a leading mention: %s/%s/%s', async (content, offset, length) => {
+    const msg = makeMsg({ payload: { type: MessageType.Text, content,
+      mention: { entities: [{ uid: ROBOT_ID, offset: offset as number, length }] } } });
+    expect((await router.route(msg))?.cleanContent).toBe(content);
+  });
+
+  it('removes a valid leading mention with a complete surrogate pair', async () => {
+    const msg = makeMsg({ payload: { type: MessageType.Text, content: '@🤖 hi',
+      mention: { entities: [{ uid: ROBOT_ID, offset: 0, length: 3 }] } } });
+    expect((await router.route(msg))?.cleanContent).toBe('hi');
+  });
+
+  it('does not manufacture explicit membership when mention-free routing admits a message', async () => {
+    const freeRouter = new SessionRouter(makeConfig({ mentionFreeGroups: ['group-1'] }), ROBOT_ID);
+    const msg = makeMsg({ payload: { type: MessageType.Text, content: '@bot-001 hi' } });
+    expect((await freeRouter.route(msg))?.shouldProcess).toBe(true);
+    expect(JSON.parse(buildSenderContext(msg, 'owner', ROBOT_ID).split('\n')[1]).is_explicitly_mentioned).toBe(false);
+  });
+
   it('passes DM without mention gate', async () => {
     const msg = makeMsg({ channel_type: ChannelType.DM });
     const result = await router.route(msg);
@@ -132,7 +258,7 @@ describe('SessionRouter', () => {
     expect(result!.shouldProcess).toBe(true);
   });
 
-  it('passes group message when mention.ais is truthy', async () => {
+  it('passes group message when mention.ais is 1', async () => {
     const msg = makeMsg({
       payload: { type: MessageType.Text, content: 'hi', mention: { ais: 1 } },
     });
@@ -477,7 +603,7 @@ describe('dispatch timeout (#141)', () => {
     vi.clearAllMocks();
   });
 
-  it('a hung handler does not block the next message on the same session', async () => {
+  it('a hung handler quarantines its session without starting the next message', async () => {
     const router = new SessionRouter(
       makeConfig({ rateLimit: { maxPerMinute: 100 }, dispatchTimeoutMs: 50 }),
       ROBOT_ID,
@@ -487,7 +613,7 @@ describe('dispatch timeout (#141)', () => {
     // Message 1: handler never resolves (simulates a hung agent turn).
     const p1 = router.routeAndHandle(
       makeMsg({ message_id: '1', channel_type: ChannelType.DM, from_uid: 'same-user' }),
-      () => new Promise<void>(() => { /* never resolves */ }),
+      (_result, turn) => { turn.executionRisk = 'unknown'; return new Promise<void>(() => { /* never resolves */ }); },
     );
 
     // Message 2: a normal fast handler on the SAME session. Without the
@@ -499,8 +625,8 @@ describe('dispatch timeout (#141)', () => {
 
     await Promise.all([p1, p2]);
 
-    // Message 2 ran — the lock was released after message 1 timed out.
-    expect(completed).toEqual([2]);
+    // Message 2 remains blocked because the started execution is uncertain.
+    expect(completed).toEqual([]);
   });
 
   it('sends a single bounded apology on timeout', async () => {
@@ -516,7 +642,7 @@ describe('dispatch timeout (#141)', () => {
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(vi.mocked(sendMessage).mock.calls[0][0]).toMatchObject({
-      content: expect.stringContaining('处理超时'),
+      content: expect.stringContaining('任务超时'),
     });
   });
 

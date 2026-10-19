@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fresh published-package installs select the latest stable Codex SDK and its paired CLI; keep a reproducible lockfile, add runtime update/version verification commands and a Node 22/24 latest compatibility CI lane.
+
+- Separate `sdk.privateDiagnosticsDetails` opt-in for bounded allowlisted SDK failure metadata; requires `privateDiagnostics` and never captures arbitrary text.
+- Opt-in `sdk.privateDiagnostics` saves bounded owner-only failure metadata and SDK message fingerprints. Raw SDK/error/prompt/tool payloads stay excluded; rotation is limited to three 1 MiB files and diagnostic I/O failure cannot alter task behavior.
+
+### Changed
+
+- Harden private diagnostics with no-follow/inode/hard-link/permission checks; require a pre-existing data directory and POSIX safety flags. Unsupported flags fail closed before filesystem mutation; native Windows and network/FUSE filesystem compatibility are unverified.
+- Diagnostic capture and provenance lookup avoid SDK accessors/proxy prototype reflection; hostile classifier inputs fail closed without executing traps.
+
+### Fixed
+
+- Require exact registered owner identity for online recovery. The current Bot
+  API does not provide scoped-alias bindings; rewritten owner UIDs now receive
+  an explicit offline-maintenance path. Add hashed recovery audits, a separate
+  aggregate paused-traffic budget, pause-time group-context caching and CI type
+  checks for recovery contracts, with real-handler quarantine regressions.
+
+- Allow a new user request or explicit continuation in the same conversation after interrupted execution has stopped. Keep failed-task context and late-callback fencing without automatically replaying the old request; queue new requests during bounded cleanup and retain maintenance protection when teardown cannot be confirmed.
+- Confirm interrupted POSIX teardown using gateway-owned child handles and independent process-group checks; workload-writable proofs never authorize reopening. Preserve interruption context across slash commands until a successful model response is committed.
+- Bind privileged recovery to registration-provided owner identities and allow
+  owner-DM recovery of explicit third-party sessions without gateway downtime.
+  Paused traffic no longer consumes the global model budget; active tasks have
+  distinct refusal messages. Retain unresolved output evidence through expiry,
+  document local-only correlation IDs, and preserve safe API endpoint/status
+  diagnostics across POST/GET/upload failures without retaining server bodies.
+
+- Registered owners can reconcile one paused conversation in chat without taking the gateway offline. Pause notices include its exact task ID; active local handlers, wrong task IDs and non-owners cannot release it. Offline release is no longer shadowed by an in-memory pause flag.
+- Timeout and graceful shutdown do not quarantine positively unstarted model turns. Unknown/observed effects remain protected and are never automatically replayed.
+- Completed execution tombstones expire with retention; unresolved evidence survives. Removed unused stale-replay options and prompt assembly.
+
+### Added
+
 - Per-turn transport sender metadata matched to the registration UID or its
   single prefix in the transport space (including UUID/operator-named spaces);
   identity is kept out of shared AGENTS.md. Unicode whitespace/invisibles are
@@ -29,12 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if they contain, equal, or sit inside a trusted/sensitive directory — the
   session cwd, the config/SOUL tree, `groupConfigDir`, the memory dir, or
   `codexHome` — so a writable root can never overlap the agent's trust anchors.
-- **`sdk.outputSelection`** (`phase` default, `heuristic` opt-in, `legacy`
-  rollback) selects one reply per turn from Codex's agent messages. Delivery
-  and stored history share that single selection. On Codex SDK/CLI 0.142.3 the
-  default `phase` mode still delivers intermediate narration, because no
-  final-answer label is emitted. Suppressing narration requires `heuristic`.
-  Applied at bot start (restart or re-add the bot after editing).
+- **`sdk.outputSelection`** (`final` default; `phase`, `heuristic` and `legacy`
+  compatibility modes) selects one reply shared by delivery and stored history.
+  Explicit final parts are preserved. Without labels, the last useful message
+  is selected regardless of earlier message lengths, preventing long progress
+  narration from being restored before a short answer. Unlabeled multipart
+  answers may lose earlier parts; explicit compatibility modes remain available.
+  Commentary and partial fallbacks have distinct diagnostics. Applied at bot
+  start (restart or re-add the bot after editing).
 
 ### Changed
 
@@ -48,6 +83,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   supported.
 
 ### Fixed
+
+- Add safe failure categories, bounded opt-in pre-execution recovery and cancellable
+  dispatch. Quarantine uncertain timed-out/crashed execution, fence late callbacks,
+  persist delivery outcomes and commit confirmed history once per turn. Stop
+  automatic replay/continuation when execution safety cannot be established.
+
 
 - Keep Octo recovery alive after failed token refreshes and cooldown-suppressed
   requests, independently of successful REST heartbeats. Coalesce retry timers,

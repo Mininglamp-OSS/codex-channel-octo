@@ -92,19 +92,19 @@ describe('maxResponseChars validation', () => {
 });
 
 describe('sdk.outputSelection validation', () => {
-  it.each(['phase', 'heuristic', 'legacy'])('accepts %s', (mode) => {
+  it.each(['final', 'phase', 'heuristic', 'legacy'])('accepts %s', (mode) => {
     const [bot] = boot({ sdk: { outputSelection: mode } });
     expect(bot.sdk.outputSelection).toBe(mode);
   });
 
-  it('defaults to unset (phase at runtime)', () => {
+  it('defaults to unset (final at runtime)', () => {
     const [bot] = boot({});
     expect(bot.sdk.outputSelection).toBeUndefined();
   });
 
-  it.each(['final', 'all', 'Phase'])('rejects %s at boot', (mode) => {
+  it.each(['last', 'all', 'Phase'])('rejects %s at boot', (mode) => {
     expect(() => boot({ sdk: { outputSelection: mode } })).toThrow(
-      `Bot "a": invalid sdk.outputSelection '${mode}' (allowed: phase, heuristic, legacy)`,
+      `Bot "a": invalid sdk.outputSelection '${mode}' (allowed: final, phase, heuristic, legacy)`,
     );
   });
 });

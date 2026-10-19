@@ -1,3 +1,4 @@
+import { AgentFailure } from './agent-failure.js';
 import type { Config } from './config.js';
 import { getGroupMd, getThreadMd } from './octo/api.js';
 import { ChannelType, TOPIC_CHANNEL_SEPARATOR, type BotMessage } from './octo/types.js';
@@ -54,12 +55,14 @@ export class ConversationMarkdown {
     return snapshot?.empty ? undefined : snapshot?.context;
   }
 
-  async prepareTurn(channelId: string, channelType: ChannelType, threadId?: string): Promise<ConversationTurnContext> {
+  async prepareTurn(channelId: string, channelType: ChannelType, threadId?: string, storageSessionKey = channelId): Promise<ConversationTurnContext> {
+    // Fetch by Octo channel, but bind injection state to the actual SDK session
+    // namespace so persisted deduplication and withdrawals survive restarts.
     const snapshot = await this.snapshot(channelId, channelType);
     if (!snapshot) return { context: '', retryContext: '', commit: () => {} };
-    let previous = this.injected.get(channelId);
+    let previous = this.injected.get(storageSessionKey);
     if (this.persistence && threadId) {
-      const signature = this.persistence.getConversationDocumentSignature(channelId, threadId);
+      const signature = this.persistence.getConversationDocumentSignature(storageSessionKey, threadId);
       previous = signature === null ? undefined : { threadId, signature: signature ?? 'unknown-legacy-injection' };
     }
     if (snapshot.empty && (!threadId || previous?.threadId !== threadId)) {
@@ -70,11 +73,11 @@ export class ConversationMarkdown {
       context: unchanged ? '' : snapshot.context, retryContext: snapshot.empty ? '' : snapshot.context,
       commit: (threadId) => {
         if (this.persistence) {
-          this.persistence.setConversationDocumentSignature(channelId, threadId, snapshot.signature);
+          this.persistence.setConversationDocumentSignature(storageSessionKey, threadId, snapshot.signature);
           return;
         }
-        this.injected.delete(channelId);
-        this.injected.set(channelId, { threadId, signature: snapshot.signature });
+        this.injected.delete(storageSessionKey);
+        this.injected.set(storageSessionKey, { threadId, signature: snapshot.signature });
         if (this.injected.size > MAX_CACHE_ENTRIES) this.injected.delete(this.injected.keys().next().value!);
       },
     };
@@ -135,7 +138,8 @@ export class ConversationMarkdown {
         this.warnings.delete(resolved.key);
         this.warnings.set(resolved.key, Date.now() + CACHE_TTL_MS);
         if (this.warnings.size > MAX_CACHE_ENTRIES) this.warnings.delete(this.warnings.keys().next().value!);
-        const status = error instanceof Error ? /failed \((\d{3})\)/.exec(error.message)?.[1] : undefined;
+        const status = error instanceof AgentFailure ? error.snapshot.httpStatus
+          : error instanceof Error ? /failed \((\d{3})\)/.exec(error.message)?.[1] : undefined;
         const key = JSON.stringify(resolved.key).replace(/[\u0085\u2028\u2029]/g, ' ');
         console.warn(`[codex-channel-octo] Conversation markdown lookup failed for ${key} (${status ?? 'network or response error'}); server context may be stale or unavailable.`);
       }
