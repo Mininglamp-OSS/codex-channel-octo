@@ -114,7 +114,11 @@ def main():
                 else:
                     status = child.returncode if child.returncode >= 0 else 128 - child.returncode
                 # Reap through Popen first so waitpid cannot obscure its status.
-                leaked = bool(children()) if child.poll() is not None else False
+                exited = child.poll() is not None
+                if exited:
+                    # Adopted zombies are completed work, not live leaks.
+                    reap()
+                leaked = bool(children()) if exited else False
                 clean = cleanup(args.grace)
                 child.wait(timeout=1)
                 if leaked and status == 0:

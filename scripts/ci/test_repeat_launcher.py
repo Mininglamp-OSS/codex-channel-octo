@@ -21,6 +21,11 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.count('exit=0'), 2)
 
+    def test_adopted_zombie_is_reaped_without_false_failure(self):
+        result = self.invoke('import os,subprocess,sys,time;subprocess.Popen([sys.executable,"-c","pass"]);time.sleep(.15);os._exit(0)')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count('exit=0'), 2)
+
     def test_failure_stops_before_next_attempt(self):
         result = self.invoke('raise SystemExit(7)')
         self.assertEqual(result.returncode, 7)
