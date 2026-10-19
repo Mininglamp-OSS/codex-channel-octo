@@ -227,11 +227,16 @@ export function createPacer(options: PacerOptions): Pacer {
       const serverDeadline = typeof retryAfterMs === "number" && Number.isSafeInteger(retryAfterMs) && retryAfterMs >= 0
         ? receipt + retryAfterMs : undefined;
       live.eligibleAt = eligibilityDeadline(live.eligibleAt, t, dClient, serverDeadline);
+      const serverDominant = serverDeadline !== undefined && serverDeadline > t + dClient;
       if (!live.cooling) {
         live.cooling = true;
         live.sliceStart = t;
-        live.code = serverDeadline !== undefined && serverDeadline > t + dClient ? "server_retry_after" : "client_backoff";
+        live.code = serverDominant ? "server_retry_after" : "client_backoff";
         emitCount(live, "cooldown_start_total", live.code);
+      } else if (serverDominant && live.code !== "server_retry_after") {
+        // Same episode, now server-mandated: close the client-backoff slice and label later slices accordingly.
+        emitSlices(live, t);
+        live.code = "server_retry_after";
       }
       if (sink && live.originRef !== undefined && serverDeadline !== undefined && serverDeadline > t) {
         try {

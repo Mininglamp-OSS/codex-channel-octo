@@ -97,7 +97,8 @@ export interface TerminalResult {
 }
 
 export type OpenResult = "opened" | "duplicate" | "suspended" | "closing";
-export type EnqueueResult = "queued" | "unknown" | "absorbed" | "fenced" | "closing";
+/** `invalid`: the frame could not be snapshotted as plain data and was not queued. */
+export type EnqueueResult = "queued" | "unknown" | "absorbed" | "fenced" | "closing" | "invalid";
 
 export interface CardStatus {
   readonly phase: "pending" | "active" | "closed";
@@ -196,6 +197,23 @@ const FENCED = Symbol("fenced");
 
 function digest(body: string): string {
   return createHash("sha256").update(body, "utf8").digest("hex");
+}
+
+/**
+ * Deep, frozen copy of a caller frame taken at enqueue/finalize time, so a
+ * caller that later mutates its own state can never change a queued body or
+ * the body of a retry under the same sequence.
+ */
+function snapshotFrame(frame: CardFrame): CardFrame | undefined {
+  try { return deepFreeze(structuredClone(frame)); } catch { return undefined; }
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const key of Object.keys(value)) deepFreeze((value as Record<string, unknown>)[key]);
+    Object.freeze(value);
+  }
+  return value;
 }
 
 function isAbort(err: unknown): boolean {
@@ -424,7 +442,9 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
     pacer.observeSuccess(origin);
     let bound = false;
     try {
-      const r = store.ackMessage({ cardId: card.storeCardId, messageId, currentResetEpoch: card.spec.binding.resetEpoch, policyAllows: true });
+      // Current decision at binding time; automatic and display cards carry no admittable session.
+      const policyAllows = authorize(card) !== undefined;
+      const r = store.ackMessage({ cardId: card.storeCardId, messageId, currentResetEpoch: card.spec.binding.resetEpoch, policyAllows });
       bound = r.kind === "bound" || r.kind === "already_bound";
     } catch { bound = false; }
     if (!bound) {
@@ -465,9 +485,13 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
         // Limits narrowed during the wait; the frozen body is never rebuilt for a retry.
         return { kind: "done", outcome: "contract", seq };
       }
+      const req = request as EditRequest;
+      // Every attempt must carry exactly the frozen body under the reserved seq.
+      let current: string;
+      try { current = freezeEdit(req).body; } catch { current = ""; }
+      if (current !== (frozen as FrozenRequest).body) return { kind: "done", outcome: "contract", seq };
       const opts = callOptions();
       if (opts === FENCED) return { kind: "fenced", unresolved: false };
-      const req = request as EditRequest;
       card.inflight = true;
       try {
         const ack = req.k === "registry" ? await api.editRegistry(req.req, opts) : await api.editAuthored(req.req, opts);
@@ -542,7 +566,9 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       if (result.kind === "store_failed") { close(card, "store_failed"); return; }
       if (result.kind === "interrupted") continue;
       emitOutcome(card, "card_edit_total", result.outcome);
-      if (result.outcome === "policy" || result.outcome === "gone") close(card, result.outcome, result.seq);
+      // A non-terminal policy outcome drops only this write; the acknowledged card stays open and its
+      // terminal is authorized independently. `gone` closes the card record (§5.3).
+      if (result.outcome === "gone") close(card, result.outcome, result.seq);
     }
   }
 
@@ -570,8 +596,10 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       if (closing()) return "closing";
       if (card.phase === "closed" || card.terminal !== undefined) return "absorbed";
       if (card.cancelled) return "fenced";
+      const snapshot = snapshotFrame(frame);
+      if (snapshot === undefined) return "invalid";
       if (card.dirty === undefined) card.dirtySince = now();
-      card.dirty = frame;
+      card.dirty = snapshot;
       kick(card);
       return "queued";
     },
@@ -580,12 +608,17 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       const card = cards.get(cardId);
       if (card === undefined) return Promise.resolve(Object.freeze({ outcome: "skipped" as const }));
       if (card.terminalResult !== undefined) return card.terminalResult.promise;
+      const snapshot = card.phase === "closed" ? undefined : snapshotFrame(frame);
+      if (card.phase !== "closed" && snapshot === undefined) {
+        // Not queued and not absorbing: a valid terminal frame may still follow.
+        return Promise.resolve(Object.freeze({ outcome: "contract" as const }));
+      }
       card.terminalResult = deferred<TerminalResult>();
       if (card.phase === "closed") {
         card.terminalResult.resolve(Object.freeze({ outcome: card.outcome as CardOutcome }));
         return card.terminalResult.promise;
       }
-      card.terminal = frame;
+      card.terminal = snapshot;
       card.dirty = undefined;
       kick(card);
       return card.terminalResult.promise;
