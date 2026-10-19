@@ -17,6 +17,17 @@ import sys
 import time
 
 DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+# macOS sun_path has 104 bytes including NUL; use this portable ceiling on POSIX.
+CONTROL_SOCKET_PATH_MAX_BYTES = 103
+
+
+class ProfileSocketPathError(ValueError):
+    pass
+
+
+def validate_control_socket_path(profile):
+    if len(os.fsencode(profile.root / 'control.sock')) > CONTROL_SOCKET_PATH_MAX_BYTES:
+        raise ProfileSocketPathError('Control socket path exceeds portable byte limit')
 
 
 def overlap(a, b):
@@ -233,6 +244,8 @@ def prepare_gateway(profile):
 
 
 def run(profile, executable, digest, seconds, gateway_entry=None, node=None):
+    # Local path feasibility is checked before any lock/config/probe mutation.
+    validate_control_socket_path(profile)
     # Ownership must precede directories, executable probes and credential writes.
     profile.assert_identity()
     lock = os.open('owner.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=profile.fd)
@@ -487,6 +500,10 @@ def main():
             else:
                 result = control(profile, args.operation)
             print(json.dumps(result))
+    except ProfileSocketPathError:
+        print(json.dumps({'state': 'refused', 'reason': 'control-socket-path-too-long',
+                          'maxSocketPathBytes': CONTROL_SOCKET_PATH_MAX_BYTES}))
+        return 1
     except Exception:
         print('{"state":"refused"}')
         return 1

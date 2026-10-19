@@ -6,6 +6,9 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
+import subprocess
+import sys
 
 spec = importlib.util.spec_from_file_location('profile', Path(__file__).with_name('test_profile.py'))
 profile = importlib.util.module_from_spec(spec)
@@ -125,6 +128,33 @@ class IsolationTests(unittest.TestCase):
                 for _ in range(2):
                     with self.assertRaisesRegex(ValueError, 'fixture failure'):
                         profile.run(p, '/not-executed', 'digest', 1)
+
+    def test_socket_path_budget_counts_bytes_and_accepts_the_boundary(self):
+        tail = len(os.fsencode('/control.sock'))
+        for prefix in ['/' + 'x' * (103 - tail - 1), '/' + '中' * 20]:
+            profile.validate_control_socket_path(SimpleNamespace(root=Path(prefix)))
+        for prefix in ['/' + 'x' * (104 - tail - 1), '/' + '中' * 40]:
+            with self.assertRaises(profile.ProfileSocketPathError):
+                profile.validate_control_socket_path(SimpleNamespace(root=Path(prefix)))
+
+    def test_socket_overflow_refused_before_mutation_with_safe_cli_reason(self):
+        base = self.base / ('long-' + 'x' * 80)
+        base.mkdir(mode=0o700)
+        with profile.Profile(base, 'test-long') as p:
+            before = list(p.root.iterdir())
+            with patch.object(profile, 'validate_executable') as validate:
+                with self.assertRaises(profile.ProfileSocketPathError):
+                    profile.run(p, '/not-executed', 'digest', 1)
+                validate.assert_not_called()
+            self.assertEqual(before, list(p.root.iterdir()))
+        cli = subprocess.run([sys.executable, str(Path(profile.__file__)), 'start',
+            '--base', str(base), '--profile', 'test-long', '--codex', '/never-executed',
+            '--sha256', 'fixture'], capture_output=True, text=True, timeout=5)
+        self.assertEqual(cli.returncode, 1)
+        self.assertEqual(cli.stderr, '')
+        self.assertEqual(json.loads(cli.stdout), {'state': 'refused',
+            'reason': 'control-socket-path-too-long', 'maxSocketPathBytes': 103})
+        self.assertNotIn(str(base), cli.stdout)
 
 
 if __name__ == '__main__':
