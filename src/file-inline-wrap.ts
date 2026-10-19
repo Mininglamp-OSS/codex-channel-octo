@@ -187,7 +187,11 @@ export const MAX_USER_LLM_BYTES = 98_304; // 96 KB
 /**
  * Assemble a user-role message from injected `context` (first-turn history +
  * group-context delta, or a stale-resume fallback history block) and the current
- * message `body`, byte-capped at `maxBytes`.
+ * message `body`, byte-capped at `maxBytes`. Both fragments must already be
+ * escaped by the caller; assembly does not sanitize their internal structure.
+ * Budgets smaller than a complete request anchor return empty, never a partial
+ * privileged marker. The context truncation notice ends with a space so its
+ * first surviving fragment cannot become a new line-leading structural marker.
  *
  * The body is the PRIORITY — it is the actual new request and must always reach
  * the model whole. So we reserve the body's full byte size first, then give the
@@ -205,14 +209,14 @@ export const MAX_USER_LLM_BYTES = 98_304; // 96 KB
  * the current message still reaches the model.
  */
 function capBodyToBudget(body: string, maxBytes: number): string {
-  const { truncated, wasTruncated } = truncateUtf8ByBytes(body, maxBytes);
-  return wasTruncated ? truncated + '\n[… user input truncated to cap]' : body;
+  if (Buffer.byteLength(body, 'utf-8') <= maxBytes) return body;
+  const notice = '\n[… user input truncated to cap]';
+  const noticeBytes = Buffer.byteLength(notice, 'utf-8');
+  if (maxBytes < noticeBytes) return truncateUtf8ByBytes(body, maxBytes).truncated;
+  return truncateUtf8ByBytes(body, maxBytes - noticeBytes).truncated + notice;
 }
 
 export function assembleUserMessage(context: string, body: string, maxBytes: number, atomicContext = ''): string {
-  if (!context && !atomicContext) {
-    return capBodyToBudget(body, maxBytes);
-  }
   // Positive anchor (#132): the background context above is READ-ONLY; this line
   // demarcates the actual new request so the model responds to it ONLY and does
   // not reply line-by-line to the [Recent group messages] / [Prior conversation
@@ -220,12 +224,14 @@ export function assembleUserMessage(context: string, body: string, maxBytes: num
   // The literal is the shared CURRENT_MESSAGE_ANCHOR so the emitter, the system
   // prompt, and the escape regex can never drift apart (#133 review).
   const anchor = `\n${CURRENT_MESSAGE_ANCHOR}\n`;
+  const anchorBytes = Buffer.byteLength(anchor, 'utf-8');
+  if (maxBytes < anchorBytes) return '';
   const current = anchor + body;
   const bodyBytes = Buffer.byteLength(current, 'utf-8');
   if (bodyBytes >= maxBytes) {
     // Pathological: the body alone fills/overflows the budget. Drop context
     // entirely and cap the body — the current message still gets through.
-    return capBodyToBudget(body, maxBytes);
+    return anchor + capBodyToBudget(body, maxBytes - anchorBytes);
   }
   const protectedContext = Buffer.byteLength(atomicContext, 'utf-8') <= maxBytes - bodyBytes ? atomicContext : '';
   const anchored = protectedContext + current;

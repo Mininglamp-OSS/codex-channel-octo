@@ -233,6 +233,24 @@ def prepare_gateway(profile):
 
 
 def run(profile, executable, digest, seconds, gateway_entry=None, node=None):
+    # Ownership must precede directories, executable probes and credential writes.
+    profile.assert_identity()
+    lock = os.open('owner.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=profile.fd)
+    try:
+        st = os.fstat(lock)
+        private(st, 0o600)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            raise ValueError('Invalid ownership lock')
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError('Profile already locked') from None
+        return run_owned(profile, executable, digest, seconds, gateway_entry, node)
+    finally:
+        os.close(lock)
+
+
+def run_owned(profile, executable, digest, seconds, gateway_entry=None, node=None):
     if not 1 <= seconds <= 300:
         raise ValueError('Run duration must be 1..300 seconds')
     if control(profile, 'status')['state'] not in ('stopped', 'stale'):
@@ -263,12 +281,6 @@ def run(profile, executable, digest, seconds, gateway_entry=None, node=None):
                    CODEX_OCTO_TEST_SHARED_HOME=str(Path.home()))
         if not node or not Path(node).is_absolute():
             raise ValueError('Explicit absolute Node executable required')
-    lock = os.open('owner.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600, dir_fd=profile.fd)
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BaseException:
-        os.close(lock)
-        raise ValueError('Profile already locked')
     server = socket.socket(socket.AF_UNIX)
     child = None
     selector = selectors.DefaultSelector()
@@ -382,7 +394,6 @@ def run(profile, executable, digest, seconds, gateway_entry=None, node=None):
                 os.unlink(name, dir_fd=profile.fd)
             except FileNotFoundError:
                 pass
-        os.close(lock)
     if not any(c.get('event') == ('ready' if gateway_entry else 'initialize') for c in captured):
         raise ValueError('No successful initialize captured')
     return {'state': 'stopped', 'profile': profile.root.name, 'events': captured,

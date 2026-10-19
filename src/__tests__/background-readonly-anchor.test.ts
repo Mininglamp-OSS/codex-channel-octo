@@ -20,6 +20,7 @@
 import { describe, it, expect } from 'vitest';
 import { assembleUserMessage } from '../file-inline-wrap.js';
 import { buildSystemPrompt } from '../agent-bridge.js';
+import { CURRENT_MESSAGE_ANCHOR } from '../prompt-safety.js';
 
 describe('issue #132 — assembleUserMessage anchors the current message', () => {
   it('wraps the body in a positive "respond to this ONLY" anchor when context is present', () => {
@@ -48,11 +49,11 @@ describe('issue #132 — assembleUserMessage anchors the current message', () =>
     expect(out.indexOf('[Recent group messages]')).toBeLessThan(anchorIdx);
   });
 
-  it('does not double-anchor when there is no background context', () => {
+  it('emits one complete anchor even without background context', () => {
     // Pure DM / no-context turn: the body is the whole message, no anchor needed.
     const body = 'hello there';
     const out = assembleUserMessage('', body, 98_304);
-    expect(out).toBe(body);
+    expect(out).toBe(`\n${CURRENT_MESSAGE_ANCHOR}\n${body}`);
   });
 });
 

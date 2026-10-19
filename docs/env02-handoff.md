@@ -5,11 +5,11 @@ This is a test helper, with a draft-only delivery gate. It implements no App Ser
 
 ## Entry points and boundaries
 
-Use the source checkout after `npm ci` and `npm run build`, Python 3.9+ and Node 22+. Python uses Unix directory descriptors, `O_NOFOLLOW`, file locks and process groups; Windows is unsupported. The scripts, capture proxy and fixtures are excluded from the package's unchanged `files` list. The package contains only three opt-in runtime seams and a minimal typed reader over the existing supported Bot API sync endpoint.
+Use the source checkout after `npm ci` and `npm run build`, Python 3.9+ and Node 22+. Python uses Unix directory descriptors, `O_NOFOLLOW`, file locks and process groups; Windows is unsupported. The test scripts, capture proxy and fixtures remain excluded from the published package; main now separately includes its production scripts/check-codex-runtime.mjs. The package contains only three opt-in runtime seams and a minimal typed reader over the existing supported Bot API sync endpoint.
 
 - `src/config.ts`: test profile config-path switch; the exported default remains unchanged.
 - `src/index.ts`: watcher uses the same selected path as initial loading and reloads.
-- `src/agent-bridge.ts`: pinned executable override only with the profile switch enabled; default constructor options are unchanged.
+- `src/agent-bridge.ts`: pinned executable override only after full profile-path validation; managed runs keep the JSONL proxy and pin its owned child, preserving cancellation/stop proof. Default constructor options are unchanged.
 - `src/octo/evidence.ts`: strict authenticated paginated readback, separate from the existing best-effort history helper.
 - `scripts/test_profile.py`: start/status/stop/cleanup, protected-file provisioning and bounded capture/smoke adapters.
 - `scripts/guarded_child.py`: profile-owned child group terminates after parent EOF, crash or deadline.
@@ -146,3 +146,28 @@ The capture proxy accepts and forwards only the supported registration query `?f
 Local validation: 1269 Vitest tests across 62 files, eight Python isolation cases, typecheck, lint, build, default-config compatibility and npm pack dry run passed. New proxy/smoke regressions produced 14 failures against the previous implementation. Packaging excludes scripts/evidence and includes an executable JSONL proxy. The macOS test fixture resolves the system temporary-directory symlink; runtime symlink rejection is preserved.
 
 These are local synthetic checks. Dedicated live identity/channel inventory and authenticated cursor/high-watermark/retention acceptance remain outstanding. Path-based profile checks still assume protected directories and do not establish a boundary against a malicious process running as the same OS user. Keep the PR draft pending fresh review and live prerequisites.
+
+
+## PR #19 RC follow-up integrated with main f3ca765 (2026-10-19)
+
+The older evidence directories and revision-1 checksums are historical receipts and have not been rewritten. Their old test counts, old package exclusions and old head claims do not certify this revision. Latest validation is reported in the PR follow-up; no protected credentials or live owner inventory were provisioned for it.
+
+Review reconciliation:
+
+| Finding | Current resolution |
+|---|---|
+| Registration query/refresh rejected silently | Existing branch fix retained: allow exactly ?force_refresh=true on registration, forward it, test via real registerBot wrapper; refusals emit a fixed record without query values |
+| Nested/unknown registration credential strings leak | Existing shared retainCredentials and descriptor validator retained; new smoke invariant echoes nested, array and unknown credential strings into public metadata/readback and verifies all remain redacted |
+| Invalid readback identities reported complete | Canonical positive signed-int64 validation now applies to both the high-watermark probe and every page; safe numerics normalize and raw int64 wire values survive via parseOctoJson |
+| Configuration mutated before owner.lock | run acquires a validated regular single-link owner lock before any directories/probes/credential writes; holds it through teardown and releases on failure; losing-start regression asserts all existing file bytes and top-level inventory unchanged |
+| Shared-home overlap guard survived mutation | Explicit same-root, descendant and ancestor refusal expectations added, before filesystem traversal |
+| Pinned executable guard survived mutation | Direct actual bridge regressions cover absent and half-configured profiles; an installed SDK/proxy fixture validates managed pinning and stop proof |
+| Inherited smoke descriptors / invalid FD order | Shared validator already checks integer/FD range before fstat; both adapters invoke it before reading protected descriptors |
+| Half-set switches/platform diagnostics | Preserve explicit two-switch and POSIX errors; TS path checks remain application-level checks, not a same-UID adversary boundary |
+| Readback/plain-string payload or deletion gaps | Reader supports object or encoded-JSON payloads only; unrecognized payloads fail closed. Strict contiguous sequence policy detects incomplete evidence under this contract, but does not prove a server forbids legitimate deletion gaps; live protocol acceptance remains gated |
+| Evidence reader ships while scripts do not | Intentional opt-in library entry dist/octo/evidence.js for source/testing consumers; no gateway startup import or automatic network activity. Test helpers remain outside tarball |
+| Prohibited trailer | Historical replacement removed the trailer; this follow-up does not rewrite reviewed history or add a co-author trailer |
+
+Default configuration byte comparison is now against integrated main f3ca765 rather than superseded dd12980. It includes the current recovery-validation dependency graph. Isolated test fixture runs use no model/provider calls, no shared service writes and no production restarts. The ENV-01-only launcher remains explicitly pinned to CLI 0.142.3; current SDK 0.163.0 compatibility is separately tested through the managed synthetic CLI fixture, not represented as a rerun of the unavailable historical native binary.
+
+The PR remains draft. Live identity/channel inventory, real refresh/WS protocol, cursor inclusion, retention/deletion contract, and native 0.142.3 profile-smoke prerequisites still require their dedicated acceptance environment. This patch fixes code review defects; it does not claim those live gates are passed.

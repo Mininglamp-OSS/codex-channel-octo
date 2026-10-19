@@ -1,3 +1,4 @@
+import type { TurnContext } from './turn-context.js';
 /**
  * Group Context — group chat message cache + maxContextChars budget + mention mapping.
  */
@@ -196,7 +197,7 @@ export class GroupContext {
     }
   }
 
-  async refreshMembers(channelId: string, apiUrl: string, botToken: string): Promise<void> {
+  async refreshMembers(channelId: string, apiUrl: string, botToken: string, turn?: TurnContext): Promise<void> {
     const now = Date.now();
     const last = this.lastRefresh.get(channelId) ?? 0;
     if (now - last < REFRESH_INTERVAL_MS) return;
@@ -205,7 +206,8 @@ export class GroupContext {
     try {
       // Topics inherit group membership. Fetch the parent roster, while keeping
       // this topic's context and mention maps keyed by its full channel ID.
-      const members = await getGroupMembers({ apiUrl, botToken, groupNo: parentGroupNo(channelId) });
+      const members = await getGroupMembers({ apiUrl, botToken, groupNo: parentGroupNo(channelId), signal: turn?.signal });
+      turn?.assertPublishable();
       this.lastRefresh.set(channelId, now); // Record only on success
       const memberMap = this.getMemberMap(channelId);
       const nameMap = this.getNameToUid(channelId);
@@ -281,6 +283,7 @@ export class GroupContext {
         }
       }
     } catch (err) {
+      if (turn?.signal.aborted) throw err;
       console.error(`group-context: refreshMembers(${channelId}) failed: ${String(err)}`);
       // Don't update lastRefresh on failure — allow retry
     }

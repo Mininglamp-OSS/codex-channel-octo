@@ -49,3 +49,29 @@ it('never converts HTTP failure into empty successful evidence', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('Bearer fixture-token', { status: 503 })));
   await expect(readback(options)).rejects.toThrow(/incomplete/i);
 });
+
+it.each(['not-an-id', '9223372036854775808', '-1', '0', ' ', '01', '', -1, 0, 1.5, null])('rejects malformed identity %s in the readback page', async id => {
+  mock([{ messages: [row(1)] }, { messages: [{ ...row(1), message_id: id }] }]);
+  await expect(readback(options)).rejects.toThrow('invalid message identity');
+});
+it('validates identities in the high-watermark probe before pagination', async () => {
+  const calls = mock([{ messages: [{ ...row(1), message_id: 'not-an-id' }] }, { messages: [row(1)] }]);
+  await expect(readback(options)).rejects.toThrow('invalid message identity');
+  expect(calls).toHaveLength(1);
+});
+it.each([123, '123', '9223372036854775807'])('accepts and normalizes canonical ID %s', async id => {
+  const entry = { ...row(1), message_id: id };
+  mock([{ messages: [entry] }, { messages: [entry] }]);
+  expect((await readback(options)).messages[0].messageId).toBe(String(id));
+});
+it('preserves a raw numeric int64 response without rounding it', async () => {
+  const text = '{"messages":[{"message_seq":1,"message_id":9223372036854775807,"from_uid":"sender","timestamp":1,"payload":{}}]}';
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(text)));
+  expect((await readback(options)).messages[0].messageId).toBe('9223372036854775807');
+});
+
+it('accepts a 16-digit numeric wire ID via the lossless REST parser', async () => {
+  const entry = { ...row(1), message_id: 9007199254740992 };
+  mock([{ messages: [entry] }, { messages: [entry] }]);
+  expect((await readback(options)).messages[0].messageId).toBe('9007199254740992');
+});

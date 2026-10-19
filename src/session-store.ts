@@ -29,6 +29,28 @@ interface MessageRow {
 }
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS turn_execution (
+  session_key TEXT PRIMARY KEY, turn_id TEXT NOT NULL, generation INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('active','clean','quarantined')),
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS interrupted_turns (
+  turn_id TEXT PRIMARY KEY, session_key TEXT NOT NULL,
+  reason TEXT NOT NULL, execution_risk TEXT NOT NULL, stage TEXT NOT NULL,
+  context_pending INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS interrupted_session ON interrupted_turns(session_key, created_at);
+CREATE INDEX IF NOT EXISTS turn_execution_turn_idx ON turn_execution(turn_id);
+CREATE TABLE IF NOT EXISTS turn_outputs (
+  turn_id TEXT PRIMARY KEY, session_key TEXT NOT NULL, content TEXT NOT NULL,
+  message_seq INTEGER, bot_name TEXT, state TEXT NOT NULL DEFAULT 'generated',
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS delivery_parts (
+  turn_id TEXT NOT NULL, part_index INTEGER NOT NULL, client_msg_no TEXT NOT NULL UNIQUE,
+  payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', message_id TEXT,
+  PRIMARY KEY(turn_id, part_index)
+);
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   channel_id TEXT NOT NULL,
@@ -119,8 +141,79 @@ export class SessionStore {
     this.adapter = adapter;
   }
 
+  /** Invoke only after acquiring the gateway singleton lock. */
+  recoverInterruptedTurns(): void {
+    this.adapter.exec("UPDATE turn_execution SET state='quarantined' WHERE state='active'");
+  }
+  isTurnQuarantined(session: string): boolean {
+    const row = this.adapter.prepare('SELECT state FROM turn_execution WHERE session_key = ?').get(session) as { state: string } | undefined;
+    return row?.state === 'quarantined' || row?.state === 'active';
+  }
+  getTurnState(session: string): 'active' | 'quarantined' | 'clean' | undefined {
+    return (this.adapter.prepare('SELECT state FROM turn_execution WHERE session_key=?').get(session) as {state:'active' | 'quarantined' | 'clean'} | undefined)?.state;
+  }
+  getQuarantinedTurnId(session: string): string | undefined {
+    return (this.adapter.prepare("SELECT turn_id FROM turn_execution WHERE session_key=? AND state IN ('active','quarantined')").get(session) as {turn_id:string} | undefined)?.turn_id;
+  }
+  quarantinedTurnCount(): number {
+    return (this.adapter.prepare("SELECT count(*) AS count FROM turn_execution WHERE state='quarantined'").get() as {count:number}).count;
+  }
+  beginTurn(session: string, turnId: string): number {
+    return this.adapter.transaction(() => {
+      if (this.isTurnQuarantined(session)) throw new Error('Session requires execution reconciliation');
+      this.adapter.prepare(`INSERT INTO turn_execution VALUES (?, ?, 1, 'active', ?)
+        ON CONFLICT(session_key) DO UPDATE SET turn_id=excluded.turn_id, generation=generation+1, state='active', updated_at=excluded.updated_at`).run(session, turnId, Date.now());
+      return (this.adapter.prepare('SELECT generation FROM turn_execution WHERE session_key = ?').get(session) as { generation: number }).generation;
+    })();
+  }
+  finishTurn(session: string, turnId: string, state: 'clean' | 'quarantined'): void {
+    this.adapter.prepare('UPDATE turn_execution SET state=?, updated_at=? WHERE session_key=? AND turn_id=?').run(state, Date.now(), session, turnId);
+  }
+  recordInterruption(session: string, turn: import('./turn-context.js').InterruptedTurn): void {
+    this.adapter.prepare(`INSERT OR IGNORE INTO interrupted_turns(turn_id,session_key,reason,execution_risk,stage,created_at)
+      SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM turn_execution WHERE session_key=? AND turn_id=?)`)
+      .run(turn.turnId,session,turn.reason,turn.executionRisk,turn.stage,Date.now(),session,turn.turnId);
+  }
+  getInterruption(session: string): import('./turn-context.js').InterruptedTurn | undefined {
+    const row = this.adapter.prepare(`SELECT turn_id AS turnId, reason, execution_risk AS executionRisk, stage
+      FROM interrupted_turns WHERE session_key=? AND context_pending=1 ORDER BY rowid DESC LIMIT 1`)
+      .get(session) as import('./turn-context.js').InterruptedTurn | undefined;
+    return row;
+  }
+  consumeInterruption(session: string, turnId: string): void {
+    this.adapter.prepare(`UPDATE interrupted_turns SET context_pending=0 WHERE session_key=? AND rowid <=
+      (SELECT rowid FROM interrupted_turns WHERE session_key=? AND turn_id=?)`).run(session,session,turnId);
+  }
+  saveTurnOutput(turnId: string, session: string, text: string, seq?: number, bot?: string): void {
+    this.adapter.prepare('INSERT INTO turn_outputs(turn_id,session_key,content,message_seq,bot_name,created_at) VALUES (?,?,?,?,?,?)').run(turnId, session, text, seq ?? null, bot ?? null, Date.now());
+  }
+  saveDeliveryPart(turnId: string, index: number, clientMsgNo: string, payload: string): void {
+    this.adapter.prepare('INSERT INTO delivery_parts(turn_id,part_index,client_msg_no,payload) VALUES (?,?,?,?)').run(turnId, index, clientMsgNo, payload);
+  }
+  saveDeliveryParts(turnId: string, parts: Array<{ clientMsgNo: string; payload: string }>): void {
+    this.adapter.transaction(() => parts.forEach((part,index) => this.saveDeliveryPart(turnId,index,part.clientMsgNo,part.payload)))();
+  }
+  /** Exact-turn reconciliation after external checks; /reset never calls this. */
+  reconcileTurn(session: string, turnId: string): boolean {
+    return this.adapter.prepare("UPDATE turn_execution SET state='clean', updated_at=? WHERE session_key=? AND turn_id=? AND state='quarantined'").run(Date.now(),session,turnId).changes === 1;
+  }
+  markDeliveryPart(turnId: string, index: number, state: 'confirmed' | 'unknown', messageId?: string): void {
+    this.adapter.prepare('UPDATE delivery_parts SET state=?, message_id=? WHERE turn_id=? AND part_index=?').run(state, messageId ?? null, turnId, index);
+  }
+  commitTurnOutput(turnId: string): void {
+    this.adapter.transaction(() => {
+      const output = this.adapter.prepare('SELECT * FROM turn_outputs WHERE turn_id=?').get(turnId) as { session_key: string; content: string; message_seq: number | null; bot_name: string | null; state: string } | undefined;
+      if (!output || output.state === 'committed') return;
+      const parts = this.adapter.prepare('SELECT state FROM delivery_parts WHERE turn_id=?').all(turnId) as Array<{state:string}>;
+      if (!parts.length || parts.some(p => p.state !== 'confirmed')) throw new Error('Delivery not confirmed');
+      this.appendAssistant(output.session_key, output.content, output.message_seq ?? undefined, output.bot_name ?? undefined);
+      this.adapter.prepare("UPDATE turn_outputs SET state='committed' WHERE turn_id=?").run(turnId);
+    })();
+  }
+
   init(): void {
     this.adapter.exec(SCHEMA);
+
 
     // Migrations: add columns missing on pre-existing DBs (SQLite can't add them
     // via CREATE TABLE IF NOT EXISTS). Guarded + throw on real failure (Q1-2) so
@@ -258,6 +351,16 @@ export class SessionStore {
 
   cleanExpired(): number {
     const cutoff = Date.now() - SEVEN_DAYS_MS;
+    this.adapter.prepare('DELETE FROM interrupted_turns WHERE context_pending=0 AND created_at < ?').run(cutoff);
+    // Keep unresolved execution evidence; completed tombstones can expire.
+    this.adapter.prepare("DELETE FROM turn_execution WHERE state='clean' AND updated_at < ?").run(cutoff);
+    // The admission tombstone and the evidence needed for reconciliation share
+    // retention. Reset remains an explicit content deletion, not a release.
+    const expiredOutput = `SELECT o.turn_id FROM turn_outputs o WHERE o.created_at < ?
+      AND NOT EXISTS (SELECT 1 FROM turn_execution e
+        WHERE e.turn_id=o.turn_id AND e.state IN ('active','quarantined'))`;
+    this.adapter.prepare(`DELETE FROM delivery_parts WHERE turn_id IN (${expiredOutput})`).run(cutoff);
+    this.adapter.prepare(`DELETE FROM turn_outputs WHERE turn_id IN (${expiredOutput})`).run(cutoff);
     const result = this.deleteExpired.run(cutoff);
     // Expire the SDK-session mapping on the same 7-day TTL. sdk_sessions is a
     // separate table (no FK cascade to sessions), so without this a stale mapping
@@ -271,6 +374,8 @@ export class SessionStore {
   }
 
   deleteSession(sessionId: string): void {
+    this.adapter.prepare('DELETE FROM delivery_parts WHERE turn_id IN (SELECT turn_id FROM turn_outputs WHERE session_key=?)').run(sessionId);
+    this.adapter.prepare('DELETE FROM turn_outputs WHERE session_key=?').run(sessionId);
     this.deleteSessionStmt.run(sessionId);
   }
 

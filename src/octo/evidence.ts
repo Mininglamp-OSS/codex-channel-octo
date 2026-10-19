@@ -3,6 +3,13 @@ import { postJson } from './api.js';
 import { isAllowedApiUrl } from '../url-policy.js';
 import { createHash } from 'node:crypto';
 
+/** Same canonical, positive signed-int64 contract as the capture send oracle. */
+function canonicalMessageId(value: unknown): string | undefined {
+  const id = typeof value === 'string' ? value
+    : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : '';
+  return /^[1-9]\d{0,18}$/.test(id) && BigInt(id) <= 9223372036854775807n ? id : undefined;
+}
+
 export interface EvidenceOptions {
   apiUrl: string;
   botToken: string;
@@ -56,6 +63,9 @@ export async function readback(options: EvidenceOptions): Promise<ReadbackEviden
       throw new Error('Readback incomplete: malformed or oversized page');
     }
     for (const message of response.messages) {
+      if (!message || typeof message !== 'object' || !canonicalMessageId(message.message_id)) {
+        throw new Error('Readback incomplete: invalid message identity');
+      }
       if (!Number.isSafeInteger(message.message_seq) || Number(message.message_seq) < 1) {
         throw new Error('Readback incomplete: invalid sequence');
       }
@@ -83,10 +93,9 @@ export async function readback(options: EvidenceOptions): Promise<ReadbackEviden
       if (seq >= cursor || seq > highWatermark || sequences.has(seq)) {
         throw new Error('Readback incomplete: page cursor/watermark violation');
       }
-      const messageId = typeof row.message_id === 'string' ? row.message_id
-        : Number.isSafeInteger(row.message_id) ? String(row.message_id) : '';
+      const messageId = canonicalMessageId(row.message_id);
       if (!messageId || ids.has(messageId) ||
-          typeof row.from_uid !== 'string' || !Number.isFinite(row.timestamp)) {
+          typeof row.from_uid !== 'string' || !row.from_uid.trim() || !Number.isFinite(row.timestamp)) {
         throw new Error('Readback incomplete: invalid message identity');
       }
       sequences.add(seq); ids.add(messageId);

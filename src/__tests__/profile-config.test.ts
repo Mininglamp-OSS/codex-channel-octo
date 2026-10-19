@@ -23,3 +23,13 @@ it('refuses a path override without the test profile switch', () => {
 it('preserves the exported default path', () => {
   expect(DEFAULT_CONFIG_PATH).toMatch(/\.codex-channel-octo\/config.json$/);
 });
+
+it.each(['same', 'inside', 'ancestor'])('rejects the %s shared-home overlap before reading paths', relation => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'env02-overlap-'))); roots.push(base);
+  const shared = join(base, '.codex-channel-octo');
+  const root = relation === 'same' ? shared : relation === 'inside' ? join(shared, 'test-a') : base;
+  vi.stubEnv('CODEX_OCTO_TEST_SHARED_HOME', base);
+  vi.stubEnv('CODEX_OCTO_TEST_PROFILE_ROOT', root);
+  vi.stubEnv('CODEX_OCTO_TEST_CONFIG_PATH', join(root, 'config/config.json'));
+  expect(() => loadConfig()).toThrow('overlaps shared configuration');
+});

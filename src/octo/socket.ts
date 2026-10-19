@@ -300,6 +300,7 @@ export class WKSocket extends EventEmitter {
   private readonly pingMaxRetry = 3;
   private reconnectAttempts = 0;
   private stableTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private lastConnectTime = 0;
   private rapidDisconnectCount = 0;
 
@@ -337,6 +338,7 @@ export class WKSocket extends EventEmitter {
     this.stopHeart();
     this.stopReconnectTimer();
     this.clearStableTimer();
+    this.clearConnectTimer();
     if (this.ws) {
       try { this.ws.removeAllListeners(); this.ws.close(); } catch { /* ignore */ }
       this.ws = null;
@@ -350,6 +352,7 @@ export class WKSocket extends EventEmitter {
     this.stopHeart();
     this.stopReconnectTimer();
     this.clearStableTimer();
+    this.clearConnectTimer();
 
     const oldWs = this.ws;
     this.ws = null;
@@ -380,16 +383,26 @@ export class WKSocket extends EventEmitter {
   // ─── Internal Connection Logic ──────────────────────────────────────────
 
   private doConnect(): void {
+    this.connected = false;
+    this.stopHeart();
     this.clearStableTimer();
+    this.clearConnectTimer();
     if (this.ws) {
       try { this.ws.close(); } catch { /* ignore */ }
       this.ws = null;
     }
 
     this.tempBuffer = [];
-    const ws = new WebSocket(this.opts.wsUrl);
+    const ws = new WebSocket(this.opts.wsUrl, { handshakeTimeout: 15_000 });
     ws.binaryType = "arraybuffer";
     this.ws = ws;
+    // Bound the complete transport + WuKongIM handshake. REST heartbeat success
+    // cannot tell us whether this WebSocket ever received a CONNACK.
+    this.connectTimer = setTimeout(() => {
+      if (this.ws !== ws || this.connected || !this.needReconnect) return;
+      console.warn('[WKSocket] handshake timeout; terminating stalled connection');
+      ws.terminate(); // close handler schedules the normal backoff retry
+    }, 15_000);
 
     ws.on("open", () => {
       if (this.ws !== ws) return; // stale guard
@@ -436,6 +449,7 @@ export class WKSocket extends EventEmitter {
       }
       this.stopHeart();
       this.clearStableTimer();
+      this.clearConnectTimer();
 
       // Track rapid disconnects: if connection lasted <5s, it's unstable
       if (this.lastConnectTime > 0) {
@@ -450,10 +464,8 @@ export class WKSocket extends EventEmitter {
 
       // If 3+ consecutive rapid disconnects, trigger onError for token refresh
       if (this.rapidDisconnectCount >= 3) {
-        this.needReconnect = false;
         this.rapidDisconnectCount = 0;
         this.opts.onError?.(new Error("Connect failed: rapid disconnect detected"));
-        return;
       }
 
       if (this.needReconnect) {
@@ -501,6 +513,11 @@ export class WKSocket extends EventEmitter {
     }, 30_000);
   }
 
+  private clearConnectTimer(): void {
+    if (this.connectTimer) clearTimeout(this.connectTimer);
+    this.connectTimer = null;
+  }
+
   private clearStableTimer(): void {
     if (this.stableTimer) {
       clearTimeout(this.stableTimer);
@@ -519,6 +536,7 @@ export class WKSocket extends EventEmitter {
         console.debug("[WKSocket] ping timeout, reconnecting...");
         this.stopHeart();
         this.clearStableTimer();
+        this.clearConnectTimer();
         if (this.ws) {
           try { this.ws.close(); } catch { /* ignore */ }
           this.ws = null;
@@ -703,6 +721,7 @@ export class WKSocket extends EventEmitter {
   }
 
   private onConnack(dec: Decoder, hasServerVersion: boolean): void {
+    this.clearConnectTimer();
     if (hasServerVersion) {
       this.serverVersion = dec.readByte();
     }
@@ -858,6 +877,7 @@ export class WKSocket extends EventEmitter {
     this.needReconnect = false;
     this.stopHeart();
     this.clearStableTimer();
+    this.clearConnectTimer();
     if (this.ws) { try { this.ws.close(); } catch {} this.ws = null; }
     this.opts.onError?.(new Error("Kicked by server"));
     this.opts.onDisconnected?.();

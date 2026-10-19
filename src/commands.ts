@@ -67,6 +67,7 @@ const HELP_TEXT = [
   '• `/reset` — clear the conversation history for this session (the whole group, in a group chat); does not clear long-term memory',
   '• `/config` — show the current session settings',
   '• `/help` — show this message',
+  '• `/reconcile <turn-id> --external-results-verified` — registered owner: resume a paused session after checking prior effects; never reruns the old task',
 ].join('\n');
 
 /**

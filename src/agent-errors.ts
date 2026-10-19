@@ -1,3 +1,4 @@
+import { AgentFailure, TurnFailure } from './agent-failure.js';
 import { getSystemErrorMap } from 'node:util';
 
 const safeCodes = new Set([...getSystemErrorMap().values()].map(([code]) => code));
@@ -9,6 +10,8 @@ export function isSdkJsonlParseError(error: unknown): error is Error {
 }
 
 export function summarizeAgentError(error: unknown): string {
+  if (error instanceof TurnFailure) return JSON.stringify(error.report);
+  if (error instanceof AgentFailure) return JSON.stringify(error.snapshot);
   if (isSdkJsonlParseError(error)) {
     const cause = (error.cause as SyntaxError).message;
     const category = /Unterminated string|Unexpected end of JSON/i.test(cause) ? 'incomplete-json' : 'invalid-json';

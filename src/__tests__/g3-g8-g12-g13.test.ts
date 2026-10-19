@@ -161,13 +161,9 @@ describe('G13: @botname stripping', () => {
       cleanContent = result.cleanContent;
     });
 
-    // Bot not at offset 0 — regex fallback runs because bot IS mentioned,
-    // but it strips the leading @alice. This is an accepted limitation of
-    // regex fallback when entities don't help; the important invariant is
-    // that we DO NOT strip when the bot wasn't mentioned at all (covered above).
-    // Here, since the bot IS mentioned, regex strips @alice — not ideal but
-    // safe in the sense that the user knew they were @ing the bot.
-    expect(cleanContent).toBe('@bot help');
+    // Entity positions are authoritative for stripping. A nonleading bot
+    // mention must not let the legacy fallback remove a teammate's mention.
+    expect(cleanContent).toBe('@alice @bot help');
   });
 });
 

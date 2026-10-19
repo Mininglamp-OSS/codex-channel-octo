@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { createAdapter } from '../db-adapter.js';
 import { SessionStore } from '../session-store.js';
 import { ConversationMarkdown } from '../conversation-md.js';
+import { privateMemorySessionKey } from '../private-memory.js';
 import { ChannelType } from '../octo/types.js';
 import { getGroupMd } from '../octo/api.js';
 
@@ -24,6 +25,25 @@ beforeEach(() => {
 afterEach(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
 
 describe('durable server-document lifecycle', () => {
+  it('deduplicates and withdraws documents using the namespaced SDK storage key across restart', async () => {
+    const session = privateMemorySessionKey('group', false);
+    store.setSdkSessionId(session, 'thread-scoped');
+    const first = new ConversationMarkdown(config, store);
+    const initial = await first.prepareTurn('group', ChannelType.Group, undefined, session);
+    expect(initial.context).toContain('synthetic rules');
+    initial.commit('thread-scoped');
+    expect((await first.prepareTurn('group', ChannelType.Group, 'thread-scoped', session)).context).toBe('');
+    expect(store.getSdkSessionId('group')).toBeUndefined();
+
+    store.close();
+    store = open();
+    vi.mocked(getGroupMd).mockResolvedValue({ content: '', version: 0 });
+    const restarted = new ConversationMarkdown(config, store);
+    const withdrawn = await restarted.prepareTurn('group', ChannelType.Group, 'thread-scoped', session);
+    expect(withdrawn.context).toContain('Document is absent');
+    withdrawn.commit('thread-scoped');
+    expect((await restarted.prepareTurn('group', ChannelType.Group, 'thread-scoped', session)).context).toBe('');
+  });
   it('withdraws after SQLite close/reopen and a fresh cache, then persists withdrawal deduplication', async () => {
     store.setSdkSessionId('group', 'thread-1');
     const first = new ConversationMarkdown(config, store);

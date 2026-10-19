@@ -251,7 +251,7 @@ describe("StreamRelay", () => {
     await guarded;
 
     // Q23: sendMessage failures are swallowed per-segment; deliver() should not reject.
-    await expect(promise).resolves.toBeUndefined();
+    await expect(promise).resolves.toEqual({parts:[]});
 
     const countAfter = mockState.calls.filter((c) => c.fn === "sendTyping").length;
     await vi.advanceTimersByTimeAsync(30_000);

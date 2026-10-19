@@ -275,6 +275,27 @@ describe('WKSocket packet-level integration', () => {
     socket = null;
   });
 
+  it('keeps backoff reconnect alive after rapid-disconnect refresh hints are ignored', async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const errors = vi.fn();
+      const connected = vi.fn();
+      socket = makeSocket(vi.fn(), connected, errors);
+      socket.connect();
+      for (const delay of [3000, 6000, 12000]) {
+        const ws = wsRef.current!;
+        ws.emit('open'); doHandshake(ws, 1);
+        ws.emit('close');
+        await vi.advanceTimersByTimeAsync(delay);
+        expect(wsRef.current).not.toBe(ws);
+      }
+      wsRef.current!.emit('open'); doHandshake(wsRef.current!, 1);
+      expect(connected).toHaveBeenCalledTimes(4);
+      expect(errors).toHaveBeenCalledWith(expect.objectContaining({ message: 'Connect failed: rapid disconnect detected' }));
+    } finally { socket?.disconnect(); random.mockRestore(); vi.useRealTimers(); }
+  });
+
   // ── Test 1: CONNACK success ─────────────────────────────────────────────
 
   it('CONNACK reasonCode=1 → onConnected fires', () => {

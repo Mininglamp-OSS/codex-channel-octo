@@ -10,6 +10,10 @@
   "_comment_group_config_dir": "Optional directory of per-group instruction files (<groupId>.md), injected as trusted project instructions (AGENTS.md). Operator-controlled — keep it OUTSIDE every bot's workspace (the agent can write there). Omit to disable.",
 
   "sdk": {
+    "_comment_private_diagnostics": "Opt-in owner-only failure metadata and SDK message fingerprints under each bot data/diagnostics. No raw error/prompt/tool text. Rotation: 3 files, 1 MiB each.",
+    "privateDiagnostics": false,
+    "privateDiagnosticsDetails": false,
+    "_comment_private_diagnostics_details": "Requires privateDiagnostics too; bounded allowlisted metadata only, no arbitrary text. Requires local POSIX filesystem safety guarantees.",
     "_comment_codex_base_url": "Optional self-hosted Codex provider base URL (e.g. a private gateway). Passed to new Codex({ baseUrl }). Must be https:// (or http://localhost for dev) — SSRF-validated at boot. Omit to use codex's configured default.",
     "_comment_codex_api_key": "Optional API key for the Codex provider, passed to new Codex({ apiKey }). Alternatively authenticate per-bot via `codex login` against the bot's codex-home.",
     "_comment_sandbox": "sandboxMode defaults to 'read-only'. For sandboxed editing set BOTH allowWorkspaceWrite=true AND sandboxMode='workspace-write'. For a dedicated externally isolated container, explicitly set sandboxMode='danger-full-access' to disable Codex sandboxing (see config.bot.docker.example.json).",
@@ -22,7 +26,8 @@
     "_comment_network": "networkAccessEnabled / webSearchEnabled default false. danger-full-access has unrestricted Codex network access regardless of networkAccessEnabled; use container/network policy to restrict it.",
     "networkAccessEnabled": false,
     "webSearchEnabled": false,
-    "_comment_tool_progress": "Set toolProgress=true to post redacted '🔧 <action>…' progress notices as codex works (command/file/tool — never stdout, diff, or full args). Off by default."
+    "_comment_tool_progress": "Set toolProgress=true to post redacted '🔧 <action>…' progress notices as codex works (command/file/tool — never stdout, diff, or full args). Off by default.",
+    "_comment_output_selection": "outputSelection: final (default: explicit final parts or last useful item with substantive-loss guard) | phase (compatibility: retain unlabeled parts) | heuristic (opt-in: keep only messages after the last tool call) | legacy (rollback). On Codex 0.142.3 'phase' still delivers intermediate narration. Applied at bot start."
   },
 
   "rateLimit": {

@@ -1,3 +1,7 @@
+import { randomUUID } from 'node:crypto';
+import { AgentFailure } from './agent-failure.js';
+import type { TurnContext } from './turn-context.js';
+import type { SessionStore } from './session-store.js';
 /**
  * Stream Relay — typing heartbeat + message splitting + plain sendMessage delivery.
  *
@@ -16,6 +20,7 @@ import {
   sendMessage,
 } from "./octo/api.js";
 import { resolveMentions } from "./mention-utils.js";
+import { TRUNCATION_SUFFIX, DEFAULT_MAX_RESPONSE_CHARS } from "./output-selection.js";
 import { summarizeAgentError } from "./agent-errors.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -25,12 +30,6 @@ const TYPING_INTERVAL_MS = 5_000;
 
 /** Maximum characters per message segment. */
 const MAX_SEGMENT_CHARS = 3_500;
-
-/** Default maximum accumulated response length before truncation (Q32). */
-const DEFAULT_MAX_RESPONSE_CHARS = 524_288; // 512 KB
-
-/** Truncation suffix appended when response exceeds limit. */
-const TRUNCATION_SUFFIX = '\n\n[response truncated]';
 
 // ─── Message Splitting ─────────────────────────────────────────────────────
 
@@ -149,6 +148,15 @@ export function splitMessage(
 
 // ─── StreamRelay ────────────────────────────────────────────────────────────
 
+export interface DeliveryPart { clientMsgNo: string; state: 'confirmed' | 'unknown'; messageId?: string; }
+export interface DeliveryReport { parts: DeliveryPart[]; }
+function confirmedMessageId(value: unknown): string | undefined {
+  const id = typeof value === 'string' ? value : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : '';
+  // parseOctoJson preserves large numeric tokens as strings, including malformed
+  // leading-zero tokens. Only canonical positive decimal int64 identities may
+  // authorize durable confirmation. Bound length before converting to BigInt.
+  return /^[1-9]\d{0,18}$/.test(id) && BigInt(id) <= 9223372036854775807n ? id : undefined;
+}
 export class StreamRelay {
   /**
    * Deliver an async stream of text chunks to an Octo channel.
@@ -167,13 +175,17 @@ export class StreamRelay {
     maxResponseChars: number = DEFAULT_MAX_RESPONSE_CHARS,
     memberMap?: Map<string, string>,
     isValidUid?: (uid: string) => boolean,
-  ): Promise<void> {
+    lifecycle?: { turn: TurnContext; store: SessionStore },
+  ): Promise<DeliveryReport> {
+    const report: DeliveryReport = { parts: [] };
+    const check = () => lifecycle?.turn.assertPublishable();
+    check();
     // --- Typing heartbeat ---
-    const typingParams = { apiUrl, botToken, channelId, channelType };
+    const typingParams = { apiUrl, botToken, channelId, channelType, ...(lifecycle ? { signal: lifecycle.turn.signal } : {}) };
     // Fire one immediately — don't wait for the first interval tick.
     sendTyping(typingParams).catch(() => {});
     const typingTimer = setInterval(() => {
-      sendTyping(typingParams).catch(() => {});
+      if (!lifecycle?.turn.signal.aborted) sendTyping(typingParams).catch(() => {});
     }, TYPING_INTERVAL_MS);
 
     try {
@@ -187,6 +199,7 @@ export class StreamRelay {
       let streamError: unknown;
       try {
         for await (const chunk of chunks) {
+          check();
           accumulated += chunk;
           // Q32: Stop accumulating once limit is reached to prevent unbounded memory.
           if (accumulated.length > maxResponseChars) {
@@ -231,6 +244,7 @@ export class StreamRelay {
         const segments = splitMessage(finalContent, undefined, protectedRanges);
         let segStart = 0;
         let mentionAllConsumed = false;
+        const pending: Array<Parameters<typeof sendMessage>[0]> = [];
         for (const segment of segments) {
           const segEnd = segStart + segment.length;
           // Partition entities falling within this segment, re-rebase to
@@ -258,30 +272,53 @@ export class StreamRelay {
           const useMentionAll = mentionAll && !mentionAllConsumed;
           if (useMentionAll) mentionAllConsumed = true;
 
-          try {
-            await sendMessage({
-              apiUrl,
-              botToken,
-              channelId,
-              channelType,
-              content: segment,
-              ...(segUids.length > 0 ? { mentionUids: segUids } : {}),
-              ...(segEntities.length > 0 ? { mentionEntities: segEntities } : {}),
-              ...(useMentionAll ? { mentionAll: true } : {}),
-            });
-          } catch (err) {
-            console.error(`[stream-relay] sendMessage failed for segment (${segment.length} chars), continuing: ${summarizeAgentError(err)}`);
-            // Continue sending remaining segments — don't let one failure drop the rest
-          }
+          pending.push({ apiUrl, botToken, channelId, channelType, content: segment,
+            clientMsgNo: randomUUID(),
+            ...(segUids.length > 0 ? { mentionUids: segUids } : {}),
+            ...(segEntities.length > 0 ? { mentionEntities: segEntities } : {}),
+            ...(useMentionAll ? { mentionAll: true } : {}),
+            ...(lifecycle ? { signal: lifecycle.turn.signal } : {}),
+          });
           segStart = segEnd;
         }
+        check();
+        try { lifecycle?.store.saveDeliveryParts(lifecycle.turn.turnId, pending.map(part => ({ clientMsgNo: part.clientMsgNo!, payload: JSON.stringify({
+          channelId, channelType, content: part.content, mentionUids: part.mentionUids,
+          mentionEntities: part.mentionEntities, mentionAll: part.mentionAll,
+        }) })));
+        } catch { throw new AgentFailure({ stage: 'history_commit', category: 'history_failed', source: 'local', evidence: 'structured' }); }
+        for (const [index, part] of pending.entries()) {
+          check();
+          try {
+            lifecycle?.store.markDeliveryPart(lifecycle.turn.turnId, index, 'unknown');
+            const result = await sendMessage(part);
+            check();
+            // The send endpoint can return a server-generated client_msg_no.
+            // Correlate this acknowledgement through the awaited HTTP request;
+            // the returned key need not echo our local correlation key. The bot
+            // endpoint does not establish idempotency from this request field.
+            const id = confirmedMessageId(result?.message_id);
+            const state = id ? 'confirmed' : 'unknown';
+            lifecycle?.store.markDeliveryPart(lifecycle.turn.turnId, index, state, id);
+            report.parts.push({ clientMsgNo: part.clientMsgNo!, state, ...(id ? { messageId: id } : {}) });
+            if (!id && lifecycle) throw new AgentFailure({ stage: 'delivery', category: 'delivery_failed', source: 'octo_api', evidence: 'structured' });
+          } catch (error) {
+            if (lifecycle?.turn.signal.aborted) throw error;
+            lifecycle?.store.markDeliveryPart(lifecycle.turn.turnId, index, 'unknown');
+            if (lifecycle) throw error instanceof AgentFailure ? error : new AgentFailure({ stage: 'delivery', category: 'delivery_failed', source: 'octo_api', evidence: 'structured' });
+            console.error(`[stream-relay] delivery failed: ${summarizeAgentError(error)}`);
+          }
+        }
       }
+      // Persist fixed payloads/keys before the first external send. Never persist the token.
+      // Delivery uncertainty stops later segments; it must not trigger model replay.
       // If accumulated is empty, the agent produced no output — nothing to send.
       // If the stream threw mid-way, we've now flushed whatever partial text was
       // accumulated; re-throw so the caller's error handling still runs (it will
       // not double-send — the partial was delivered here, the caller only logs /
       // surfaces the failure).
       if (streamError !== undefined) throw streamError;
+      return report;
     } finally {
       clearInterval(typingTimer);
     }

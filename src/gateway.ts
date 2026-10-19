@@ -24,7 +24,8 @@ export class OctoGateway {
   private robotId = '';
   // Stored registration result from register(); consumed by connect().
   private registration: Awaited<ReturnType<typeof registerBot>> | null = null;
-  // G18: owner_uid from registerBot; used by SessionRouter for future permission model.
+  // Ownership snapshot from the last successful registration; healthy heartbeats
+  // do not refresh it. Transfers require restart/successful re-registration.
   private _ownerUid = '';
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lockFilePath: string;
@@ -39,6 +40,8 @@ export class OctoGateway {
   // Token refresh state
   private isRefreshing = false;
   private lastRefreshTime = 0;
+  private refreshRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private refreshAbort: AbortController | null = null;
   private readonly REFRESH_COOLDOWN_MS = 60_000;
 
   // Heartbeat failure tracking
@@ -61,7 +64,7 @@ export class OctoGateway {
     return this.robotId;
   }
 
-  /** G18: owner_uid returned by registerBot. Empty string until start() succeeds. */
+  /** Last successful registration owner, not a live server ownership lookup. */
   get ownerUid(): string {
     return this._ownerUid;
   }
@@ -176,6 +179,8 @@ export class OctoGateway {
   ): Promise<void> {
     // Mark draining — new messages will be dropped by handleMessage
     this._draining = true;
+    this.clearRefreshRetry();
+    this.refreshAbort?.abort();
 
     // Wait for in-flight message handlers to complete (with timeout)
     if (activeHandlers && activeHandlers.size > 0) {
@@ -294,25 +299,32 @@ export class OctoGateway {
   // --- Socket factory ---
 
   private createSocket(wsUrl: string, uid: string, token: string): WKSocket {
-    return new WKSocket({
+    const socket = new WKSocket({
       wsUrl,
       uid,
       token,
-      onMessage: (msg) => this.handleMessage(msg),
+      onMessage: (msg) => {
+        if (!this._draining && this.socket === socket) this.handleMessage(msg);
+      },
       onConnected: () => {
+        if (this._draining || this.socket !== socket) return;
+        this.clearRefreshRetry();
         console.log('WS connected');
         this.heartbeatFailCount = 0;
       },
       onDisconnected: () => {
+        if (this._draining || this.socket !== socket) return;
         console.log('WS disconnected');
       },
       onError: (err) => {
+        if (this._draining || this.socket !== socket) return;
         console.error('WS error:', err.message);
         if (err.message.includes('Kicked') || err.message.includes('Connect failed')) {
           void this.attemptTokenRefresh();
         }
       },
     });
+    return socket;
   }
 
   // --- Bot registration + WS connection ---
@@ -329,51 +341,68 @@ export class OctoGateway {
 
   // --- Token refresh ---
 
-  private async attemptTokenRefresh(): Promise<void> {
-    if (this.isRefreshing) return;
+  private clearRefreshRetry(): void {
+    if (this.refreshRetryTimer) clearTimeout(this.refreshRetryTimer);
+    this.refreshRetryTimer = null;
+  }
 
-    const now = Date.now();
-    if (now - this.lastRefreshTime < this.REFRESH_COOLDOWN_MS) {
-      const remaining = Math.ceil((this.REFRESH_COOLDOWN_MS - (now - this.lastRefreshTime)) / 1000);
-      console.log(`Token refresh cooldown (${remaining}s remaining)`);
+  private scheduleRefreshRetry(delayMs: number): void {
+    if (this._draining || this.refreshRetryTimer) return;
+    console.log(`Connection recovery queued in ${Math.ceil(delayMs / 1000)}s`);
+    this.refreshRetryTimer = setTimeout(() => {
+      this.refreshRetryTimer = null;
+      void this.attemptTokenRefresh();
+    }, delayMs);
+  }
+
+  private async attemptTokenRefresh(): Promise<void> {
+    if (this._draining || this.isRefreshing) return;
+    const remaining = this.REFRESH_COOLDOWN_MS - (Date.now() - this.lastRefreshTime);
+    if (remaining > 0) {
+      this.scheduleRefreshRetry(remaining);
       return;
     }
-
+    this.clearRefreshRetry();
     this.isRefreshing = true;
-    this.lastRefreshTime = now;
-
+    this.lastRefreshTime = Date.now();
+    const abort = new AbortController();
+    this.refreshAbort = abort;
     try {
       console.log('Attempting token refresh...');
-
-      // Q33: Stop heartbeat during refresh to avoid empty pings
       this.stopHeartbeat();
-
-      if (this.socket) {
-        await this.socket.disconnectAndWait();
-        this.socket = null;
-      }
-
+      const oldSocket = this.socket;
+      this.socket = null;
+      if (oldSocket) await oldSocket.disconnectAndWait();
+      if (this._draining) return;
+      // Keep registration bounded even when a shutdown signal is supplied.
+      const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(30_000)]);
       const reg = await registerBot({
         apiUrl: this.config.apiUrl,
         botToken: this.config.botToken,
         forceRefresh: true,
         agentPlatform: 'codex-channel-octo',
         agentVersion: PKG_VERSION,
+        signal,
       });
-
+      if (this._draining) return;
+      if (!isAllowedWsUrl(reg.ws_url)) throw new Error('Registration returned an insecure WebSocket URL');
       this.robotId = reg.robot_id;
       this._ownerUid = reg.owner_uid;
       this.registration = reg;
       console.log('Token refreshed, reconnecting...');
-
       this.socket = this.createSocket(reg.ws_url, reg.robot_id, reg.im_token);
       this.socket.connect();
-      this.startHeartbeat(); // Q33: Restart API heartbeat after successful refresh
-    } catch (err) {
-      console.error('Token refresh failed:', String(err));
-      this.startHeartbeat(); // Q33: Restore heartbeat on failure for self-healing
+    } catch {
+      if (!this._draining) {
+        // REST heartbeats can succeed while the WS is absent. They cannot be
+        // the sole trigger for retrying a failed registration/credential refresh.
+        console.error('Token refresh failed; connection recovery will retry');
+        this.scheduleRefreshRetry(Math.max(1, this.REFRESH_COOLDOWN_MS - (Date.now() - this.lastRefreshTime)));
+      }
     } finally {
+      this.refreshAbort = null;
       this.isRefreshing = false;
+      if (!this._draining) this.startHeartbeat();
     }
   }
 

@@ -60,3 +60,16 @@ it('records invalid attestation without contacting the server or retaining the m
   expect(records).toEqual([{ event: 'refused', reason: 'invalid-smoke-manifest', forwarded: false }]);
   expect(adapter.registerBot).not.toHaveBeenCalled();
 });
+
+it('redacts every nonpublic registration string even when echoed into public metadata', async () => {
+  const records: unknown[] = []; const adapter = transport();
+  const secrets = ['opaque-nested-refresh', 'opaque-unknown-ticket', 'opaque-array-credential'];
+  adapter.registerBot.mockResolvedValue({ robot_id: 'bot-a', im_token: 'fixture-im-token', ws_url: 'wss://example.com',
+    owner_uid: secrets[0], owner_channel_id: secrets[1],
+    credentials: { refresh_token: secrets[0] }, ticket: secrets[1], nested: [secrets[2]] } as never);
+  adapter.readback.mockResolvedValue({ complete: true, messages: [{ text: secrets.join(' ') }] } as never);
+  await smoke(manifest, 'fixture-secret', (r: unknown) => records.push(r), adapter);
+  const retained = JSON.stringify(records);
+  for (const secret of secrets) expect(retained).not.toContain(secret);
+  expect(records).toContainEqual({ event: 'registration', robotId: 'bot-a', ownerUid: '[REDACTED]', ownerChannelId: '[REDACTED]' });
+});

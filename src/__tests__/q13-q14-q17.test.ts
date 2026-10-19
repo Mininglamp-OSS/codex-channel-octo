@@ -106,7 +106,7 @@ describe("getGroupMembers via getJson (Q17)", () => {
     vi.stubGlobal("fetch", mockFetch);
   });
 
-  it("includes error body in error message", async () => {
+  it("keeps safe endpoint and status without exposing the error body", async () => {
     const { getGroupMembers } = await import("../octo/api.js");
 
     mockFetch.mockResolvedValue({
@@ -118,7 +118,7 @@ describe("getGroupMembers via getJson (Q17)", () => {
 
     await expect(
       getGroupMembers({ apiUrl: "https://api", botToken: "tok", groupNo: "g1" }),
-    ).rejects.toThrow("bot not in group");
+    ).rejects.toMatchObject({ snapshot: { endpoint: '/v1/bot/groups/:group/members', httpStatus: 403, category: 'permission', stage: 'prepare' } });
   });
 
   it("applies default timeout signal", async () => {

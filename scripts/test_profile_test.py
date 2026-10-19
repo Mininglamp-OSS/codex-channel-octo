@@ -1,3 +1,5 @@
+import fcntl
+from unittest.mock import patch
 import importlib.util
 import json
 import os
@@ -94,6 +96,35 @@ class IsolationTests(unittest.TestCase):
             p.write('bot.json', b'{"botToken":"fixture-only","sdk":{"codexHome":"/shared"}}')
             with self.assertRaises(ValueError):
                 profile.prepare_gateway(p)
+
+    def test_losing_start_never_mutates_profile_or_probes_executable(self):
+        with profile.Profile(self.base, 'test-a') as p:
+            p.directory('config')
+            p.write('bot.json', b'{"botToken":"fixture-only"}')
+            p.write('gateway.json', json.dumps({'apiUrl': 'https://example.com',
+                'bots': [{'id': 'bot-a', 'credentialFile': 'bot.json'}]}).encode())
+            profile.prepare_gateway(p)
+            lock = os.open(p.root / 'owner.lock', os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            before = {str(f.relative_to(p.root)): f.read_bytes() for f in p.root.rglob('*') if f.is_file()}
+            try:
+                with patch.object(profile, 'validate_executable') as validate, patch.object(profile, 'prepare_gateway') as prepare:
+                    with self.assertRaisesRegex(ValueError, 'already locked'):
+                        profile.run(p, '/not-executed', 'digest', 1, '/not-executed.js', '/not-executed-node')
+                    validate.assert_not_called()
+                    prepare.assert_not_called()
+                after = {str(f.relative_to(p.root)): f.read_bytes() for f in p.root.rglob('*') if f.is_file()}
+                self.assertEqual(before, after)
+                self.assertEqual({str(f.relative_to(p.root)) for f in p.root.iterdir()}, {'config', 'bot.json', 'gateway.json', 'owner.lock'})
+            finally:
+                os.close(lock)
+
+    def test_failed_owned_start_releases_the_lock(self):
+        with profile.Profile(self.base, 'test-a') as p:
+            with patch.object(profile, 'run_owned', side_effect=ValueError('fixture failure')):
+                for _ in range(2):
+                    with self.assertRaisesRegex(ValueError, 'fixture failure'):
+                        profile.run(p, '/not-executed', 'digest', 1)
 
 
 if __name__ == '__main__':
