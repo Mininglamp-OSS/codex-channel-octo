@@ -781,6 +781,25 @@ function canonical(lines: readonly MetricLine[]): readonly MetricLine[] {
   for (const o of lines) map.set(`${o.inc}:${o.seq}`, o);
   return [...map.values()];
 }
+/** Stable full-record key: every parsed field, labels normalized to sorted entries; byte layout is irrelevant. */
+const recordKey = (o: MetricLine): string => JSON.stringify([
+  o.inc, o.seq, o.name, Object.keys(o.labels).sort().map((k) => [k, o.labels[k]]), o.value,
+  o.iv_start ?? null, o.iv_end ?? null, o.w_utc ?? null, o.t_utc, o.t_mono,
+]);
+/**
+ * Every distinct valid `critical_signal_total` record, in first-seen order, independent of the per-(inc, seq)
+ * count canonicalization: a reused or conflicting seq never erases a critical observation, while identical
+ * transport duplicates collapse to one.
+ */
+function criticalLines(lines: readonly MetricLine[]): readonly MetricLine[] {
+  const map = new Map<string, MetricLine>();
+  for (const o of lines) {
+    if (o.name !== "critical_signal_total") continue;
+    const key = recordKey(o);
+    if (!map.has(key)) map.set(key, o);
+  }
+  return [...map.values()];
+}
 const sum = (lines: readonly MetricLine[], pred: (o: MetricLine) => boolean): number =>
   lines.reduce((acc, o) => (pred(o) ? acc + o.value : acc), 0);
 
@@ -798,8 +817,8 @@ function criticalSignals(lines: readonly MetricLine[], a: number, b: number): {
   const signals: ActionSignal[] = [];
   const drills: DrillSignal[] = [];
   const runtime: { code: "event_stream_halt"; atUtc: string }[] = [];
-  for (const o of canonical(lines)) {
-    if (o.name !== "critical_signal_total" || !intersects.instant(o.d, a, b)) continue;
+  for (const o of criticalLines(lines)) {
+    if (!intersects.instant(o.d, a, b)) continue;
     const code = o.labels.code as CriticalCode;
     const capability = o.labels.capability as Capability;
     const botRef = o.labels.bot_ref;
@@ -970,7 +989,8 @@ export function evaluateBatch(decl: BatchDeclaration, receipt: EvaluationReceipt
   const lines = canonical(r.lines);
   for (const pr of r.problems) if ((pr.scope === undefined || pr.scope === decl.metric) && touches(pr, a, b)) reasons.add(pr.reason);
   const inBatch = lines.filter((o) => intersects.instant(o.d, a, b));
-  if (inBatch.some((o) => o.name === "critical_signal_total" && o.labels.code === "synthetic_drill")) reasons.add("drill_in_canary");
+  const critInBatch = criticalLines(r.lines).filter((o) => intersects.instant(o.d, a, b));
+  if (critInBatch.some((o) => o.labels.code === "synthetic_drill")) reasons.add("drill_in_canary");
   for (const f of r.identityFaults) reasons.add(f);
   bindingReasons(r, options.binding, inBatch, reasons);
 
@@ -998,7 +1018,7 @@ export function evaluateBatch(decl: BatchDeclaration, receipt: EvaluationReceipt
     if (authenticated < MIN_SAMPLES || accepted < MIN_ACCEPTED) reasons.add("insufficient_samples");
     if (!decl.storeOracleRefs || decl.storeOracleRefs.length === 0) reasons.add("missing_evidence");
     admission = Object.freeze({ authenticated, accepted });
-    failed = inBatch.some((o) => o.name === "critical_signal_total" && M04_CRITICAL.includes(o.labels.code));
+    failed = critInBatch.some((o) => M04_CRITICAL.includes(o.labels.code));
   } else {
     // The closed registry carries no selected-output turn count: without bound v24 evidence M-05 stays fail-closed.
     const evidence = options.selectedOutput;
@@ -1012,7 +1032,7 @@ export function evaluateBatch(decl: BatchDeclaration, receipt: EvaluationReceipt
         failed = sel.criticals.length > 0;
       }
     }
-    failed ||= inBatch.some((o) => o.name === "critical_signal_total" && M05_CRITICAL.includes(o.labels.code));
+    failed ||= critInBatch.some((o) => M05_CRITICAL.includes(o.labels.code));
   }
   const sorted = freezeAll([...reasons].sort());
   const status: BatchStatus = sorted.length > 0 ? "invalid" : failed ? "fail" : "pass";
@@ -1394,8 +1414,8 @@ export function evaluateM01(input: M01Input): M01Evaluation {
     const from = state.deployment ? P(state.deployment.firstIncarnationStartUtc) : -Infinity;
     const period = canonical(state.lines).filter((o) => o.d >= from);
     const m01Codes: readonly string[] = M01_CRITICAL_CODES;
-    for (const o of period) {
-      if (o.name === "critical_signal_total" && m01Codes.includes(o.labels.code)) reasons.add(o.labels.code as CriticalCode);
+    for (const o of criticalLines(state.lines)) {
+      if (o.d >= from && m01Codes.includes(o.labels.code)) reasons.add(o.labels.code as CriticalCode);
     }
     if (state.valid) {
       // A receipt quarantined by identity, coverage or history faults never supports a pass.
