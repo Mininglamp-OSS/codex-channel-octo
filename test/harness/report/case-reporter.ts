@@ -11,8 +11,8 @@ import { captureSourceState } from '../../../scripts/ci/source-state.mjs';
 type AnyTask = { type: string; tasks?: AnyTask[]; [k: string]: unknown };
 const flatten = (t: AnyTask): AnyTask[] => {
   if (t.type === 'test') return [t];
-  const result = t.result as { state?: string } | undefined;
-  if (result?.state === 'fail') return [{ ...t, type: 'test', name: 'collection-error', file: { name: t.filepath ?? t.name } }, ...(t.tasks ?? []).flatMap(flatten)];
+  const result = t.result as { state?: string; errors?: unknown[] } | undefined;
+  if (result?.state === 'fail' && (result.errors?.length || !(t.tasks ?? []).length)) return [{ ...t, type: 'test', name: 'collection-error', file: { name: t.filepath ?? t.name } }, ...(t.tasks ?? []).flatMap(flatten)];
   return (t.tasks ?? []).flatMap(flatten);
 };
 
