@@ -1,0 +1,2187 @@
+{
+  "revision": "R8",
+  "source": "Quoted from R8 §§3.4.7, 3.4.8, 6.3–6.6, 10.6, 10.6.1, 10.6.2, 10.9, 10.10, 10.11 by scripts/dev01/build-case-catalog.py",
+  "entries": [
+    {
+      "id": "M1-01",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM, member. Steps: send \"hi\".",
+      "evidenceOracle": "Expected (exact): one bot reply (mock text). Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-02",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: group mention-required, member. Steps: \"hello\" without @.",
+      "evidenceOracle": "Expected (exact): no reply; router.modelAdmitted delta0, router.gateDrops+1 and OBS router.gated record. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-03",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: group, member. Steps: message with @所有人 + @所有AI.",
+      "evidenceOracle": "Expected (exact): no reply. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-04",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: group. Steps: @所有AI only.",
+      "evidenceOracle": "Expected (exact): one reply. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-05",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: group. Steps: entities-only mention fixture (web client).",
+      "evidenceOracle": "Expected (exact): one reply. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-06",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: group, member, @bot. Steps: `/reset`.",
+      "evidenceOracle": "Expected (exact): `⛔ /reset is limited to the bot owner or managers here.`; `[AUDIT] action=deny`. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-07",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: group, owner, @bot. Steps: `/reset`, then ask \"what did I say before?\".",
+      "evidenceOracle": "Expected (exact): `✓ Conversation history cleared (long-term memory is kept).`; answer shows no prior context. Bound: 20 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-08",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: group, manager, @bot. Steps: `/new`.",
+      "evidenceOracle": "Expected (exact): same as reset string. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-09",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: mention-free group, member, no @. Steps: `/reset`.",
+      "evidenceOracle": "Expected (exact): denial string. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-10",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM, member. Steps: `/help`.",
+      "evidenceOracle": "Expected (exact): help golden (member variant, no `/cron`). Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-11",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM, owner, sdk.approvalPolicy=never. Steps: `/config`.",
+      "evidenceOracle": "Expected (exact): config golden incl. `approvalPolicy: never (effective; configured: never)`, `executor: app-server`, `cron: …`. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-12",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM. Steps: `/foo`.",
+      "evidenceOracle": "Expected (exact): `Unknown command: /foo` + help. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-13",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM, owner. Steps: `/cron list` with cron disabled.",
+      "evidenceOracle": "Expected (exact): `/cron is disabled for this bot.`. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-14",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM, rateLimit 5/min. Steps: send 6 messages in 30 s.",
+      "evidenceOracle": "Expected (exact): 6th → `请稍后再试` (\"please try again later\"). Bound: 40 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-15",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM. Steps: 33 KB text.",
+      "evidenceOracle": "Expected (exact): `消息过长，请缩短后重试` (\"message too long, please shorten it and retry\"). Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-16",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: group. Steps: mock reply 8000 chars with `@[uid:name]` in segment 2 and `@all`.",
+      "evidenceOracle": "Expected (exact): 3 segments; mention rendered in segment 2; `@all` only effective in segment 1. Bound: 30 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-17",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM. Steps: mock empty reply.",
+      "evidenceOracle": "Expected (exact): `[No response generated. Please try rephrasing your question.]`. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-18",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM. Steps: mock reply `NO_REPLY`.",
+      "evidenceOracle": "Expected (exact): no message. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-19",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM. Steps: mock 40 s turn (dispatch 20 s).",
+      "evidenceOracle": "Expected (exact): `⚠️ 处理超时，请稍后重试。` (\"processing timed out, please retry later\") at 20 s±2 s, then the scripted full reply at 40 s±2 s; both visible. Bound: 60 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-20",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM, ceiling=240 s. Steps: hung mock turn; send messages at t=0,21,42,63,84 s (dispatch=20 s).",
+      "evidenceOracle": "Expected (exact): messages 2–4 remain queued (their dispatch apologies are allowed); message 5 → `⚠️ 上一条消息仍在处理中，请稍后再试。` (\"the previous message is still being processed…\"). Bound: 100 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-21",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM, dispatch=20 s, ceiling=60 s. Steps: send message1 at t=0 (script hangs), send message2 at t=21 s (script returns SECOND_OK within 1 s once dispatched).",
+      "evidenceOracle": "Expected (exact): timeout notice, then `⚠️ 处理时间过长，本次回复已终止，请重试或换个问法。` (\"processing took too long and this reply was stopped…\"); queued message2 returns SECOND_OK after confirmed termination. Bound: 90 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-22",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM. Steps: mock: 3 distinct permitted tool items, then answer.",
+      "evidenceOracle": "Expected (exact): exactly 3 `🔧 Running …` notices, no duplicates, then the answer. Bound: 30 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-23",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM. Steps: mock: failing command then normal answer.",
+      "evidenceOracle": "Expected (exact): no banner. Bound: 30 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-24",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM. Steps: mock: failing command and no answer text.",
+      "evidenceOracle": "Expected (exact): exactly `⚠️ 🛠️ Command failed（详情见日志）` (\"details in the logs\"). Bound: 30 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-25",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM. Steps: kill -9 the App Server child mid-turn.",
+      "evidenceOracle": "Expected (exact): `An error occurred while processing your message. Please try again.`; next message answered; `runtime.restarts` +1. Bound: 30 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-26",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM, shared `CODEX_HOME` opt-in, real provider. Steps: IM turn → `codex exec resume <id>` in a terminal → next IM turn references the terminal turn.",
+      "evidenceOracle": "Expected (exact): reply reflects the terminal content. Bound: 5 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-27",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: group, bots A and B mention each other. Steps: trigger.",
+      "evidenceOracle": "Expected (exact): each bot stops after `maxConsecutive` replies. Bound: 5 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-28",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: group. Steps: quote a card message (type 17).",
+      "evidenceOracle": "Expected (exact): reply addresses the card text. Bound: 20 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-29",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: group. Steps: @bot with a 10 KB `.md` file.",
+      "evidenceOracle": "Expected (exact): reply references the file content. Bound: 30 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-30",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: DM, 20-message burst. Steps: `codex-channel-octo stop` during the burst.",
+      "evidenceOracle": "Expected (exact): OBS intake-close and external packet capture prove no ACK after closure; pre-close admitted IDs all completed/interrupted; unACKed IDs follow SO-2; no orphan pids. Bound: 2 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-31",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: deployed. Steps: executor round trip (§8.4).",
+      "evidenceOracle": "Expected (exact): conversation continues across both switches. Bound: 10 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-32",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: populated dd12980 DB copy. Steps: upgrade, start, chat; downgrade, start, chat; restore backup.",
+      "evidenceOracle": "Expected (exact): all three succeed; migration log line present. Bound: 20 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-33",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Preconditions: owner bot, second process same bot. Steps: pause owner at fence; start second.",
+      "evidenceOracle": "Expected (exact): exits `Another instance is running (PID n)`; DB/WAL hashes unchanged. Bound: 1 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-01",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: DM, owner. Steps: `/cron add 3m -- say hello`.",
+      "evidenceOracle": "Expected (exact): confirmation golden (§3.6.5); fires at +3 min (±stagger 0 with `--exact`); job deleted after success. Bound: 5 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-02",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: DM, owner. Steps: `/cron add every 2m --session -- summarize` then ask \"what did the scheduled task say?\".",
+      "evidenceOracle": "Expected (exact): 2 fires; follow-up answer cites the result (session thread). Bound: 6 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-03",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: group/topic mention-required, owner explicitly @bot on both commands. Steps: `/cron add every 2m --isolated -- report` then @bot \"what did the report say?\".",
+      "evidenceOracle": "Expected (exact): fire delivered; follow-up cites it (ContextNote); no duplicate injection on the next turn. Bound: 6 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-04",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: group, member, @bot. Steps: `/cron add 5m -- x`.",
+      "evidenceOracle": "Expected (exact): `⛔ /cron is limited to the bot owner or managers here.`. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-05",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: DM, owner, cron.defaultTimezone=Asia/Shanghai. Steps: `/cron add “cron 0 9 * * *” -- x` with smart quotes and full-width space.",
+      "evidenceOracle": "Expected (exact): accepted; next fire echoed with `+08:00`. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-06",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: DM, owner, cron.minIntervalMs=60000. Steps: `/cron add every 10s -- x`.",
+      "evidenceOracle": "Expected (exact): `✗ Interval below minimum (1m)`. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-07",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: DM, owner. Steps: multi-line prompt after `--`.",
+      "evidenceOracle": "Expected (exact): `/cron show` displays all lines. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-08",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: DM, owner. Steps: `/cron list`, `/cron show <id>`, `/cron runs <id>`.",
+      "evidenceOracle": "Expected (exact): goldens. Bound: 10 s. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-09",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: real downtime 6 min with `every 2m` job. Steps: stop, wait, start.",
+      "evidenceOracle": "Expected (exact): exactly one catch-up run (`catchupDeferMs=0`). Bound: 10 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-10",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: mock result is two segments; proxy confirms first, holds second. Steps: kill -9 the bot, restart.",
+      "evidenceOracle": "Expected (exact): run `interrupted(restart)` with `completion=unknown`, `delivery_state=unknown`, `segments_sent=1`; no resend in the transcript. Bound: 5 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-11",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: group job; remove the bot from the group. Steps: 3 fires.",
+      "evidenceOracle": "Expected (exact): owner DM: `⛔ Scheduled task <id> \"<name>\" was turned off: target-unavailable. …`. Bound: 10 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-12",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: mock provider returns 500 for the job. Steps: 2 fires.",
+      "evidenceOracle": "Expected (exact): owner DM alert text exactly per §3.7. Bound: 6 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-13",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: running isolated job (mock 60 s). Steps: `/cron rm <id>`.",
+      "evidenceOracle": "Expected (exact): run `skipped(job-removed)`, nothing delivered, job gone. Bound: 2 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-14",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: session-mode job running in DM. Steps: `/reset`.",
+      "evidenceOracle": "Expected (exact): run interrupted (`skipped(job-removed)` no; `error(timeout)` no): run ends `interrupted(reset)` (neutral) with no delivery; next fire on fresh thread. Bound: 3 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-15",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: owner DM, CODEX_OCTO_EXECUTOR=sdk. Steps: `/cron list`.",
+      "evidenceOracle": "Expected (exact): `/cron is disabled for this bot.`; status `cron.state=disabled`, `cron.disabledReason=executor-sdk`. Bound: 1 min. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-16",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Preconditions: soak: 20 jobs × 3 bots, 24 h. Steps: run.",
+      "evidenceOracle": "Expected (exact): independent all-attempt/all-segment oracle (§10.10) = 0 violations; no stuck `running` rows. Bound: 24 h. Evidence per R8 §10.6.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-34",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "toolProgress on/off; scripted 3-tool turn in DM",
+      "evidenceOracle": "on: exactly one notice per permitted tool item, ≤10 total; off: none; no duplicate presenter. Bound/layer: 30 s real Octo.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-35",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "mock turn waits in lane then starts; inspect typing/receipt",
+      "evidenceOracle": "no typing during wait; typing every 5 s during execution, stops at timeout/completion; receipt after delivered per OD-09 default, never for DROP. Bound/layer: 2 min real Octo + timestamp fixture.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-36",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "partial answer flushed on error; later stream failure",
+      "evidenceOracle": "confirmed answer segments present; no generic error afterward; raw argv/output absent. Bound/layer: 30 s mock + Octo.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-37",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "every truth-table cell including cron-only manager and session-only manager",
+      "evidenceOracle": "exact EXEC/DENY/ADDRESS/DROP/UNKNOWN/disabled values and copy from §3.6.3; authorization/addressing precede disabled; no command text reaches model. Bound/layer: ≤10 s per cell real Octo; all cells automated unit.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M1-38",
+      "family": "M1",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "scope/type/leading-mention and compound-DM fixtures",
+      "evidenceOracle": "OD-35 I14/I19/T24 target outcomes; type 17 text admitted; unknown type silent. Bound/layer: ≤10 s per fixture; arbitrary payloads unit only.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-17",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "malformed quote, invalid tz, quota, stale --revision, page boundary, disabled command, multiline add/edit",
+      "evidenceOracle": "exact §3.6.5 catalog and normalized timezone+offset; no partial mutation; outputs ≤3500 or split with stable ordinals. Bound/layer: ≤10 s each real Octo.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-18",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "admission pending; then shutdown; separate 6-min session run with chat default 5 min",
+      "evidenceOracle": "pending run removed and terminal once; 6-min run has no chat apology and no premature outcome; execution failure returned not swallowed. Bound/layer: ≤7 min mock/real-binary integration.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-19",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "populated M2 DB and SDK rollback; disable/re-enable scheduler",
+      "evidenceOracle": "scheduler cannot execute under SDK; chat roundtrip/history survives; cron retained; re-enable catch-up per OD-25, no replay of delivering unknown. Bound/layer: 10 min deployed.",
+      "source": "R8 §10.6"
+    },
+    {
+      "id": "M2-20",
+      "family": "M2",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Deployed package downgrade / re-upgrade / restore per the R8 §10.6 M2-20 paragraph.",
+      "evidenceOracle": "Fixture table/rollout semantic inventories at every checkpoint, zero resend for old unknown segments, restored chat answers, migration/reconciliation logs; mismatch or missing artifact fails/pends. Bound 30 min.",
+      "source": "R8 §10.6 M2-20"
+    },
+    {
+      "id": "SB-01",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: Pre-init request → error `-32600` with message `Not initialized`; second `initialize` → `-32600 Already initialized`",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-02",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: Second `turn/start` on an active thread returns a turn id that receives no `turn/started` or `turn/completed` within 10 s. Runtime test: a second `runTurn` on the same lane does not call `turn/start` until the first is terminal",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-03",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: After a terminal `codex exec resume` turn, `thread/resume{config:{}}` + `turn/start` model input contains the terminal turn (mock records input). An identical resume without `config` does not",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-04",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: `turn/start` overrides persist across turns and a reload. Runtime sends only `cwd`, `approvalPolicy` and `effort` (asserted from the request log)",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-05",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: AGENTS.md edited after the first turn → the mock-recorded instructions are unchanged on later turns",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-06",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: exec-created thread resumes in app-server; app-server thread resumes with `codex exec resume`; both list the prior turns",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-07",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass (as amended by A-R8-SB07-01): Under `never`, a shell tool call yields a `commandExecution` item with no server request. Under `on-request` with escalation in a fresh process, the request has numeric `id:0`; exactly one same-typed host reply within 5000 ms with bytes `{\"id\":0,\"error\":{\"code\":-32000,\"message\":\"command execution approval is not supported in exec mode for thread `<threadId>`\"}}`; then `serverRequest/resolved` (same incarnation, threadId, requestId), then `item/completed` commandExecution status `failed` (same threadId/turnId/itemId; processId, aggregatedOutput, exitCode null), then `turn/completed status=completed` (same threadId/turn.id). Unrelated notifications may interleave; missing, duplicate, wrongly correlated, malformed or reordered required events fail",
+      "source": "R8 §6.3, amended by A-R8-SB07-01 (docs/amendments/R8-AMD-01.md)"
+    },
+    {
+      "id": "SB-08",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: `turn/interrupt` → response `{}` within 2 s, then `turn/completed status=interrupted` within 5 s",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-09",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: Two threads, 4 s scripted turns each, concurrently: wall time ≤ 1.3× single-turn wall time (median of 5 runs)",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-10",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: SIGKILL / stdin EOF / SIGTERM mid-turn → after respawn, resume shows the turn `interrupted`; exit observed within 30 s EOF maximum, and within 2 s for direct SIGTERM/SIGKILL; after host SIGKILL children exit on EOF within 30 s (measure, not assume immediate)",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-11",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: `CODEX_API_KEY` env alone → mock sees no `Authorization`. Ephemeral store + `account/login/start{apiKey}` → `Bearer <key>` and no `auth.json` written",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-12",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: exec with `-c approval_policy=\"on-request\"` → rollout `turn_context.approval_policy == \"never\"`",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-13",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: `runtimeWorkspaceRoots:[cwd,X]` + network `-c` → `turn_context` equals exec `--add-dir X`",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SB-14",
+      "family": "SB",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Real-binary job: pinned codex 0.142.3 + mock Responses + NO_PROXY, isolated CODEX_HOME (test/real-binary/sb.real.test.ts).",
+      "evidenceOracle": "Pass: `codex app-server --session-source exec` exits non-zero with \"unexpected argument\"",
+      "source": "R8 §6.3"
+    },
+    {
+      "id": "SP-T1",
+      "family": "SP",
+      "mandatoryFor": [],
+      "procedure": "thread/start.dynamicTools on 0.142.3: callable on turn 1, after thread/resume{config:{}}, after respawn + resume (test/real-binary/sb.real.test.ts#SP-T1).",
+      "evidenceOracle": "Outcome A/B/C recorded with raw evidence; consequence per the §6.4 table (gates DEV-14 only).",
+      "source": "R8 §6.4"
+    },
+    {
+      "id": "SR-01",
+      "family": "SR",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Class G (M1): 5 scripted prompts through exec and app-server on the same model. Since two real model runs are nondeterministic, compare normalized event kinds/order, phases, usage location and classifiers rather than byte-equal generated answer text. Exact projection equality is checked by replaying each captured notification stream through the projection oracle; deterministic whole-turn equality belongs to DEV-05. Real streams are scrubbed and committed as fixtures (TST N1)",
+      "evidenceOracle": "Real-model evidence on the declared head/provider/model; scrubbed streams committed; missing evidence stays pending.",
+      "source": "R8 §6.5"
+    },
+    {
+      "id": "SR-02",
+      "family": "SR",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Class G (M1): Trigger 401 (bad key), context overflow, usage limit via real provider where attainable; otherwise recorded real-coverage gap plus deterministic captured error fixture and a reviewed acceptance amendment, and stream disconnect (proxy cut). The normalized message classifies identically to exec (stale / stream-interrupt / generic)",
+      "evidenceOracle": "Real-model evidence on the declared head/provider/model; scrubbed streams committed; missing evidence stays pending.",
+      "source": "R8 §6.5"
+    },
+    {
+      "id": "SR-03",
+      "family": "SR",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Class G (M1): Resume a thread under a different model. The mismatch notice arrives inside the subscribe buffer and is non-fatal. \"Model metadata … not found\" stays non-fatal",
+      "evidenceOracle": "Real-model evidence on the declared head/provider/model; scrubbed streams committed; missing evidence stays pending.",
+      "source": "R8 §6.5"
+    },
+    {
+      "id": "SR-04",
+      "family": "SR",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Class G (M1): ChatGPT-login `auth.json`, process idle ≥ 8 h, then a turn → succeeds without a restart",
+      "evidenceOracle": "Real-model evidence on the declared head/provider/model; scrubbed streams committed; missing evidence stays pending.",
+      "source": "R8 §6.5"
+    },
+    {
+      "id": "SR-05",
+      "family": "SR",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Class G (M1): **Baseline:** `codex exec resume` cold start versus the App Server sentinel resume, using the same 50 MB rollout and the same host, 20 runs each. **Pass:** p95(app-server) − p95(exec) ≤ 2 s, and p95 with 10 concurrent sessions ≤ 2× the single-session p95. **Fail:** propose the size/mtime sentinel optimization (XIN-2043 §8.1) only via a named architecture amendment before dependent DEV-04 work/M1 G6. This replaces §3.3.2's every-idle-resume sentinel rule; it is not an automatic optimization. Require affected-role+independent re-review, renewed sequential terminal→IM freshness, first resume after process/config change, completed-turn freshness, and adversarial same-size/mtime file changes before accepting a weaker sentinel policy",
+      "evidenceOracle": "Real-model evidence on the declared head/provider/model; scrubbed streams committed; missing evidence stays pending.",
+      "source": "R8 §6.5"
+    },
+    {
+      "id": "SR-06",
+      "family": "SR",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Class G (M1): With real MCP and web-search tools, the progress labels equal exec's for 5 tool kinds",
+      "evidenceOracle": "Real-model evidence on the declared head/provider/model; scrubbed streams committed; missing evidence stays pending.",
+      "source": "R8 §6.5"
+    },
+    {
+      "id": "SR-07",
+      "family": "SR",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Class G (M1): 3 cycles of 1 h idle followed by a turn → 0 failures",
+      "evidenceOracle": "Real-model evidence on the declared head/provider/model; scrubbed streams committed; missing evidence stays pending.",
+      "source": "R8 §6.5"
+    },
+    {
+      "id": "SO-01",
+      "family": "SO",
+      "mandatoryFor": [],
+      "procedure": "D / 01a → OD-11b by DEV-02",
+      "evidenceOracle": "Record the `ws_url` scheme and host and the salt length per target deployment",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-02",
+      "family": "SO",
+      "mandatoryFor": [],
+      "procedure": "D / 01a → T25 persistence by DEV-07",
+      "evidenceOracle": "Record whether un-ACKed or offline messages are redelivered, and the interval. If redelivery happens, the LRU is also persisted (last 2048 ids per bot)",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-03",
+      "family": "SO",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "G / 01b",
+      "evidenceOracle": "Kick twice within 60 s; register 503 (fault proxy); CONNACK stall → connected again within the bounds in §3.8",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-04",
+      "family": "SO",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "G / 01b",
+      "evidenceOracle": "10 heartbeats answered 429 → 0 socket teardowns; heartbeat429Count+10, heartbeatFailures unchanged, failure streak unchanged; capture all10 HTTP responses and header names",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-05",
+      "family": "SO",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "G / 01b (also run on 01a as the baseline)",
+      "evidenceOracle": "@所有人 (@everyone) + @所有AI (@all AIs) → no reply; @所有AI alone → reply; entities-only → reply; on web and mobile",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-06",
+      "family": "SO",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "G / 01b",
+      "evidenceOracle": "Two bots @-ing each other → at most `botReplyBudget.maxConsecutive` replies each within the window",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-07",
+      "family": "SO",
+      "mandatoryFor": [],
+      "procedure": "D / 01a → I19 allowlist by DEV-07",
+      "evidenceOracle": "Inventory of content types and frames reaching bots",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-08",
+      "family": "SO",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "G / 01b",
+      "evidenceOracle": "Topic GROUP.md/THREAD.md edit and pref change → matching events.documentConsumed/preferenceConsumed deltas and OBS event records (§8.6); use actual preferenceConsumed field name, do not invent a counter",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-09",
+      "family": "SO",
+      "mandatoryFor": [],
+      "procedure": "D / 01a → I12/I34 by DEV-07",
+      "evidenceOracle": "`robot` presence; `from_name` presence",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-10",
+      "family": "SO",
+      "mandatoryFor": [],
+      "procedure": "D / 01a → O3 segment size by DEV-06",
+      "evidenceOracle": "Server maximum message length. The segment size stays 3500 unless the maximum is lower",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-11",
+      "family": "SO",
+      "mandatoryFor": [],
+      "procedure": "D / 01a → K-04/EP-21/22 by DEV-12",
+      "evidenceOracle": "CDN hosts, redirects, presign versus STS availability",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-12",
+      "family": "SO",
+      "mandatoryFor": [],
+      "procedure": "G / M3",
+      "evidenceOracle": "Card and events round trips, before DEV-13 and DEV-16 close",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-13",
+      "family": "SO",
+      "mandatoryFor": [],
+      "procedure": "G / M3",
+      "evidenceOracle": "Card and events round trips, before DEV-13 and DEV-16 close",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-14",
+      "family": "SO",
+      "mandatoryFor": [],
+      "procedure": "D / 01a → R8 by DEV-08",
+      "evidenceOracle": "`app_` token rejections",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-15",
+      "family": "SO",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "G / 01b",
+      "evidenceOracle": "Copies of production-like `CODEX_HOME`s with SDK-created threads resume on the App Server (n ≥ 5 threads)",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-16",
+      "family": "SO",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "G / 01b",
+      "evidenceOracle": "SIGTERM during an active turn and a 20-message burst → transcript audit shows external WS packet capture shows no RECVACK after the OBS intake-close boundary; every pre-close admitted message has completed/interrupted accounting; no leftover child after shutdown bound",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-17",
+      "family": "SO",
+      "mandatoryFor": [],
+      "procedure": "D / 01a → OD-33/33b",
+      "evidenceOracle": "Send the same `client_msg_no` twice at +10 s, +10 min and +24 h, per bot and per channel, with a second bot and second target to establish namespace. Include timeout notice followed by late answer (both visible). **Dedupe proven:** record scope and window W; OD-33b may enable deterministic chat keys; an amended OD-33 may authorize one ambiguous retry only within proven scope/window W. Sampled points alone do not prove a continuous 24 h guarantee; require server contract evidence or retain no-retry. **Not proven:** chat stays `random`, ambiguous stays `unknown`, and cron is unaffected (it already never resends ambiguous sends)",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "SO-18",
+      "family": "SO",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "G / M2 (01a discovery)",
+      "evidenceOracle": "Proactive send to `owner_channel_id` succeeds. If it does not, M2 remains gated until an amended OD-24 explicitly approves log/status-only alerts and its cases are re-reviewed",
+      "source": "R8 §6.6"
+    },
+    {
+      "id": "D-01",
+      "family": "D",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "second process fails before DB open and emits zero runs",
+      "evidenceOracle": "Deterministic DEV-09/10 CI result bound individually; fake clock; actual DDL; external model/egress attempt counts; expected states per §3.4.",
+      "source": "R8 §10.6 D-cases"
+    },
+    {
+      "id": "D-02",
+      "family": "D",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "re-entrant tick yields one current-generation base slot",
+      "evidenceOracle": "Deterministic DEV-09/10 CI result bound individually; fake clock; actual DDL; external model/egress attempt counts; expected states per §3.4.",
+      "source": "R8 §10.6 D-cases"
+    },
+    {
+      "id": "D-03",
+      "family": "D",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "2 h backward clock jump yields no repeat send",
+      "evidenceOracle": "Deterministic DEV-09/10 CI result bound individually; fake clock; actual DDL; external model/egress attempt counts; expected states per §3.4.",
+      "source": "R8 §10.6 D-cases"
+    },
+    {
+      "id": "D-04",
+      "family": "D",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "edit running job keeps old snapshot outcome and new activation/cadence",
+      "evidenceOracle": "Deterministic DEV-09/10 CI result bound individually; fake clock; actual DDL; external model/egress attempt counts; expected states per §3.4.",
+      "source": "R8 §10.6 D-cases"
+    },
+    {
+      "id": "D-05",
+      "family": "D",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "re-enable auto-disabled job replays no missed slot",
+      "evidenceOracle": "Deterministic DEV-09/10 CI result bound individually; fake clock; actual DDL; external model/egress attempt counts; expected states per §3.4.",
+      "source": "R8 §10.6 D-cases"
+    },
+    {
+      "id": "D-06",
+      "family": "D",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "crash between admit and start repairs interrupted without model fire",
+      "evidenceOracle": "Deterministic DEV-09/10 CI result bound individually; fake clock; actual DDL; external model/egress attempt counts; expected states per §3.4.",
+      "source": "R8 §10.6 D-cases"
+    },
+    {
+      "id": "D-07",
+      "family": "D",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "concurrent due recurring slot preserves its running borrower/retry/older consume and has already-running/manual response or explicit direct-terminal recurring overlap with common projection (§3.4.4.1), proved against actual DDL by OP-01..08; a borrowed one-shot boundary instead defers with no overlap receipt",
+      "evidenceOracle": "Deterministic DEV-09/10 CI result bound individually; fake clock; actual DDL; external model/egress attempt counts; expected states per §3.4.",
+      "source": "R8 §10.6 D-cases"
+    },
+    {
+      "id": "D-08",
+      "family": "D",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "restart queued retry has one occurrence/attempt",
+      "evidenceOracle": "Deterministic DEV-09/10 CI result bound individually; fake clock; actual DDL; external model/egress attempt counts; expected states per §3.4.",
+      "source": "R8 §10.6 D-cases"
+    },
+    {
+      "id": "MAN-01",
+      "family": "MAN",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "early success",
+      "evidenceOracle": "Asserts admitted fields, authored enabled/next_run_at/watermark/counters, run outcome and at most one consuming receipt across restart/pruning (§3.4.7).",
+      "source": "R8 §3.4.7"
+    },
+    {
+      "id": "MAN-02",
+      "family": "MAN",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "early transient failure",
+      "evidenceOracle": "Asserts admitted fields, authored enabled/next_run_at/watermark/counters, run outcome and at most one consuming receipt across restart/pruning (§3.4.7).",
+      "source": "R8 §3.4.7"
+    },
+    {
+      "id": "MAN-03",
+      "family": "MAN",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "early permanent failure",
+      "evidenceOracle": "Asserts admitted fields, authored enabled/next_run_at/watermark/counters, run outcome and at most one consuming receipt across restart/pruning (§3.4.7).",
+      "source": "R8 §3.4.7"
+    },
+    {
+      "id": "MAN-04",
+      "family": "MAN",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "disabled future force success",
+      "evidenceOracle": "Asserts admitted fields, authored enabled/next_run_at/watermark/counters, run outcome and at most one consuming receipt across restart/pruning (§3.4.7).",
+      "source": "R8 §3.4.7"
+    },
+    {
+      "id": "MAN-05",
+      "family": "MAN",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "disabled overdue force failure",
+      "evidenceOracle": "Asserts admitted fields, authored enabled/next_run_at/watermark/counters, run outcome and at most one consuming receipt across restart/pruning (§3.4.7).",
+      "source": "R8 §3.4.7"
+    },
+    {
+      "id": "MAN-06",
+      "family": "MAN",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "borrowed crash after date passes",
+      "evidenceOracle": "Asserts admitted fields, authored enabled/next_run_at/watermark/counters, run outcome and at most one consuming receipt across restart/pruning (§3.4.7).",
+      "source": "R8 §3.4.7"
+    },
+    {
+      "id": "MAN-07",
+      "family": "MAN",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "due invocation consumes once and scheduled tick cannot reconsume",
+      "evidenceOracle": "Asserts admitted fields, authored enabled/next_run_at/watermark/counters, run outcome and at most one consuming receipt across restart/pruning (§3.4.7).",
+      "source": "R8 §3.4.7"
+    },
+    {
+      "id": "MAN-08",
+      "family": "MAN",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "--keep consuming success stays disabled",
+      "evidenceOracle": "Asserts admitted fields, authored enabled/next_run_at/watermark/counters, run outcome and at most one consuming receipt across restart/pruning (§3.4.7).",
+      "source": "R8 §3.4.7"
+    },
+    {
+      "id": "MAN-09",
+      "family": "MAN",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "concurrent replacement edit",
+      "evidenceOracle": "Asserts admitted fields, authored enabled/next_run_at/watermark/counters, run outcome and at most one consuming receipt across restart/pruning (§3.4.7).",
+      "source": "R8 §3.4.7"
+    },
+    {
+      "id": "MAN-10",
+      "family": "MAN",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "recurring immediate failure preserves cadence",
+      "evidenceOracle": "Asserts admitted fields, authored enabled/next_run_at/watermark/counters, run outcome and at most one consuming receipt across restart/pruning (§3.4.7).",
+      "source": "R8 §3.4.7"
+    },
+    {
+      "id": "STAG-01",
+      "family": "STAG",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "first-four-byte vector vs whole-digest counterexample",
+      "evidenceOracle": "Compared against generated pinned-OC fixtures/checksums (test/goldens/oc/schedule.json).",
+      "source": "R8 §3.4.8"
+    },
+    {
+      "id": "STAG-02",
+      "family": "STAG",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "normalized implicit width vs --exact",
+      "evidenceOracle": "Compared against generated pinned-OC fixtures/checksums (test/goldens/oc/schedule.json).",
+      "source": "R8 §3.4.8"
+    },
+    {
+      "id": "STAG-03",
+      "family": "STAG",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "next-before-boundary",
+      "evidenceOracle": "Compared against generated pinned-OC fixtures/checksums (test/goldens/oc/schedule.json).",
+      "source": "R8 §3.4.8"
+    },
+    {
+      "id": "STAG-04",
+      "family": "STAG",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "next-at-boundary",
+      "evidenceOracle": "Compared against generated pinned-OC fixtures/checksums (test/goldens/oc/schedule.json).",
+      "source": "R8 §3.4.8"
+    },
+    {
+      "id": "STAG-05",
+      "family": "STAG",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "previous-inclusive at boundary",
+      "evidenceOracle": "Compared against generated pinned-OC fixtures/checksums (test/goldens/oc/schedule.json).",
+      "source": "R8 §3.4.8"
+    },
+    {
+      "id": "STAG-06",
+      "family": "STAG",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "restart-after-boundary",
+      "evidenceOracle": "Compared against generated pinned-OC fixtures/checksums (test/goldens/oc/schedule.json).",
+      "source": "R8 §3.4.8"
+    },
+    {
+      "id": "STAG-07",
+      "family": "STAG",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "DST+offset",
+      "evidenceOracle": "Compared against generated pinned-OC fixtures/checksums (test/goldens/oc/schedule.json).",
+      "source": "R8 §3.4.8"
+    },
+    {
+      "id": "STAG-08",
+      "family": "STAG",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "activation fence inside the offset window",
+      "evidenceOracle": "Compared against generated pinned-OC fixtures/checksums (test/goldens/oc/schedule.json).",
+      "source": "R8 §3.4.8"
+    },
+    {
+      "id": "REPLAY-01",
+      "family": "REPLAY",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Enabled recurring, manual --due at S, attempt0 succeeds; terminalize; prune its completed chain; restart and shift clock back2h so candidate=S again",
+      "evidenceOracle": "terminal manual consume wrote W=max(oldW,S); receipt can be removed without clearing W; candidate S rejected before model start/egress; total base admissions/model/sends for S exactly1",
+      "source": "R8 §10.6.1"
+    },
+    {
+      "id": "REPLAY-02",
+      "family": "REPLAY",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Enabled overdue at, manual if-enabled/force consumes S; use --keep; finalize; prune; restart/clock lookup",
+      "evidenceOracle": "W≥S, kept job terminal disabled, no new authored attempt0; explicit later --force may borrow with a new manual ID but cannot masquerade as another authored consumption",
+      "source": "R8 §10.6.1"
+    },
+    {
+      "id": "REPLAY-03",
+      "family": "REPLAY",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Recurring and at variants: consume attempt0 has transient failure; terminal projection commits W=S and atomically queues retry1; restart with retry pending; advance to ready_at; retry succeeds",
+      "evidenceOracle": "attempt0 not re-admitted; validated attempt1 executes exactly once despite W=S; at remains enabled while validated retry is pending, then terminal success; retry does not advance W again; chain provenance retained until inactive; prune after final chain result then S still cannot replay",
+      "source": "R8 §10.6.1"
+    },
+    {
+      "id": "REPLAY-04",
+      "family": "REPLAY",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Crash after consuming manual receipt is reserved and running, before model start; restart with old child confirmed dead; crash-in-commit subvariants",
+      "evidenceOracle": "repair uses stored expected owner/status and common projection; interrupted attempt0 commits W=S without model/send; before-commit crash repeats repair once, after-commit crash returns stored result; no fresh attempt0 replay",
+      "source": "R8 §10.6.1"
+    },
+    {
+      "id": "REPLAY-05",
+      "family": "REPLAY",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Consuming run at generation g active; owner replacement/edit creates g+1 and new activation/watermark; old completion or old-incarnation repair arrives",
+      "evidenceOracle": "own old run outcome retained; new generation W/cadence/enabled untouched; neither stale terminal nor prune repair advances new W; old-generation admission refused",
+      "source": "R8 §10.6.1"
+    },
+    {
+      "id": "REPLAY-06",
+      "family": "REPLAY",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Borrow future at, force disabled at and immediate recurring; run success/transient failure/permanent failure/crash after date passes",
+      "evidenceOracle": "each receipt remains borrow with manual UUID; authored W/slot/enabled/cadence/counters unchanged, no automatic retry; immutable borrow cannot become consume on restart",
+      "source": "R8 §10.6.1"
+    },
+    {
+      "id": "REPLAY-07",
+      "family": "REPLAY",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Recurring natural eligible S becomes due with borrower/retry/older consume running; duplicate tick/callback, concurrent writers, crash/reopen, old-slot completion; separately at S during borrow",
+      "evidenceOracle": "§3.4.4.1 direct-terminal receipt plus W/cadence/skipped commit atomically, original active row/permit intact, no extra model/send/history; OP-01..08 use actual DDL; new S≤W rejected, duplicate lower-slot callback has no effects; one-shot variant creates no overlap receipt and W stays unchanged until authored terminalization",
+      "source": "R8 §10.6.1"
+    },
+    {
+      "id": "REPLAY-08",
+      "family": "REPLAY",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Duplicate terminal callback; retry callback; deliberately inconsistent legacy terminal consume receipt with W<S; run retention",
+      "evidenceOracle": "repeated CAS produces zero new counters/history/sends/watermark side effects; retry doesn't create base commit; pruning refuses inconsistent current-generation receipt; locked startup may rebuild only validated retained terminal facts before scheduling; missing proof fails closed, never permits silent replay",
+      "source": "R8 §10.6.1"
+    },
+    {
+      "id": "BOUNDARY-01",
+      "family": "BOUNDARY",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Borrowed future at runs across authored due S, then borrower succeeds",
+      "evidenceOracle": "original S, next_run_at and W preserved while busy, no overlap receipt; deferred check≤30s then immediate wake; authored S subsequently executes/terminal-consumes once",
+      "source": "R8 §10.6.1"
+    },
+    {
+      "id": "BOUNDARY-02",
+      "family": "BOUNDARY",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Same crossing but borrower has transient/permanent failure",
+      "evidenceOracle": "borrowed failure has no authored retry/backoff/counter/disable/W effect; authored S still eligible and executes once when single-flight clears",
+      "source": "R8 §10.6.1"
+    },
+    {
+      "id": "BOUNDARY-03",
+      "family": "BOUNDARY",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Same crossing, borrower/host crashes; restart after S",
+      "evidenceOracle": "borrower repaired as borrow/interrupted with unchanged authored state; one catch-up may reserve authored S; only its consuming terminal projection advances W, with one authored model/send",
+      "source": "R8 §10.6.1"
+    },
+    {
+      "id": "OP-01",
+      "family": "OP",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "enabled every60s, due S60000/WNULL; borrowed manual running",
+      "evidenceOracle": "terminal overlap coexists with byte-identical active row; W60000, next120000, skipped1; no second queued/running row",
+      "source": "R8 §10.6.2"
+    },
+    {
+      "id": "OP-02",
+      "family": "OP",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "same due S; running retry1 for slot0 and retained terminal base0/W0",
+      "evidenceOracle": "same overlap; base/retry chain intact, no new retry/model/send",
+      "source": "R8 §10.6.2"
+    },
+    {
+      "id": "OP-03",
+      "family": "OP",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "same S; older consume slot0 running/WNULL",
+      "evidenceOracle": "same overlap; older run's owner and permit intact",
+      "source": "R8 §10.6.2"
+    },
+    {
+      "id": "OP-04",
+      "family": "OP",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "repeat tick and duplicate callback, then reopen after committed overlap",
+      "evidenceOracle": "exact same stored receipt and complete DB state; no doubled counters/history/W; all three running variants and a separate queued-borrow reservation",
+      "source": "R8 §10.6.2"
+    },
+    {
+      "id": "OP-05",
+      "family": "OP",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "rollback and separate subprocess crash after INSERT and after job UPDATE, before COMMIT; reopen and retry",
+      "evidenceOracle": "old active row and complete pre-transaction DB state restored; subsequent legal branch commits once",
+      "source": "R8 §10.6.2"
+    },
+    {
+      "id": "OP-06",
+      "family": "OP",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "two independent connections: writerA holds uncommitted terminal INSERT+effects; writerB attempts same slot",
+      "evidenceOracle": "B cannot enter write transaction; after A commit, B rereads/dedupes; exactly one terminal receipt and one increment",
+      "source": "R8 §10.6.2"
+    },
+    {
+      "id": "OP-07",
+      "family": "OP",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "generation mismatch; then lower-slot active success after overlap; duplicates with higher W; new base candidate behind W",
+      "evidenceOracle": "stale creates no effects; lower completion retains higher W/cadence and applies only its own success counters; duplicate lower slot returns stored outcome; new S≤W inserts nothing",
+      "source": "R8 §10.6.2"
+    },
+    {
+      "id": "OP-08",
+      "family": "OP",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "same active borrower but authored at crosses due S",
+      "evidenceOracle": "no overlap row, no W/cadence/counter/history changes; BOUNDARY-01..03 still require later authored execution after borrower success/failure/restart",
+      "source": "R8 §10.6.2"
+    },
+    {
+      "id": "ORACLE-01",
+      "family": "ORACLE",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "correct 3-segment send with marker on all parts (frozen trace test/oracle/fixtures/ORACLE-01.json)",
+      "evidenceOracle": "Independent oracle verdict and violation codes match the fixture; defect fixtures carry a passing control trace (test/oracle/oracle.test.ts).",
+      "source": "R8 §10.10"
+    },
+    {
+      "id": "ORACLE-02",
+      "family": "ORACLE",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "duplicated middle segment (fail) (frozen trace test/oracle/fixtures/ORACLE-02.json)",
+      "evidenceOracle": "Independent oracle verdict and violation codes match the fixture; defect fixtures carry a passing control trace (test/oracle/oracle.test.ts).",
+      "source": "R8 §10.10"
+    },
+    {
+      "id": "ORACLE-03",
+      "family": "ORACLE",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "wrong target (fail) (frozen trace test/oracle/fixtures/ORACLE-03.json)",
+      "evidenceOracle": "Independent oracle verdict and violation codes match the fixture; defect fixtures carry a passing control trace (test/oracle/oracle.test.ts).",
+      "source": "R8 §10.10"
+    },
+    {
+      "id": "ORACLE-04",
+      "family": "ORACLE",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "unknown final segment with 0/1 observation (unknown allowed, never duplicate) (frozen trace test/oracle/fixtures/ORACLE-04.json)",
+      "evidenceOracle": "Independent oracle verdict and violation codes match the fixture; defect fixtures carry a passing control trace (test/oracle/oracle.test.ts).",
+      "source": "R8 §10.10"
+    },
+    {
+      "id": "ORACLE-05",
+      "family": "ORACLE",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "restart resends unknown (fail) (frozen trace test/oracle/fixtures/ORACLE-05.json)",
+      "evidenceOracle": "Independent oracle verdict and violation codes match the fixture; defect fixtures carry a passing control trace (test/oracle/oracle.test.ts).",
+      "source": "R8 §10.10"
+    },
+    {
+      "id": "ORACLE-06",
+      "family": "ORACLE",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "allowed 429 retry observed twice but committed once (pass) (frozen trace test/oracle/fixtures/ORACLE-06.json)",
+      "evidenceOracle": "Independent oracle verdict and violation codes match the fixture; defect fixtures carry a passing control trace (test/oracle/oracle.test.ts).",
+      "source": "R8 §10.10"
+    },
+    {
+      "id": "ORACLE-07",
+      "family": "ORACLE",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "repeated result/reminder/alert identity hidden by server dedupe (attempt violation) (frozen trace test/oracle/fixtures/ORACLE-07.json)",
+      "evidenceOracle": "Independent oracle verdict and violation codes match the fixture; defect fixtures carry a passing control trace (test/oracle/oracle.test.ts).",
+      "source": "R8 §10.10"
+    },
+    {
+      "id": "ORACLE-08",
+      "family": "ORACLE",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "pagination omits a page (pending) (frozen trace test/oracle/fixtures/ORACLE-08.json)",
+      "evidenceOracle": "Independent oracle verdict and violation codes match the fixture; defect fixtures carry a passing control trace (test/oracle/oracle.test.ts).",
+      "source": "R8 §10.10"
+    },
+    {
+      "id": "RTN-01",
+      "family": "RTN",
+      "mandatoryFor": [
+        "M3-conditional"
+      ],
+      "procedure": "concrete mixed text/emoji/image/mention block-marker above; send/read-back/web/mobile",
+      "evidenceOracle": "marker in authoritative content/plain, exact UTF-16 entity slice, expected normalized hash equal, correct target/sender",
+      "source": "R8 §10.11"
+    },
+    {
+      "id": "RTN-02",
+      "family": "RTN",
+      "mandatoryFor": [
+        "M3-conditional"
+      ],
+      "procedure": "negative control: marker only in fallback plain, no marker in content",
+      "evidenceOracle": "reconstructed plain drops marker; default block-marker oracle fails; it cannot accept request fallback as stored evidence",
+      "source": "R8 §10.11"
+    },
+    {
+      "id": "RTN-03",
+      "family": "RTN",
+      "mandatoryFor": [
+        "M3-conditional"
+      ],
+      "procedure": "negative control: calculate offsets before marker/emoji/image reconstruction, then prepend marker",
+      "evidenceOracle": "stale entity offset fails slice/range comparison; no decorative patch is accepted",
+      "source": "R8 §10.11"
+    },
+    {
+      "id": "RTN-04",
+      "family": "RTN",
+      "mandatoryFor": [
+        "M3-conditional"
+      ],
+      "procedure": "same authoritative content, exact fallback `stale fallback deliberately overwritten` in golden v2, server overwrites it",
+      "evidenceOracle": "normalized content/plain hash equals authoritative expected; request byte hash remains separate; default marker is still in content",
+      "source": "R8 §10.11"
+    },
+    {
+      "id": "RTN-05",
+      "family": "RTN",
+      "mandatoryFor": [
+        "M3-conditional"
+      ],
+      "procedure": "wrong image URL/dimensions, reordered blocks or wrong-target/sender subvariants",
+      "evidenceOracle": "normalized payload/identity mismatch fails, never relaxed by stripping image/mention data",
+      "source": "R8 §10.11"
+    },
+    {
+      "id": "RTN-06",
+      "family": "RTN",
+      "mandatoryFor": [
+        "M3-conditional"
+      ],
+      "procedure": "explicitly selected message-map profile; request/response message IDs and paginated read-back",
+      "evidenceOracle": "one committed message per independently expected request identity, normalization hash equal; no fallback-marker assumption",
+      "source": "R8 §10.11"
+    },
+    {
+      "id": "RTN-07",
+      "family": "RTN",
+      "mandatoryFor": [
+        "M3-conditional"
+      ],
+      "procedure": "ambiguous/partial RichText send, missing response or restart",
+      "evidenceOracle": "marker mode observes each identity 0/1 and no restart resend; uncorrelatable mapping mode remains pending/unknown, never a passing guaranteed-delivery claim",
+      "source": "R8 §10.11"
+    },
+    {
+      "id": "RTN-08",
+      "family": "RTN",
+      "mandatoryFor": [
+        "M3-conditional"
+      ],
+      "procedure": "reviewed multi-part RichText splitter; retries and server reconstruction of every part",
+      "evidenceOracle": "each part has valid immutable blocks, own content marker/count/UTF-16 entities, stable retry keys/body, normalized hashes and ≤1 observed committed identity",
+      "source": "R8 §10.11"
+    },
+    {
+      "id": "G2-owner-approved",
+      "family": "gate",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "Named gate selected by R8 §10.9 (requiresGate); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "G4-M1-approved",
+      "family": "gate",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named gate selected by R8 §10.9 (requiresGate); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEP-01-complete",
+      "family": "gate",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named gate selected by R8 §10.9 (requiresGate); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "M1-G6-passed",
+      "family": "gate",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named gate selected by R8 §10.9 (requiresGate); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "G4-M2-approved",
+      "family": "gate",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named gate selected by R8 §10.9 (requiresGate); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEP-02-complete",
+      "family": "gate",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named gate selected by R8 §10.9 (requiresGate); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "unit-baseline-55-1178",
+      "family": "suite",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "real-binary-contracts",
+      "family": "suite",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-04-confirmed-termination-reset",
+      "family": "suite",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-05-parity-goldens",
+      "family": "suite",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-06-egress-identity-authz-bypass",
+      "family": "suite",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-07-inbound-prompt",
+      "family": "suite",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-08-status-OBS-schema-shutdown",
+      "family": "suite",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "M1-migrations-downgrade-open",
+      "family": "suite",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "native-pack-smoke-Node22-24",
+      "family": "suite",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "broadcast-command-truth-table-all-cells",
+      "family": "suite",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-09-effective-schedule-DST-store",
+      "family": "suite",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-10-cron-terminal-admission-executor-recovery",
+      "family": "suite",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-11-command-alert-retention",
+      "family": "suite",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "segment-k-kill-all-positions",
+      "family": "suite",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "M2-migrations-downgrade-open",
+      "family": "suite",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "single-flight-one-shot-due-during-borrow",
+      "family": "suite",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "trigger-independent-terminal-consume-watermark",
+      "family": "suite",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "retention-watermark-pruning-guard",
+      "family": "suite",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "direct-terminal-overlap-actual-ddl-concurrent-crash-reopen",
+      "family": "suite",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named suite selected by R8 §10.9 (requiredSuites); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "SO-01=>DEV-02/OD-11b",
+      "family": "discovery",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named discovery selected by R8 §10.9 (requiredDiscoveriesConsumed); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "SO-02=>DEV-07",
+      "family": "discovery",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named discovery selected by R8 §10.9 (requiredDiscoveriesConsumed); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "SO-07=>DEV-07",
+      "family": "discovery",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named discovery selected by R8 §10.9 (requiredDiscoveriesConsumed); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "SO-09=>DEV-07",
+      "family": "discovery",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named discovery selected by R8 §10.9 (requiredDiscoveriesConsumed); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "SO-10=>DEV-06",
+      "family": "discovery",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named discovery selected by R8 §10.9 (requiredDiscoveriesConsumed); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "SO-14=>DEV-08",
+      "family": "discovery",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named discovery selected by R8 §10.9 (requiredDiscoveriesConsumed); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "SO-18=>OD-24-and-target-specific-alert-branch",
+      "family": "discovery",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named discovery selected by R8 §10.9 (requiredDiscoveriesConsumed); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "catalog-profile-and-OD-hashes",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "environment-availability-manifest",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "actual-head-CI",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "atomic-parity-matrix-TierA",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "client-web-mobile-evidence",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "OBS-and-WS-ACK-capture",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M1",
+        "M2"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "independent-delivery-oracle-self-tests",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "actual-head-DEV09-DEV10-DEV11-CI",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "atomic-CR-and-affected-parity-matrix",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "independent-all-attempt-all-segment-soak-report",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "M2-populated-package-roundtrip-and-backup-inventory",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "REPLAY-BOUNDARY-job-receipt-CAS-and-external-attempt-evidence",
+      "family": "artifact",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named artifact selected by R8 §10.9 (requiredArtifacts); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-01",
+      "family": "build",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-02",
+      "family": "build",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-03",
+      "family": "build",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-04",
+      "family": "build",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-05",
+      "family": "build",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-06",
+      "family": "build",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-07",
+      "family": "build",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-08",
+      "family": "build",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "SPK-01a",
+      "family": "build",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "SPK-01r",
+      "family": "build",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "SPK-01b",
+      "family": "build",
+      "mandatoryFor": [
+        "M1"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-09",
+      "family": "build",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-10",
+      "family": "build",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEV-11",
+      "family": "build",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "TST-01",
+      "family": "build",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    },
+    {
+      "id": "DEP-02",
+      "family": "build",
+      "mandatoryFor": [
+        "M2"
+      ],
+      "procedure": "Named build selected by R8 §10.9 (dependencyBuilds); procedure defined by the R8 section that names it.",
+      "evidenceOracle": "Passed only with independently re-runnable evidence on the verified head/profile (§10.8); missing evidence is pending.",
+      "source": "R8 §10.9"
+    }
+  ]
+}

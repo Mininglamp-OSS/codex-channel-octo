@@ -334,6 +334,9 @@ Detailed private diagnostics require both `sdk.privateDiagnostics: true` and `sd
 
 Mention admission compatibility: an oversized routing UID array is scanned for an exact receiving-bot UID, and a legacy scalar UID is accepted only on exact equality. This does not relax the bounded prompt snapshot: rejected metadata remains `invalid` and does not claim an explicit mention. No substring matching is used. Rendered teammate spans at offset zero are preserved; a leading bot prefix can be removed when only later entities exist.
 
+## DEV-01 test harness
+
+See [the harness guide](docs/testing/dev01-harness.md) for development-only runtime pins, verification commands, CI artifacts and gate contracts.
 ## Source-checkout test tools
 
 See [Isolated test profiles and capture](docs/isolated-test-profiles.md) for profile lifecycle, protected capture/readback setup, runtime requirements and reproducible checks. These helpers are not included in the npm installation.

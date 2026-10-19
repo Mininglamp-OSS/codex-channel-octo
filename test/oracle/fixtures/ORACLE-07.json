@@ -1,0 +1,183 @@
+{
+  "id": "ORACLE-07",
+  "description": "a repeated alert identity hidden by server dedupe is an attempt violation",
+  "expectedVerdict": "fail",
+  "expectedViolations": [
+    "duplicate-logical-attempt"
+  ],
+  "expectedCounts": {
+    "duplicateLogicalAttempts": 1
+  },
+  "trace": {
+    "fixture": "fx07",
+    "expected": [
+      {
+        "identity": {
+          "occurrence": "oc7",
+          "run": "run7",
+          "kind": "cron.alert",
+          "ordinal": 1,
+          "index": 1,
+          "count": 1
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx07 o=oc7 r=run7 k=cron.alert m=000001 s=000001/000001]\nalert",
+        "outcome": "confirmed"
+      }
+    ],
+    "captures": [
+      {
+        "fixture": "fx07",
+        "logicalIdentity": "oc7/run7/cron.alert/1/1",
+        "kind": "cron.alert",
+        "occurrence": "oc7",
+        "run": "run7",
+        "ordinal": 1,
+        "index": 1,
+        "count": 1,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 17,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "1ef3d4e180c916ef670d9214dabaeeddf32d86d359fcdae2d3232ee06d5ce5c5",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run7-1",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      },
+      {
+        "fixture": "fx07",
+        "logicalIdentity": "oc7/run7/cron.alert/1/1",
+        "kind": "cron.alert",
+        "occurrence": "oc7",
+        "run": "run7",
+        "ordinal": 1,
+        "index": 1,
+        "count": 1,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 18,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "1ef3d4e180c916ef670d9214dabaeeddf32d86d359fcdae2d3232ee06d5ce5c5",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run7-1",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      }
+    ],
+    "inventory": {
+      "complete": true,
+      "declaredPageCount": 1,
+      "pages": [
+        {
+          "cursor": "c0",
+          "next": null,
+          "records": [
+            {
+              "messageId": "900000000000000020",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx07 o=oc7 r=run7 k=cron.alert m=000001 s=000001/000001]",
+              "payloadHash": "1ef3d4e180c916ef670d9214dabaeeddf32d86d359fcdae2d3232ee06d5ce5c5",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "controlTrace": {
+    "fixture": "fx07",
+    "expected": [
+      {
+        "identity": {
+          "occurrence": "oc7",
+          "run": "run7",
+          "kind": "cron.alert",
+          "ordinal": 1,
+          "index": 1,
+          "count": 1
+        },
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "senderUid": "u_bot_oracle",
+        "body": "[DLY f=fx07 o=oc7 r=run7 k=cron.alert m=000001 s=000001/000001]\nalert",
+        "outcome": "confirmed"
+      }
+    ],
+    "captures": [
+      {
+        "fixture": "fx07",
+        "logicalIdentity": "oc7/run7/cron.alert/1/1",
+        "kind": "cron.alert",
+        "occurrence": "oc7",
+        "run": "run7",
+        "ordinal": 1,
+        "index": 1,
+        "count": 1,
+        "senderUid": "u_bot_oracle",
+        "target": {
+          "channelId": "g_oracle",
+          "channelType": 2
+        },
+        "requestOrdinal": 16,
+        "requestAt": "2026-10-13T00:00:00Z",
+        "requestBodyHash": "1ef3d4e180c916ef670d9214dabaeeddf32d86d359fcdae2d3232ee06d5ce5c5",
+        "serverNormalizedPayloadHash": null,
+        "normalizationFixtureVersion": null,
+        "clientMsgNo": "cmn-run7-1",
+        "httpStatus": 200,
+        "responseMessageId": null,
+        "responseAt": "2026-10-13T00:00:01Z",
+        "transportOutcome": "response",
+        "incarnation": "inc-1"
+      }
+    ],
+    "inventory": {
+      "complete": true,
+      "declaredPageCount": 1,
+      "pages": [
+        {
+          "cursor": "c0",
+          "next": null,
+          "records": [
+            {
+              "messageId": "900000000000000019",
+              "channelId": "g_oracle",
+              "channelType": 2,
+              "senderUid": "u_bot_oracle",
+              "serverTimestamp": 1791900000,
+              "fixtureMarker": "[DLY f=fx07 o=oc7 r=run7 k=cron.alert m=000001 s=000001/000001]",
+              "payloadHash": "1ef3d4e180c916ef670d9214dabaeeddf32d86d359fcdae2d3232ee06d5ce5c5",
+              "serverNormalizedPayloadHash": null,
+              "normalizationFixtureVersion": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

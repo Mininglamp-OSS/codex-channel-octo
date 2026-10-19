@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "revision": "R8",
+  "file": "test/milestone-manifest.json",
+  "policies": {
+    "missingOrSkipped": "pending",
+    "failed": "failed",
+    "requiredPass": "passed-on-verified-head-and-profile",
+    "unapprovedScopeGap": "pending",
+    "evidenceSource": "independently-rerunnable",
+    "manifestChanges": "architecture-amendment-and-affected-role-review",
+    "deliveryOracle": "test/oracle/independent-delivery-v1.json"
+  },
+  "M1": {
+    "requiresGate": [
+      "G2-owner-approved",
+      "G4-M1-approved",
+      "DEP-01-complete"
+    ],
+    "requiredCases": [
+      "M1-01",
+      "M1-02",
+      "M1-03",
+      "M1-04",
+      "M1-05",
+      "M1-06",
+      "M1-07",
+      "M1-08",
+      "M1-09",
+      "M1-10",
+      "M1-11",
+      "M1-12",
+      "M1-13",
+      "M1-14",
+      "M1-15",
+      "M1-16",
+      "M1-17",
+      "M1-18",
+      "M1-19",
+      "M1-20",
+      "M1-21",
+      "M1-22",
+      "M1-23",
+      "M1-24",
+      "M1-25",
+      "M1-26",
+      "M1-27",
+      "M1-28",
+      "M1-29",
+      "M1-30",
+      "M1-31",
+      "M1-32",
+      "M1-33",
+      "M1-34",
+      "M1-35",
+      "M1-36",
+      "M1-37",
+      "M1-38"
+    ],
+    "requiredSpikes": [
+      "SR-01",
+      "SR-02",
+      "SR-03",
+      "SR-04",
+      "SR-05",
+      "SR-06",
+      "SR-07",
+      "SO-03",
+      "SO-04",
+      "SO-05",
+      "SO-06",
+      "SO-08",
+      "SO-15",
+      "SO-16"
+    ],
+    "requiredSuites": [
+      "unit-baseline-55-1178",
+      "real-binary-contracts",
+      "DEV-04-confirmed-termination-reset",
+      "DEV-05-parity-goldens",
+      "DEV-06-egress-identity-authz-bypass",
+      "DEV-07-inbound-prompt",
+      "DEV-08-status-OBS-schema-shutdown",
+      "M1-migrations-downgrade-open",
+      "native-pack-smoke-Node22-24",
+      "broadcast-command-truth-table-all-cells"
+    ],
+    "requiredDiscoveriesConsumed": [
+      "SO-01=>DEV-02/OD-11b",
+      "SO-02=>DEV-07",
+      "SO-07=>DEV-07",
+      "SO-09=>DEV-07",
+      "SO-10=>DEV-06",
+      "SO-14=>DEV-08"
+    ],
+    "requiredArtifacts": [
+      "catalog-profile-and-OD-hashes",
+      "environment-availability-manifest",
+      "actual-head-CI",
+      "atomic-parity-matrix-TierA",
+      "client-web-mobile-evidence",
+      "OBS-and-WS-ACK-capture",
+      "independent-delivery-oracle-self-tests"
+    ],
+    "dependencyBuilds": [
+      "DEV-01",
+      "DEV-02",
+      "DEV-03",
+      "DEV-04",
+      "DEV-05",
+      "DEV-06",
+      "DEV-07",
+      "DEV-08",
+      "SPK-01a",
+      "SPK-01r",
+      "SPK-01b"
+    ],
+    "requiredContractCases": [
+      "SB-01",
+      "SB-02",
+      "SB-03",
+      "SB-04",
+      "SB-05",
+      "SB-06",
+      "SB-07",
+      "SB-08",
+      "SB-09",
+      "SB-10",
+      "SB-11",
+      "SB-12",
+      "SB-13",
+      "SB-14"
+    ],
+    "requiredOracleCases": [
+      "ORACLE-01",
+      "ORACLE-02",
+      "ORACLE-03",
+      "ORACLE-04",
+      "ORACLE-05",
+      "ORACLE-06",
+      "ORACLE-07",
+      "ORACLE-08"
+    ]
+  },
+  "M2": {
+    "requiresGate": [
+      "G2-owner-approved",
+      "M1-G6-passed",
+      "G4-M2-approved",
+      "DEP-02-complete"
+    ],
+    "requiredCases": [
+      "M2-01",
+      "M2-02",
+      "M2-03",
+      "M2-04",
+      "M2-05",
+      "M2-06",
+      "M2-07",
+      "M2-08",
+      "M2-09",
+      "M2-10",
+      "M2-11",
+      "M2-12",
+      "M2-13",
+      "M2-14",
+      "M2-15",
+      "M2-16",
+      "M2-17",
+      "M2-18",
+      "M2-19",
+      "M2-20"
+    ],
+    "requiredSpikes": [
+      "SO-18"
+    ],
+    "requiredSuites": [
+      "DEV-09-effective-schedule-DST-store",
+      "DEV-10-cron-terminal-admission-executor-recovery",
+      "DEV-11-command-alert-retention",
+      "segment-k-kill-all-positions",
+      "M2-migrations-downgrade-open",
+      "native-pack-smoke-Node22-24",
+      "single-flight-one-shot-due-during-borrow",
+      "trigger-independent-terminal-consume-watermark",
+      "retention-watermark-pruning-guard",
+      "direct-terminal-overlap-actual-ddl-concurrent-crash-reopen"
+    ],
+    "requiredDiscoveriesConsumed": [
+      "SO-18=>OD-24-and-target-specific-alert-branch"
+    ],
+    "requiredArtifacts": [
+      "actual-head-DEV09-DEV10-DEV11-CI",
+      "atomic-CR-and-affected-parity-matrix",
+      "independent-all-attempt-all-segment-soak-report",
+      "M2-populated-package-roundtrip-and-backup-inventory",
+      "catalog-profile-and-OD-hashes",
+      "environment-availability-manifest",
+      "OBS-and-WS-ACK-capture",
+      "REPLAY-BOUNDARY-job-receipt-CAS-and-external-attempt-evidence"
+    ],
+    "dependencyBuilds": [
+      "DEV-09",
+      "DEV-10",
+      "DEV-11",
+      "TST-01",
+      "DEP-02"
+    ],
+    "requiredContractCases": [
+      "D-01",
+      "D-02",
+      "D-03",
+      "D-04",
+      "D-05",
+      "D-06",
+      "D-07",
+      "D-08",
+      "MAN-01",
+      "MAN-02",
+      "MAN-03",
+      "MAN-04",
+      "MAN-05",
+      "MAN-06",
+      "MAN-07",
+      "MAN-08",
+      "MAN-09",
+      "MAN-10",
+      "STAG-01",
+      "STAG-02",
+      "STAG-03",
+      "STAG-04",
+      "STAG-05",
+      "STAG-06",
+      "STAG-07",
+      "STAG-08",
+      "REPLAY-01",
+      "REPLAY-02",
+      "REPLAY-03",
+      "REPLAY-04",
+      "REPLAY-05",
+      "REPLAY-06",
+      "REPLAY-07",
+      "REPLAY-08",
+      "BOUNDARY-01",
+      "BOUNDARY-02",
+      "BOUNDARY-03",
+      "OP-01",
+      "OP-02",
+      "OP-03",
+      "OP-04",
+      "OP-05",
+      "OP-06",
+      "OP-07",
+      "OP-08"
+    ],
+    "requiredOracleCases": [
+      "ORACLE-01",
+      "ORACLE-02",
+      "ORACLE-03",
+      "ORACLE-04",
+      "ORACLE-05",
+      "ORACLE-06",
+      "ORACLE-07",
+      "ORACLE-08"
+    ]
+  },
+  "M3-dispatch": {
+    "requiresGate": [
+      "M1-G6-passed",
+      "G2-owner-approved",
+      "OD-01-selected-items-recorded"
+    ],
+    "requiredArtifacts": [
+      "item-level-selected-tier-case-manifest-reviewed",
+      "TST-03-exact-cases-and-evidence-bindings",
+      "SP-T1-reviewed-branch-for-DEV14",
+      "SO-11-consumer-before-DEV12",
+      "SO-12/13-target-cases-before-DEV13/16"
+    ],
+    "conditionalCaseRequirements": [
+      {
+        "whenAnySelected": [
+          "EP-05",
+          "O13.RichText"
+        ],
+        "profile": "richtext-block-marker-v1 or explicitly reviewed richtext-message-map-v1",
+        "requiredCases": [
+          "RTN-01",
+          "RTN-02",
+          "RTN-03",
+          "RTN-04",
+          "RTN-05",
+          "RTN-06",
+          "RTN-07",
+          "RTN-08"
+        ],
+        "beforeDEV12Dispatch": [
+          "reviewed-NormV1-schema-concrete-mixed-fixture-hashes-and-UTF16-assertions",
+          "case-catalog-RTN01..08-and-negative-control-specs"
+        ],
+        "beforeTST03Dispatch": [
+          "candidate-head-server-normalized-readback-and-request-message-capture",
+          "web-mobile-mention-image-correlation-evidence"
+        ],
+        "missingEvidence": "pending"
+      }
+    ]
+  },
+  "M3-G6": {
+    "selection": "approved-item-level-extension-of-this-manifest-before-M3-dispatch",
+    "emptySelection": "pending-unless-owner-explicitly-dropped-all-M3-items",
+    "conditionalRequiredCases": {
+      "EP-05/O13.RichText": [
+        "RTN-01",
+        "RTN-02",
+        "RTN-03",
+        "RTN-04",
+        "RTN-05",
+        "RTN-06",
+        "RTN-07",
+        "RTN-08"
+      ]
+    }
+  }
+}

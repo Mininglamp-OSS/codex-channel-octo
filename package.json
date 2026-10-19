@@ -49,7 +49,21 @@
     "type-check:recovery-tests": "tsc --project tsconfig.recovery-tests.json",
     "type-check:continuity-tests": "tsc --project tsconfig.continuity-tests.json",
     "runtime:check": "node scripts/check-codex-runtime.mjs",
-    "runtime:update": "npm update @openai/codex-sdk && npm run runtime:check"
+    "runtime:update": "npm update @openai/codex-sdk && npm run runtime:check",
+    "test:real-binary": "node scripts/ci/run-runner.mjs real-binary -c test/real-binary/vitest.config.ts",
+    "test:parity-matrix": "node scripts/ci/parity-matrix-gate.mjs",
+    "test:goldens": "node scripts/ci/run-runner.mjs goldens test/goldens",
+    "goldens:verify": "node scripts/goldens/gen-b.mjs --check && node scripts/goldens/gen-oc-schedule.mjs --check",
+    "test:downgrade": "node scripts/ci/run-runner.mjs downgrade test/downgrade",
+    "test:integration": "node scripts/ci/run-runner.mjs integration test/integration test/harness test/seams",
+    "test:egress": "node scripts/egress-bypass-scan.mjs && node scripts/ci/run-runner.mjs egress test/egress",
+    "test:manifest": "node scripts/manifest/lint.mjs && node scripts/ci/run-runner.mjs manifest test/manifest test/oracle",
+    "test:unit-records": "node scripts/ci/run-runner.mjs unit",
+    "check:src-scope": "node scripts/ci/check-src-diff.mjs",
+    "build:test": "tsc -p tsconfig.test-hooks.json",
+    "pack:smoke": "node scripts/ci/pack-smoke.mjs",
+    "test:mutation": "node scripts/ci/mutation-check.mjs",
+    "type-check:test": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@openai/codex-sdk": "latest",
@@ -71,7 +85,11 @@
     "eslint": "^9.0.0",
     "globals": "^14.0.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "croner": "10.0.1",
+    "esbuild": "0.28.1",
+    "js-yaml": "4.3.0",
+    "codex-contract-cli": "npm:@openai/codex@0.142.3"
   },
   "engines": {
     "node": ">=22"

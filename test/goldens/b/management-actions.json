@@ -1,0 +1,260 @@
+{
+  "generator": "scripts/goldens/gen-b.mjs",
+  "source": {
+    "repo": "Mininglamp-OSS/openclaw-channel-octo",
+    "commit": "2e710e903fa43ac9440723746f7395d2f7b4347e",
+    "file": "src/agent-tools.ts",
+    "sha256": "bf549838a2995094fcf95514e081317c8b35820979b661a1d3615409e75cbf06"
+  },
+  "messageSource": {
+    "file": "src/channel.ts",
+    "sha256": "c18771187069feda3ee4212978b6da4ebb2c39da8a704ec548e97cbfd85bca4c"
+  },
+  "actions": [
+    "list-groups",
+    "group-info",
+    "group-members",
+    "group-md-read",
+    "group-md-update",
+    "search-members",
+    "resolve",
+    "create-group",
+    "update-group",
+    "add-members",
+    "remove-members",
+    "create-thread",
+    "list-threads",
+    "get-thread",
+    "delete-thread",
+    "list-thread-members",
+    "join-thread",
+    "leave-thread",
+    "thread-md-read",
+    "thread-md-update",
+    "voice-context-read",
+    "voice-context-update",
+    "voice-context-delete",
+    "write-secret"
+  ],
+  "messageActions": [
+    "send",
+    "read",
+    "search"
+  ],
+  "amendment": {
+    "id": "A-R8-PM05-01",
+    "ratification": "owner-ratified-R8-AMD-01",
+    "doc": "docs/amendments/R8-AMD-01.md"
+  },
+  "sources": {
+    "index.ts": "0b319449502d990783731ebc3a5fa90d790e9ca4ec2123979e21c03371430d91",
+    "src/actions.ts": "928312349952a5f3697ee46ef51742aae5d7d528dd08add595fc7d3f6d5d7002",
+    "src/agent-tools.ts": "bf549838a2995094fcf95514e081317c8b35820979b661a1d3615409e75cbf06",
+    "src/channel.ts": "c18771187069feda3ee4212978b6da4ebb2c39da8a704ec548e97cbfd85bca4c"
+  },
+  "ownership": {
+    "managementFactory": {
+      "file": "src/agent-tools.ts",
+      "symbol": "createOctoManagementTools",
+      "startLine": 557,
+      "endLine": 1164,
+      "sha256": "1881f5391aad6866678ab75cafc6a75eaf4cf756d887ee200fd24fe67e09e64a",
+      "fileSha256": "bf549838a2995094fcf95514e081317c8b35820979b661a1d3615409e75cbf06"
+    },
+    "managementEnum": {
+      "file": "src/agent-tools.ts",
+      "symbol": "createOctoManagementTools > parameters.properties.action.enum",
+      "startLine": 613,
+      "endLine": 638,
+      "sha256": "90776a0b867c562b773e86559c7a7d87311b23c184d454764314465b9a459440",
+      "fileSha256": "bf549838a2995094fcf95514e081317c8b35820979b661a1d3615409e75cbf06"
+    },
+    "managementRegistration": {
+      "file": "index.ts",
+      "symbol": "registerFull > api.registerTool(octo_management)",
+      "startLine": 231,
+      "endLine": 246,
+      "sha256": "46e160bdd9915a0506c8a1b5c24eefdca47771caebd68561f0e311b25cfce8ad",
+      "fileSha256": "0b319449502d990783731ebc3a5fa90d790e9ca4ec2123979e21c03371430d91",
+      "names": [
+        "octo_management"
+      ],
+      "factoryCall": "createOctoManagementTools"
+    },
+    "messageAdvertisement": {
+      "file": "src/channel.ts",
+      "symbol": "getAvailableActions",
+      "startLine": 484,
+      "endLine": 496,
+      "sha256": "e9fc95e76301e3df573eda90d5b66585393f6695ca7b02ef89f4c695f4662393",
+      "fileSha256": "c18771187069feda3ee4212978b6da4ebb2c39da8a704ec548e97cbfd85bca4c",
+      "returnLine": 495,
+      "actions": [
+        "send",
+        "read",
+        "search"
+      ]
+    },
+    "messageRegistration": {
+      "file": "src/channel.ts",
+      "symbol": "octoPlugin.actions",
+      "startLine": 804,
+      "endLine": 880,
+      "sha256": "26330aa758d726a7db57963a4247d3406532e4820cb73a8163a45c9f299fabf9",
+      "fileSha256": "c18771187069feda3ee4212978b6da4ebb2c39da8a704ec548e97cbfd85bca4c",
+      "members": {
+        "listActions": 805,
+        "describeMessageTool": 809,
+        "handleAction": 823
+      },
+      "dispatchCall": "handleOctoMessageAction",
+      "dispatchCallLine": 860
+    },
+    "messageDispatcher": {
+      "file": "src/actions.ts",
+      "symbol": "handleOctoMessageAction",
+      "startLine": 114,
+      "endLine": 210,
+      "sha256": "79be07d4e7eb4c23c80993193bbc7490135a2cbe06a9f551c7aa2ecdf67b1ba2",
+      "fileSha256": "928312349952a5f3697ee46ef51742aae5d7d528dd08add595fc7d3f6d5d7002",
+      "defaultRejectsUnknown": true
+    }
+  },
+  "messageRoutes": [
+    {
+      "action": "send",
+      "file": "src/actions.ts",
+      "symbol": "handleOctoMessageAction",
+      "caseLine": 189,
+      "returnLine": 190,
+      "handler": "handleSend",
+      "handlerArgs": [
+        "args",
+        "apiUrl",
+        "botToken",
+        "memberMap",
+        "uidToNameMap",
+        "currentChannelId",
+        "sessionKey",
+        "threadId",
+        "log"
+      ],
+      "advertised": true
+    },
+    {
+      "action": "read",
+      "file": "src/actions.ts",
+      "symbol": "handleOctoMessageAction",
+      "caseLine": 191,
+      "returnLine": 192,
+      "handler": "handleRead",
+      "handlerArgs": [
+        "args",
+        "apiUrl",
+        "botToken",
+        "uidToNameMap",
+        "currentChannelId",
+        "requesterSenderId",
+        "accountId",
+        "log"
+      ],
+      "advertised": true
+    },
+    {
+      "action": "search",
+      "file": "src/actions.ts",
+      "symbol": "handleOctoMessageAction",
+      "caseLine": 193,
+      "returnLine": 194,
+      "handler": "handleSearch",
+      "handlerArgs": [
+        "args",
+        "apiUrl",
+        "botToken",
+        "requesterSenderId",
+        "accountId",
+        "log"
+      ],
+      "advertised": true
+    },
+    {
+      "action": "member-info",
+      "file": "src/actions.ts",
+      "symbol": "handleOctoMessageAction",
+      "caseLine": 195,
+      "returnLine": 196,
+      "handler": "handleMemberInfo",
+      "handlerArgs": [
+        "args",
+        "apiUrl",
+        "botToken",
+        "log"
+      ],
+      "advertised": false
+    },
+    {
+      "action": "channel-list",
+      "file": "src/actions.ts",
+      "symbol": "handleOctoMessageAction",
+      "caseLine": 197,
+      "returnLine": 198,
+      "handler": "handleChannelList",
+      "handlerArgs": [
+        "apiUrl",
+        "botToken",
+        "log"
+      ],
+      "advertised": false
+    },
+    {
+      "action": "channel-info",
+      "file": "src/actions.ts",
+      "symbol": "handleOctoMessageAction",
+      "caseLine": 199,
+      "returnLine": 200,
+      "handler": "handleChannelInfo",
+      "handlerArgs": [
+        "args",
+        "apiUrl",
+        "botToken",
+        "log"
+      ],
+      "advertised": false
+    },
+    {
+      "action": "group-md-read",
+      "file": "src/actions.ts",
+      "symbol": "handleOctoMessageAction",
+      "caseLine": 201,
+      "returnLine": 202,
+      "handler": "handleGroupMdRead",
+      "handlerArgs": [
+        "args",
+        "apiUrl",
+        "botToken",
+        "groupMdCache",
+        "currentChannelId",
+        "log"
+      ],
+      "advertised": false
+    },
+    {
+      "action": "group-md-update",
+      "file": "src/actions.ts",
+      "symbol": "handleOctoMessageAction",
+      "caseLine": 203,
+      "returnLine": 204,
+      "handler": "handleGroupMdUpdate",
+      "handlerArgs": [
+        "args",
+        "apiUrl",
+        "botToken",
+        "groupMdCache",
+        "currentChannelId",
+        "log"
+      ],
+      "advertised": false
+    }
+  ],
+  "note": "Two disjoint public surfaces in the pinned source (A-R8-PM05-01): 24 octo_management actions and 3 advertised message actions (getAvailableActions). Message dispatch reaches 8 handleOctoMessageAction routes, including the advertised 3. R8 §4 O24/§9 DEV-14 originally stated 27 management actions."
+}

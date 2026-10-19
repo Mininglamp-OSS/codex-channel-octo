@@ -1,0 +1,12 @@
+{
+  "pin": "0.142.3",
+  "source": "raw JSONL transcript of a fresh real-binary SB-07 run (test/real-binary/sb.real.test.ts, A-R8-SB07-01); fake key redacted",
+  "capturedAt": "2026-10-13T16:53:58.341Z",
+  "runHead": "8546530f3a4d8f1a87dc0e6c16a8106ba2641580+dirty",
+  "runStatus": "passed",
+  "threadId": "01a1362f-6564-77d1-8ecc-a8eb1f1231ce",
+  "turnId": "01a1362f-6583-7a81-a886-59472c82410c",
+  "itemId": "call_5",
+  "incarnation": "97023.1.97026",
+  "transcriptSha256": "a897462362dc1e98871f310e83e098408eb720074be4070ae5ee9aa0122adbde"
+}
