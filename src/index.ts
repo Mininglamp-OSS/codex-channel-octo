@@ -10,7 +10,7 @@ import { AgentFailure, TurnFailure, classifyFailure, failureReply, type FailureS
  * OctoGateway.start → setMessageHandler wiring the full pipeline.
  */
 
-import { loadConfig, resolveBotConfigs, DEFAULT_CONFIG_PATH } from './config.js';
+import { loadConfig, resolveBotConfigs, runtimeConfigPath } from './config.js';
 import { BotManager, type ManagedBot } from './bot-manager.js';
 import { watchConfig } from './config-watcher.js';
 import { createAdapter } from './db-adapter.js';
@@ -69,7 +69,7 @@ export function resolveBotConfigById(
 
 /** Absolute path to the global config.json the watcher should observe. */
 function configPathForWatch(): string {
-  return DEFAULT_CONFIG_PATH;
+  return runtimeConfigPath();
 }
 
 async function main(): Promise<void> {

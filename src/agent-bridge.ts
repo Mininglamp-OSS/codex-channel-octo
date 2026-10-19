@@ -28,6 +28,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
 import { OutputCollector, DEFAULT_OUTPUT_SELECTION_MODE, DEFAULT_MAX_RESPONSE_CHARS, type OutputSelectionMode } from './output-selection.js';
 import type { Config } from './config.js';
+import { runtimeConfigPath } from './config.js';
 import { fileURLToPath } from 'node:url';
 import { resolveJsonlProxyPath } from './jsonl-proxy-path.js';
 import { normalizeInboundMention } from './inbound-mention.js';
@@ -433,8 +434,16 @@ export async function* queryAgentEvents(
   const agentsMdOk = writeAgentsMd(cwd, systemPrompt);
 
   const env = buildCodexEnv(config.sdk, process.env);
+  const testExecutable = process.env.CODEX_OCTO_TEST_CODEX_PATH;
+  if (testExecutable) {
+    if (!process.env.CODEX_OCTO_TEST_PROFILE_ROOT) throw new Error('Pinned test executable requires an isolated profile');
+    // Validate both profile switches and protected paths, not just a nonempty root.
+    runtimeConfigPath();
+  }
   const codexOptions = {
-    codexPathOverride: resolveJsonlProxyPath(fileURLToPath(new URL('./codex-jsonl-proxy.mjs', import.meta.url))),
+    // Managed runs always retain the JSONL proxy; pin its owned child instead.
+    codexPathOverride: (testExecutable && !opts?.onManagedExecution) ? testExecutable
+      : resolveJsonlProxyPath(fileURLToPath(new URL('./codex-jsonl-proxy.mjs', import.meta.url))),
     ...(config.sdk.codexApiKey ? { apiKey: config.sdk.codexApiKey } : {}),
     ...(config.sdk.codexBaseUrl ? { baseUrl: config.sdk.codexBaseUrl } : {}),
     ...(env ? { env } : {}),
@@ -513,7 +522,7 @@ export async function* queryAgentEvents(
   ): AsyncIterable<AgentOutputEvent> {
     const attempt = attemptCount++;
     diagnosticRun = {mode:resumeId ? 'resume' : 'start', attempt, resumeId};
-    const scope = opts?.onManagedExecution ? new ExecutionScope() : undefined;
+    const scope = opts?.onManagedExecution ? new ExecutionScope(testExecutable, testExecutable ? 'executable' : 'node') : undefined;
     attemptScope = scope;
     if (scope) opts?.onManagedExecution?.(scope);
     const baseEnv = { ...(env ?? Object.fromEntries(Object.entries(process.env).filter((pair): pair is [string,string] => pair[1] !== undefined))) };

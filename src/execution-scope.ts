@@ -29,11 +29,15 @@ export class ExecutionScope implements ManagedExecution {
   private readonly sockets = new Set<Socket>();
   private cleanup?: Promise<void>;
   private disposed = false;
-  constructor(private readonly launcher?: string) { chmodSync(this.directory, 0o700); }
+  constructor(
+    private readonly launcher?: string,
+    private readonly launcherMode: 'node' | 'executable' = 'node',
+  ) { chmodSync(this.directory, 0o700); }
 
   /** Called only for a supported proxy launch, never direct/Windows fallback. */
   async prepare(): Promise<void> {
     if (process.platform === 'win32') return;
+    if (this.launcherMode === 'executable' && !this.launcher) throw new Error('Explicit executable required');
     const launcher = this.launcher ?? createRequire(import.meta.resolve('@openai/codex-sdk')).resolve('@openai/codex/bin/codex.js');
     const server = this.server = createServer(socket => {
       this.sockets.add(socket);
@@ -66,7 +70,11 @@ export class ExecutionScope implements ManagedExecution {
               delete env.CODEX_CHANNEL_EXECUTION_DIR; delete env.CODEX_CHANNEL_EXECUTION_TOKEN;
               // Spawn here, not in the SDK proxy: PID/close cannot be fabricated
               // by the controlled CLI or by reading the proxy's environment.
-              const child = this.child = spawn(process.execPath, [launcher, ...frame.args], { detached: true, env, stdio: ['pipe', 'pipe', 'pipe'] });
+              // The default SDK launcher is JavaScript; a pinned native binary
+              // must execute directly. Both retain this gateway-owned PGID/handle.
+              const executable = this.launcherMode === 'executable' ? launcher : process.execPath;
+              const args = this.launcherMode === 'executable' ? frame.args : [launcher, ...frame.args];
+              const child = this.child = spawn(executable, args, { detached: true, env, stdio: ['pipe', 'pipe', 'pipe'] });
               child.stdin.on('error', () => {});
               child.stdout.on('data', chunk => { if (!socket.destroyed && !send({ type: 'stdout', data: chunk.toString('base64') })) child.stdout.pause(); });
               child.stderr.on('data', chunk => { if (!socket.destroyed && !send({ type: 'stderr', data: chunk.toString('base64') })) child.stderr.pause(); });
