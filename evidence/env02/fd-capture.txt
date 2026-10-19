@@ -1,3 +1,0 @@
-{"env02ChildPid": 41020}
-{"url":"http://127.0.0.1:52354"}
-PASS: protected descriptor handoff, bounded capture exit, evidence mode 0600; no upstream request
