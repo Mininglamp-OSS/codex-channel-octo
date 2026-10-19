@@ -16,6 +16,8 @@ export interface EvidenceOptions {
   channelId: string;
   channelType: number;
   pageSize?: number;
+  /** Supported Bot API includes start_message_seq; exclusive is explicit legacy compatibility. */
+  cursorMode?: 'inclusive' | 'exclusive';
   /** Required lower sequence boundary; default 1. Retention truncation fails closed. */
   lowWatermark?: number;
   maxPages?: number;
@@ -38,13 +40,15 @@ export interface ReadbackEvidence {
   pages: number;
   cursors: number[];
   complete: true;
+  cursorMode: 'inclusive' | 'exclusive';
 }
 
 export async function readback(options: EvidenceOptions): Promise<ReadbackEvidence> {
   const pageSize = options.pageSize ?? 100;
+  const cursorMode = options.cursorMode ?? 'inclusive';
   const lowWatermark = options.lowWatermark ?? 1;
   const maxPages = options.maxPages ?? 10000;
-  if (!isAllowedApiUrl(options.apiUrl) || !options.channelId || ![1, 2].includes(options.channelType) ||
+  if (!['inclusive', 'exclusive'].includes(cursorMode) || !isAllowedApiUrl(options.apiUrl) || !options.channelId || ![1, 2].includes(options.channelType) ||
       !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000 ||
       !Number.isSafeInteger(lowWatermark) || lowWatermark < 1 ||
       !Number.isSafeInteger(maxPages) || maxPages < 1) throw new Error('Invalid evidence readback options');
@@ -78,7 +82,7 @@ export async function readback(options: EvidenceOptions): Promise<ReadbackEviden
   if (highWatermark < lowWatermark || highWatermark >= Number.MAX_SAFE_INTEGER) {
     throw new Error('Readback incomplete: invalid high watermark');
   }
-  let cursor = highWatermark + 1;
+  let cursor = cursorMode === 'inclusive' ? highWatermark : highWatermark + 1;
   const messages: EvidenceMessage[] = [];
   const sequences = new Set<number>();
   const ids = new Set<string>();
@@ -90,7 +94,7 @@ export async function readback(options: EvidenceOptions): Promise<ReadbackEviden
     let next = cursor;
     for (const row of rows) {
       const seq = Number(row.message_seq);
-      if (seq >= cursor || seq > highWatermark || sequences.has(seq)) {
+      if ((cursorMode === 'inclusive' ? seq > cursor : seq >= cursor) || seq > highWatermark || sequences.has(seq)) {
         throw new Error('Readback incomplete: page cursor/watermark violation');
       }
       const messageId = canonicalMessageId(row.message_id);
@@ -121,9 +125,9 @@ export async function readback(options: EvidenceOptions): Promise<ReadbackEviden
         throw new Error('Readback incomplete: sequence gap requires retention/deletion reconciliation');
       }
       return { messages: messages.sort((a, b) => a.message_seq - b.message_seq), highWatermark,
-        lowWatermark, pages, cursors, complete: true };
+        lowWatermark, pages, cursors, cursorMode, complete: true };
     }
-    cursor = next;
+    cursor = cursorMode === 'inclusive' ? next - 1 : next;
   }
   throw new Error('Readback incomplete: explicit page budget exhausted');
 }

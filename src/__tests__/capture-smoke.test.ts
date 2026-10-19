@@ -73,3 +73,14 @@ it('redacts every nonpublic registration string even when echoed into public met
   for (const secret of secrets) expect(retained).not.toContain(secret);
   expect(records).toContainEqual({ event: 'registration', robotId: 'bot-a', ownerUid: '[REDACTED]', ownerChannelId: '[REDACTED]' });
 });
+
+it('forwards an explicit compatible cursor contract to readback', async () => {
+  const adapter = transport();
+  await smoke({ ...manifest, cursorMode: 'exclusive' }, 'fixture-secret', () => {}, adapter);
+  expect(adapter.readback).toHaveBeenCalledWith(expect.objectContaining({ cursorMode: 'exclusive' }));
+});
+it('refuses an unsupported cursor mode before registration', async () => {
+  const adapter = transport();
+  await expect(smoke({ ...manifest, cursorMode: 'guess' }, 'fixture-secret', () => {}, adapter)).rejects.toThrow('Invalid smoke manifest');
+  expect(adapter.registerBot).not.toHaveBeenCalled();
+});

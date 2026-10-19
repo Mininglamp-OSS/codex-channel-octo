@@ -69,11 +69,13 @@ export function validateProtectedDescriptors(descriptors) {
  */
 export async function startCapture(options) {
   const upstream = new URL(options.upstream);
-  if (upstream.username || upstream.password || upstream.search || upstream.hash || upstream.pathname !== '/' ||
+  if (upstream.username || upstream.password || upstream.search || upstream.hash ||
       (upstream.protocol !== 'https:' && !(options.fixtureOnly && upstream.protocol === 'http:' && upstream.hostname === '127.0.0.1')) ||
       !options.token || !Array.isArray(options.allowedTargets) || !options.allowedTargets.length) {
     throw new Error('Invalid capture configuration');
   }
+  // Preserve the configured deployment prefix, just like the package REST client.
+  const upstreamBase = upstream.href.replace(/\/+$/, '');
   let ordinal = 0;
   let senderUid;
   const captureSessionId = randomBytes(16).toString('hex');
@@ -169,7 +171,7 @@ export async function startCapture(options) {
     try {
       const headers = { Authorization: `Bearer ${options.token}`, 'Content-Type': 'application/json' };
       if (options.fixtureOnly && req.headers['x-fixture']) headers['x-fixture'] = String(req.headers['x-fixture']);
-      const response = await fetch(new URL(route + url.search, upstream), { method: req.method, headers,
+      const response = await fetch(upstreamBase + route + url.search, { method: req.method, headers,
         ...(post ? { body: raw } : {}), redirect: 'manual', signal: AbortSignal.timeout(options.timeoutMs ?? 5000) });
       const responseChunks = []; let responseSize = 0;
       for await (const chunk of response.body ?? []) {

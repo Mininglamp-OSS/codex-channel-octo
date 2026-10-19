@@ -197,3 +197,33 @@ it.each([
 it.each([NaN, 0, 2, 3.5])('rejects invalid descriptor %s before fstat', (fd) => {
   expect(() => validateProtectedDescriptors([fd])).toThrow('Invalid protected descriptor');
 });
+
+it.each(['/api/octo', '/api/octo/'])('preserves deployment prefix %s for supported sync, refresh and send routes', async prefix => {
+  const paths: string[] = [];
+  const upstream = createServer(async (req, res) => {
+    for await (const chunk of req) void chunk;
+    paths.push(req.url!); res.setHeader('Content-Type', 'application/json');
+    if (req.url === '/api/octo/v1/bot/register?force_refresh=true') {
+      res.end(JSON.stringify({ robot_id: 'bot-a', im_token: 'fixture-im-token', ws_url: 'wss://example.com/ws' }));
+    } else if (req.url === '/api/octo/v1/bot/messages/sync') res.end('{"messages":[]}');
+    else if (req.url === '/api/octo/v1/bot/sendMessage') res.end('{"message_id":123}');
+    else { res.statusCode = 404; res.end('{}'); }
+  });
+  servers.push(upstream);
+  await new Promise<void>(r => upstream.listen(0, '127.0.0.1', r));
+  const records: Record<string, unknown>[] = [];
+  const capture = await startCapture({ upstream: `http://127.0.0.1:${(upstream.address() as { port: number }).port}${prefix}`,
+    token: 'fixture-secret', fixtureOnly: true, allowedTargets: [{ channelId: 'target', channelType: 2 }],
+    record: (r: Record<string, unknown>) => records.push(r) });
+  try {
+    await registerBot({ apiUrl: capture.url, botToken: 'fixture-secret', forceRefresh: true });
+    for (const route of ['/v1/bot/messages/sync', '/v1/bot/sendMessage']) {
+      const r = await fetch(capture.url + route, { method: 'POST', headers: { Authorization: 'Bearer fixture-secret' },
+        body: JSON.stringify({ channel_id: 'target', channel_type: 2, payload: { content: 'synthetic' } }) });
+      expect(r.status).toBe(200);
+    }
+    expect(paths).toEqual(['/api/octo/v1/bot/register?force_refresh=true', '/api/octo/v1/bot/messages/sync', '/api/octo/v1/bot/sendMessage']);
+    expect(records).toContainEqual(expect.objectContaining({ event: 'outcome', transportOutcome: 'confirmed', responseMessageId: '123' }));
+    expect(JSON.stringify(records)).not.toMatch(/fixture-secret|fixture-im-token/);
+  } finally { await capture.close(); }
+});

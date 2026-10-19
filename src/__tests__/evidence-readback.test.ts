@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { readback } from '../octo/evidence.js';
 import { writeFileSync } from 'node:fs';
-const options = { apiUrl: 'https://example.com', botToken: 'fixture-token', channelId: 'target', channelType: 2 };
+const options = { apiUrl: 'https://example.com', botToken: 'fixture-token', channelId: 'target', channelType: 2, cursorMode: 'exclusive' as const };
 afterEach(() => vi.unstubAllGlobals());
 function mock(pages: unknown[]) {
   const bodies: Record<string, number>[] = [];
@@ -74,4 +74,35 @@ it('accepts a 16-digit numeric wire ID via the lossless REST parser', async () =
   const entry = { ...row(1), message_id: 9007199254740992 };
   mock([{ messages: [entry] }, { messages: [entry] }]);
   expect((await readback(options)).messages[0].messageId).toBe('9007199254740992');
+});
+
+it('defaults to inclusive deployed-server cursors without repeating boundary rows', async () => {
+  const bodies = mock([{ messages: [row(5)] }, { messages: [row(5), row(4)] },
+    { messages: [row(3), row(2)] }, { messages: [row(1)] }]);
+  const result = await readback({ ...options, cursorMode: undefined, pageSize: 2 });
+  expect(result.cursorMode).toBe('inclusive');
+  expect(result.messages.map(m => m.message_seq)).toEqual([1, 2, 3, 4, 5]);
+  expect(bodies.slice(1).map(b => b.start_message_seq)).toEqual([5, 3, 1]);
+});
+it('pins the inclusive initial cursor to high, avoiding a later high+1 arrival', async () => {
+  const bodies: number[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+    const req = JSON.parse(init.body); bodies.push(req.start_message_seq);
+    // Message 4 arrives after the initial high=3 probe. Inclusive pages must exclude it.
+    const seqs = bodies.length === 1 ? [3] : [4, 3, 2, 1].filter(n => n <= req.start_message_seq).slice(0, req.limit);
+    return new Response(JSON.stringify({ messages: seqs.map(row) }));
+  }));
+  const result = await readback({ ...options, cursorMode: 'inclusive', pageSize: 2 });
+  expect(result.highWatermark).toBe(3);
+  expect(result.messages.map(m => m.message_seq)).toEqual([1, 2, 3]);
+  expect(bodies).toEqual([0, 3, 1]);
+});
+it('rejects an unsupported cursor mode before network requests', async () => {
+  const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+  await expect(readback({ ...options, cursorMode: 'guess' as never })).rejects.toThrow('Invalid evidence readback options');
+  expect(fetch).not.toHaveBeenCalled();
+});
+it('fails closed on a real gap under inclusive mode', async () => {
+  mock([{ messages: [row(3)] }, { messages: [row(3), row(1)] }]);
+  await expect(readback({ ...options, cursorMode: 'inclusive' })).rejects.toThrow('gap');
 });

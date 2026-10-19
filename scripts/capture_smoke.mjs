@@ -7,6 +7,7 @@ function validateManifest(manifest, token, isAllowedApiUrl) {
   if (!manifest || typeof manifest !== 'object' || manifest.emptyTestBot !== true ||
       !identity(token) || !identity(manifest.expectedRobotId) || !identity(manifest.apiUrl) || !isAllowedApiUrl(manifest.apiUrl) ||
       !Array.isArray(manifest.targets) || !manifest.targets.length ||
+      manifest.cursorMode !== undefined && !['inclusive', 'exclusive'].includes(manifest.cursorMode) ||
       manifest.pageSize !== undefined && (!Number.isInteger(manifest.pageSize) || manifest.pageSize < 1 || manifest.pageSize > 1000)) {
     throw new Error('Invalid smoke manifest or empty test-bot attestation');
   }
@@ -61,7 +62,7 @@ export async function smoke(manifest, token, record, adapter) {
         emit({ event: 'membership', target, members: members.map(m => ({ uid: m.uid, role: m.role })) });
       } else if (target.channelType !== 1 || target.channelId !== manifest.expectedDmChannelId) throw new Error('Unverified DM target');
       const evidence = await readback({ apiUrl: manifest.apiUrl, botToken: token, channelId: target.channelId,
-        channelType: target.channelType, lowWatermark: target.lowWatermark, pageSize: manifest.pageSize,
+        channelType: target.channelType, lowWatermark: target.lowWatermark, pageSize: manifest.pageSize, cursorMode: manifest.cursorMode,
         signal: AbortSignal.timeout(15000) });
       emit({ event: 'readback', target, ...evidence });
     }
