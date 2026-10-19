@@ -448,7 +448,10 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       bound = r.kind === "bound" || r.kind === "already_bound";
     } catch { bound = false; }
     if (!bound) {
-      // Remote card exists but its identity could not be bound: never edit an uncorrelated card.
+      // The server accepted the send but its identity could not be bound: never edit an uncorrelated
+      // card, persist the possibly-accepted send as ambiguous and suspend the sender (§5.2).
+      try { store.markSendAmbiguous(card.storeCardId); } catch { /* the in-memory fence below still applies */ }
+      suspended.add(card.spec.capability);
       emitOutcome(card, "card_send_total", "ambiguous");
       close(card, "ambiguous");
       return;
@@ -535,7 +538,9 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
           if (fencedOut) { close(card, "skipped"); return; }
           continue;
         }
-        const frame = card.dirty as CardFrame;
+        // A close or cancel between the wake and this continuation clears the frame: re-evaluate.
+        if (card.dirty === undefined) continue;
+        const frame = card.dirty;
         card.dirty = undefined;
         await sendInitial(card, frame);
         continue;

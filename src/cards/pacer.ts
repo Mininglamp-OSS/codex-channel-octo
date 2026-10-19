@@ -40,6 +40,8 @@ export const systemTimers: TimerPort = Object.freeze({
 /** Raw `cooldown_slice_ms` slices stay below the sink's 61 s bound. */
 export const COOLDOWN_SLICE_MS = 60_000;
 const SLICE_BACK_COVER_MS = 120_000;
+/** Largest delay a native timer honours; longer delays fire after 1 ms. Long waits re-arm instead. */
+export const MAX_TIMER_ARM_MS = 2_147_483_647;
 const MAX_CONSECUTIVE = 1_000_000;
 
 export type GateDecision =
@@ -204,7 +206,7 @@ export function createPacer(options: PacerOptions): Pacer {
         emitSlices(st, t);
         schedule(key, st, t);
       }
-    }, Math.max(0, target - at));
+    }, Math.min(MAX_TIMER_ARM_MS, Math.max(0, target - at)));
   }
 
   const pacer: Pacer = {
