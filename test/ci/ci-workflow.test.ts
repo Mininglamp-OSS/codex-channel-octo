@@ -36,8 +36,9 @@ describe('CI workflow', () => {
       expect(wf.jobs, j).toHaveProperty(j);
     }
     expect(wf.jobs['real-binary']['runs-on']).toBe('ubuntu-latest');
-    expect(runs('real-binary')).toMatch(/npm run test:real-binary/);
-    expect(runs('real-binary')).toContain('unshare --user --map-root-user --net');
+    expect(runs('real-binary')).toContain('scripts/ci/run-runner.mjs real-binary -c test/real-binary/vitest.config.ts');
+    expect(runs('real-binary')).toContain('unshare --net');
+    expect(runs('real-binary')).toContain('runuser -u "$SUDO_USER"');
     expect(runs('mutation')).toContain('npm run test:mutation');
     expect(runs('build')).toContain('dist/codex-jsonl-proxy.mjs');
     expect(JSON.stringify(wf.jobs['real-binary'])).toMatch(/NO_PROXY/);

@@ -106,7 +106,17 @@ jobs:
           sudo install -m 0644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict /etc/apparmor.d/bwrap-userns-restrict
           sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
           bwrap --unshare-user --ro-bind / / /bin/true
-      - run: unshare --user --map-root-user --net sh -c 'ip link set lo up && npm run test:real-binary'
+      # Create the net namespace as root (Ubuntu restricts unprivileged
+      # unshare), then drop back to the runner before executing test code.
+      - run: |
+          sudo --preserve-env=DEV01_REPORT_DIR,DEV01_EVIDENCE_DIR unshare --net sh -c '
+            set -eu
+            ip link set lo up
+            runner_path=$1
+            shift
+            test -n "$SUDO_USER" && test "$SUDO_USER" != root
+            exec runuser -u "$SUDO_USER" -- env PATH="$runner_path" "$@"
+          ' sh "$PATH" "$(command -v node)" scripts/ci/run-runner.mjs real-binary -c test/real-binary/vitest.config.ts
         env:
           DEV01_REPORT_DIR: artifacts/runs
           DEV01_EVIDENCE_DIR: artifacts/evidence

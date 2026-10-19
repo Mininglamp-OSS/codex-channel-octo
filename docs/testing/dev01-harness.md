@@ -24,7 +24,7 @@ npm run test:real-binary
 npm run test:parity-matrix
 ```
 
-The real-binary suite uses a loopback mock Responses service, a fresh temporary HOME/CODEX_HOME and fake credentials. Linux CI runs it in a network namespace with only loopback enabled after installing the sandbox prerequisites. On other hosts, endpoint overrides and log checks are defense in depth, not a network firewall. It is not a live provider or Octo backend acceptance test. Two explicitly named runtime contracts remain pending future implementation.
+The real-binary suite uses a loopback mock Responses service, a fresh temporary HOME/CODEX_HOME and fake credentials. Linux CI runs it in a network namespace with only loopback enabled after installing the sandbox prerequisites. Namespace setup uses sudo because Ubuntu restricts unprivileged unshare; the job drops back to the runner user before executing test code. On other hosts, endpoint overrides and log checks are defense in depth, not a network firewall. It is not a live provider or Octo backend acceptance test. Two explicitly named runtime contracts remain pending future implementation.
 
 ## Test inputs versus generated results
 
