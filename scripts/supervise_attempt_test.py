@@ -18,18 +18,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SUPERVISOR = os.environ.get("SUPERVISE_ATTEMPT", str(ROOT / "supervise-attempt.sh"))
 NODE = shutil.which("node")
+BUSY_PROCESSES = 3000
 
 # argv: <pidfile> <markerfile> <parentOnTerm: exit|ignore|die> <childOnTerm: exit|ignore|fork> <parentEnd: hang|exit>
 #       [childEnv: inherit|stripped]
 # `stripped` mirrors the Codex SDK, which replaces the CLI environment, so the child carries no attempt token.
-# `fork` ignores TERM and then keeps forking detached TERM-ignoring grandchildren (PIDs in <pidfile>.grandchildren),
+# `fork` ignores TERM and then keeps forking detached TERM-ignoring grandchildren until killed (PIDs in <pidfile>.grandchildren),
 # all with the child's environment, so teardown has to catch processes created while it runs.
 FIXTURE = r"""
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const [pidfile, marker, parentOnTerm, childOnTerm, parentEnd, childEnv = 'inherit'] = process.argv.slice(2);
 const forkSource = "const { spawn } = require('node:child_process'); const fs = require('node:fs'); let n = 0;" +
-  "process.on('SIGTERM', () => setInterval(() => { if (n++ >= 400) return;" +
+  "process.on('SIGTERM', () => setInterval(() => { if (n++ >= 3000) return;" +
   " const g = spawn('sh', ['-c', 'trap \"\" TERM; exec sleep 600'], { detached: true, stdio: 'ignore', env: process.env });" +
   " fs.appendFileSync(process.argv[1], g.pid + '\\n'); }, 10)); setInterval(() => {}, 1000);";
 const childSource = childOnTerm === 'fork' ? forkSource
@@ -70,9 +71,17 @@ class SuperviseAttemptTest(unittest.TestCase):
         self.child = None
 
     def tearDown(self) -> None:
-        # The probe owns its fixture: never leave it running, even when an assertion failed.
-        for pid in (self.child, self.parent(), *self.grandchildren()):
+        # The probe owns its fixture: never leave it running, even when an assertion failed. Kill the
+        # child first so that it cannot fork more grandchildren while they are collected.
+        for pid in (self.child, self.parent()):
             if pid is not None and alive(pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        time.sleep(0.1)
+        for pid in self.grandchildren():
+            if alive(pid):
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
@@ -123,27 +132,41 @@ class SuperviseAttemptTest(unittest.TestCase):
         # re-parented with no token and no remembered ancestry. Repeat to cover the race.
         for trial in range(3):
             with self.subTest(trial=trial):
-                result = self.run_attempt(20, 2, "exit", "ignore", "exit", "stripped")
-                self.assertIsNotNone(self.child)
-                self.assertFalse(alive(self.child), "a finished attempt left its tokenless detached child running")
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.tearDown()
-                self.setUp()
+                try:
+                    result = self.run_attempt(20, 2, "exit", "ignore", "exit", "stripped")
+                    self.assertIsNotNone(self.child)
+                    self.assertFalse(alive(self.child), "a finished attempt left its tokenless detached child running")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                finally:
+                    self.tearDown()
+                    self.setUp()
 
     def test_tokenless_tree_that_forks_during_teardown_leaves_no_survivor(self) -> None:
         # The tokenless child ignores TERM and keeps forking TERM-ignoring grandchildren until it is
-        # killed, so the KILL pass races new processes; every one of them must be reaped.
-        for trial in range(3):
-            with self.subTest(trial=trial):
-                result = self.run_attempt(20, 1, "exit", "fork", "exit", "stripped")
-                self.assertIsNotNone(self.child)
-                grandchildren = self.grandchildren()
-                self.assertTrue(grandchildren, "the child forked nothing during teardown")
-                survivors = [pid for pid in (self.child, *grandchildren) if alive(pid)]
-                self.assertEqual(survivors, [], f"teardown left processes running; supervisor exit={result.returncode}")
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.tearDown()
-                self.setUp()
+        # killed, so teardown races new processes. Unrelated idle processes make the process table
+        # look like a busy runner, where every enumeration takes longer. When the supervisor returns,
+        # no owned process may be running and none may appear afterwards.
+        busy = [subprocess.Popen(["sleep", "600"]) for _ in range(BUSY_PROCESSES)]
+        try:
+            for trial in range(3):
+                with self.subTest(trial=trial):
+                    try:
+                        result = self.run_attempt(20, 1, "exit", "fork", "exit", "stripped")
+                        self.assertIsNotNone(self.child)
+                        grandchildren = self.grandchildren()
+                        self.assertTrue(grandchildren, "the child forked nothing during teardown")
+                        survivors = [pid for pid in (self.child, *grandchildren) if alive(pid)]
+                        self.assertEqual(survivors, [], f"teardown left processes running; supervisor exit={result.returncode}")
+                        time.sleep(1)
+                        self.assertEqual(self.grandchildren(), grandchildren, "processes were forked after the supervisor returned")
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                    finally:
+                        self.tearDown()
+                        self.setUp()
+        finally:
+            for process in busy:
+                process.kill()
+                process.wait()
 
     def test_a_subreaper_that_cannot_exit_is_killed_and_reported(self) -> None:
         # A stand-in subreaper runs the command and then never exits; the supervisor must not
