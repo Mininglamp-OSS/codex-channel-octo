@@ -19,18 +19,24 @@ ROOT = Path(__file__).resolve().parent
 SUPERVISOR = os.environ.get("SUPERVISE_ATTEMPT", str(ROOT / "supervise-attempt.sh"))
 NODE = shutil.which("node")
 
-# argv: <pidfile> <markerfile> <parentOnTerm: exit|ignore|die> <childOnTerm: exit|ignore> <parentEnd: hang|exit>
+# argv: <pidfile> <markerfile> <parentOnTerm: exit|ignore|die> <childOnTerm: exit|ignore|fork> <parentEnd: hang|exit>
 #       [childEnv: inherit|stripped]
 # `stripped` mirrors the Codex SDK, which replaces the CLI environment, so the child carries no attempt token.
+# `fork` ignores TERM and then keeps forking detached TERM-ignoring grandchildren (PIDs in <pidfile>.grandchildren),
+# all with the child's environment, so teardown has to catch processes created while it runs.
 FIXTURE = r"""
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const [pidfile, marker, parentOnTerm, childOnTerm, parentEnd, childEnv = 'inherit'] = process.argv.slice(2);
-const childSource = childOnTerm === 'ignore'
-  ? "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"
+const forkSource = "const { spawn } = require('node:child_process'); const fs = require('node:fs'); let n = 0;" +
+  "process.on('SIGTERM', () => setInterval(() => { if (n++ >= 400) return;" +
+  " const g = spawn('sh', ['-c', 'trap \"\" TERM; exec sleep 600'], { detached: true, stdio: 'ignore', env: process.env });" +
+  " fs.appendFileSync(process.argv[1], g.pid + '\\n'); }, 10)); setInterval(() => {}, 1000);";
+const childSource = childOnTerm === 'fork' ? forkSource
+  : childOnTerm === 'ignore' ? "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"
   : "setInterval(() => {}, 1000);";
 const env = childEnv === 'stripped' ? { PATH: process.env.PATH } : process.env;
-const child = spawn(process.execPath, ['-e', childSource], { detached: true, stdio: 'ignore', env });
+const child = spawn(process.execPath, ['-e', childSource, pidfile + '.grandchildren'], { detached: true, stdio: 'ignore', env });
 fs.writeFileSync(pidfile + '.parent', String(process.pid));
 fs.writeFileSync(pidfile, String(child.pid));
 if (parentOnTerm === 'ignore') process.on('SIGTERM', () => {});
@@ -65,13 +71,17 @@ class SuperviseAttemptTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         # The probe owns its fixture: never leave it running, even when an assertion failed.
-        for pid in (self.child, self.parent()):
+        for pid in (self.child, self.parent(), *self.grandchildren()):
             if pid is not None and alive(pid):
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
         shutil.rmtree(self.dir, ignore_errors=True)
+
+    def grandchildren(self) -> list:
+        path = Path(str(self.pidfile) + ".grandchildren")
+        return [int(pid) for pid in path.read_text(encoding="utf-8").split()] if path.exists() else []
 
     def parent(self):
         path = Path(str(self.pidfile) + ".parent")
@@ -119,6 +129,45 @@ class SuperviseAttemptTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.tearDown()
                 self.setUp()
+
+    def test_tokenless_tree_that_forks_during_teardown_leaves_no_survivor(self) -> None:
+        # The tokenless child ignores TERM and keeps forking TERM-ignoring grandchildren until it is
+        # killed, so the KILL pass races new processes; every one of them must be reaped.
+        for trial in range(3):
+            with self.subTest(trial=trial):
+                result = self.run_attempt(20, 1, "exit", "fork", "exit", "stripped")
+                self.assertIsNotNone(self.child)
+                grandchildren = self.grandchildren()
+                self.assertTrue(grandchildren, "the child forked nothing during teardown")
+                survivors = [pid for pid in (self.child, *grandchildren) if alive(pid)]
+                self.assertEqual(survivors, [], f"teardown left processes running; supervisor exit={result.returncode}")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.tearDown()
+                self.setUp()
+
+    def test_a_subreaper_that_cannot_exit_is_killed_and_reported(self) -> None:
+        # A stand-in subreaper runs the command and then never exits; the supervisor must not
+        # wait on it forever or report the command's success.
+        stub_dir = self.dir / "stub"
+        stub_dir.mkdir()
+        shutil.copy(SUPERVISOR, stub_dir / "supervise-attempt.sh")
+        (stub_dir / "attempt_subreaper.py").write_text(
+            "import os, signal, subprocess, sys, time\n"
+            "os.setsid()\n"
+            "for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP): signal.signal(sig, signal.SIG_IGN)\n"
+            "status = subprocess.call(sys.argv[2:], preexec_fn=lambda: signal.signal(signal.SIGTERM, signal.SIG_DFL))\n"
+            "open(sys.argv[1], 'w').write(f'{status}\\n')\n"
+            "while True: time.sleep(1)\n",
+            encoding="utf-8",
+        )
+        started = time.monotonic()
+        result = subprocess.run(
+            [str(stub_dir / "supervise-attempt.sh"), "20", "1", "--", "sh", "-c", "exit 0"],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+        self.assertEqual(result.returncode, 125, result.stderr)
+        self.assertIn("subreaper did not exit", result.stderr)
+        self.assertLess(time.monotonic() - started, 5 + 5, "the stuck subreaper was not bounded by the reap budget")
 
     def test_deadline_reaps_a_tokenless_detached_child_whose_parent_dies_on_term(self) -> None:
         # The parent exits on the session TERM before forwarding it; the child was re-parented and has no token.
