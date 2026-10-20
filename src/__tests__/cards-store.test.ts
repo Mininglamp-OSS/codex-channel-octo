@@ -321,6 +321,98 @@ describe('sequence reservation', () => {
     expect(store.ackSequence(r.cardId, 2)).toEqual({ kind: 'acked', seqAcked: 2 });
     expect(store.ackSequence(r.cardId, 1)).toEqual({ kind: 'acked', seqAcked: 2 });
   });
+
+  type TerminalState = 'done' | 'error' | 'expired';
+  const TERMINAL_STATES: readonly TerminalState[] = ['done', 'error', 'expired'];
+  const REASON: Record<TerminalState, string> = { done: 'completed', error: 'failed', expired: 'expired' };
+
+  function terminalize(db: DbAdapter, cardId: string, state: TerminalState): void {
+    db.prepare(
+      `UPDATE card_messages SET state = ?, terminal_reason = ?, terminal_at = ?, retain_until = ? WHERE card_id = ?`,
+    ).run(state, REASON[state], now, now + DAY, cardId);
+  }
+
+  function fences(cardId: string) {
+    return adapter.prepare('SELECT state, seq_reserved, seq_acked FROM card_messages WHERE card_id = ?').get(cardId);
+  }
+
+  /** A bound card with sequences 1..2 reserved and 1 acknowledged. */
+  function editedCard(name: string) {
+    const r = pendingSession(name);
+    expect(store.reserveSequence(r.cardId)).toEqual({ kind: 'reserved', seq: 1 });
+    expect(store.reserveSequence(r.cardId)).toEqual({ kind: 'reserved', seq: 2 });
+    expect(store.ackSequence(r.cardId, 1)).toEqual({ kind: 'acked', seqAcked: 1 });
+    return r;
+  }
+
+  it.each(TERMINAL_STATES)('rejects reservation and acknowledgement on a %s card without moving either fence', (state) => {
+    const r = editedCard(state);
+    terminalize(adapter, r.cardId, state);
+    const before = fences(r.cardId);
+    expect(before).toEqual({ state, seq_reserved: 2, seq_acked: 1 });
+    expect(store.reserveSequence(r.cardId)).toEqual({ kind: 'invalid_state', state });
+    expect(store.ackSequence(r.cardId, 2)).toEqual({ kind: 'invalid_state', state });
+    expect(store.ackSequence(r.cardId, 3)).toEqual({ kind: 'not_reserved' });
+    expect(fences(r.cardId)).toEqual(before);
+  });
+
+  it('rejects terminal cards reached through the store paths', () => {
+    const revoked = reserveInteractive('revoked');
+    expect(store.ackMessage({ cardId: revoked.cardId, messageId: 'm-revoked', currentResetEpoch: 0, policyAllows: false }))
+      .toEqual({ kind: 'bound', admittable: false, reason: 'policy_revoked' });
+    const expired = reserveInteractive('expired');
+    now = T0 + DAY;
+    expect(store.ackMessage({ cardId: expired.cardId, messageId: 'm-expired', currentResetEpoch: 0, policyAllows: true }))
+      .toEqual({ kind: 'bound', admittable: false, reason: 'expired' });
+    for (const [card, state] of [[revoked, 'error'], [expired, 'expired']] as const) {
+      const before = fences(card.cardId);
+      expect(store.reserveSequence(card.cardId)).toEqual({ kind: 'invalid_state', state });
+      expect(store.ackSequence(card.cardId, 1)).toEqual({ kind: 'not_reserved' });
+      expect(fences(card.cardId)).toEqual(before);
+    }
+  });
+
+  it('keeps the unbound, abandoned and unknown-card outcomes', () => {
+    const unbound = reserveInteractive('unbound');
+    expect(store.reserveSequence(unbound.cardId)).toEqual({ kind: 'invalid_state', state: 'sending' });
+    expect(store.ackSequence(unbound.cardId, 1)).toEqual({ kind: 'not_reserved' });
+    const abandoned = reserveInteractive('abandoned');
+    expect(store.abandonUnsent(abandoned.cardId).kind).toBe('updated');
+    expect(store.reserveSequence(abandoned.cardId)).toEqual({ kind: 'invalid_state', state: 'abandoned' });
+    expect(store.reserveSequence('missing')).toEqual({ kind: 'not_found' });
+    expect(store.ackSequence('missing', 1)).toEqual({ kind: 'not_found' });
+    expect(fences(unbound.cardId)).toEqual({ state: 'sending', seq_reserved: 0, seq_acked: 0 });
+  });
+
+  /** Delegates to the real adapter, but terminalizes the card right before any sequence UPDATE runs. */
+  function racingAdapter(cardId: string, state: TerminalState): DbAdapter {
+    return {
+      exec: (sql) => adapter.exec(sql),
+      close: () => adapter.close(),
+      get inTransaction() { return adapter.inTransaction; },
+      transaction: (fn) => adapter.transaction(fn),
+      backup: (dest) => adapter.backup(dest),
+      prepare: (sql) => {
+        const stmt = adapter.prepare(sql);
+        if (!/UPDATE card_messages SET seq_/.test(sql)) return stmt;
+        return { ...stmt, run: (...params: unknown[]) => { terminalize(adapter, cardId, state); return stmt.run(...params); } };
+      },
+    };
+  }
+
+  it.each(TERMINAL_STATES)('does not move a fence when the card turns %s just before the sequence write', (state) => {
+    // The card turns terminal inside the store's own transaction, immediately before its sequence
+    // UPDATE: a guard evaluated earlier in that transaction would already have passed.
+    const r = editedCard(`race-${state}`);
+    expect(new CardStore(racingAdapter(r.cardId, state), { clock, newId: () => `id-${++seq}` }).reserveSequence(r.cardId))
+      .toEqual({ kind: 'invalid_state', state });
+    expect(fences(r.cardId)).toEqual({ state, seq_reserved: 2, seq_acked: 1 });
+
+    const s = editedCard(`race-ack-${state}`);
+    expect(new CardStore(racingAdapter(s.cardId, state), { clock, newId: () => `id-${++seq}` }).ackSequence(s.cardId, 2))
+      .toEqual({ kind: 'invalid_state', state });
+    expect(fences(s.cardId)).toEqual({ state, seq_reserved: 2, seq_acked: 1 });
+  });
 });
 
 describe('T0/T1a retry, T1 final disposition and cursor (AC-016)', () => {
