@@ -427,6 +427,47 @@ describe("window triggers (§5.5)", () => {
     expect(merged.signals).toHaveLength(1);
     expect(revise(complete, { ...complete, completeness: "pending" }).completeness).toBe("complete");
   });
+
+  it("keeps a timestamp-distinct critical observation added by a later cumulative evaluation", () => {
+    const h = harness(0);
+    h.beats(60_000);
+    h.at(70_000);
+    h.sink.emit("critical_signal_total", { capability: "display", code: "protected_token" }, 1);
+    h.beats(75_000);
+    const live = [rec("s1", [li(h, 0, 0, "running", 1)])];
+    const D = dep({ s1: [0] });
+    const first = windowEvaluation(K, openFor([...h.lines], live, D, 75_000));
+    h.at(80_000);
+    h.sink.emit("critical_signal_total", { capability: "display", code: "protected_token" }, 1);
+    h.beats(3_000_000);
+    const later = windowEvaluation(K, openFor(h.lines, live, D));
+    const at = (w: typeof first) => w.signals.filter((s) => s.reason === "protected_token").map((s) => s.atUtc);
+    expect(at(first)).toEqual([iso(70_000)]);
+    expect(at(later)).toEqual([iso(70_000), iso(80_000)]);
+    const revised = revise(revise(null, first), later);
+    expect(at(revised)).toEqual([iso(70_000), iso(80_000)]);
+    // Identical observations still collapse.
+    expect(at(revise(revised, later))).toEqual([iso(70_000), iso(80_000)]);
+  });
+
+  it("keeps a confirmed event_stream_halt when a later collection no longer contains it", () => {
+    const h = harness(0);
+    h.beats(60_000);
+    h.at(70_000);
+    h.sink.emit("critical_signal_total", { capability: "display", code: "event_stream_halt" }, 1);
+    h.beats(3_000_000);
+    const live = [rec("s1", [li(h, 0, 0, "running", 1)])];
+    const D = dep({ s1: [0] });
+    const confirmed = windowEvaluation(K, openFor(h.lines, live, D));
+    expect(confirmed.runtimeSignals).toEqual([{ code: "event_stream_halt", atUtc: iso(70_000) }]);
+    const partial = windowEvaluation(K, openFor(h.lines.filter((l) => !l.includes('"code":"event_stream_halt"')), live, D));
+    expect(partial.runtimeSignals).toEqual([]);
+    expect(partial.completeness).toBe("incomplete");
+    const revised = revise(confirmed, partial);
+    expect(revised.runtimeSignals).toEqual([{ code: "event_stream_halt", atUtc: iso(70_000) }]);
+    expect(revised.completeness).toBe("incomplete");
+    expect(revise(revised, confirmed).runtimeSignals).toEqual([{ code: "event_stream_halt", atUtc: iso(70_000) }]);
+  });
 });
 
 describe("batch scoring (§5.1–§5.3)", () => {
