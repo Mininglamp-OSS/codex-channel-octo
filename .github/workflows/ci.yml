@@ -79,9 +79,9 @@ jobs:
       - name: Probe the launcher attempt supervisor
         run: python3 -m unittest discover -s scripts -p supervise_attempt_test.py -v
       - name: Repeat Unix launcher contracts
-        # 20 attempts of at most 30 s, stopping at the first failure, plus at most
-        # 10 s TERM grace and 5 s reaping for the failing attempt.
-        timeout-minutes: 12
+        # 20 attempts of at most 30 s each, plus at most 10 s TERM grace and 5 s
+        # reaping per attempt for its teardown: 20 x 45 s = 15 min.
+        timeout-minutes: 15
         run: |
           for attempt in $(seq 1 20); do
             echo "Launcher attempt ${attempt}/20"

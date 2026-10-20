@@ -19,17 +19,22 @@ ROOT = Path(__file__).resolve().parent
 SUPERVISOR = os.environ.get("SUPERVISE_ATTEMPT", str(ROOT / "supervise-attempt.sh"))
 NODE = shutil.which("node")
 
-# argv: <pidfile> <markerfile> <parentOnTerm: exit|ignore> <childOnTerm: exit|ignore> <parentEnd: hang|exit>
+# argv: <pidfile> <markerfile> <parentOnTerm: exit|ignore|die> <childOnTerm: exit|ignore> <parentEnd: hang|exit>
+#       [childEnv: inherit|stripped]
+# `stripped` mirrors the Codex SDK, which replaces the CLI environment, so the child carries no attempt token.
 FIXTURE = r"""
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
-const [pidfile, marker, parentOnTerm, childOnTerm, parentEnd] = process.argv.slice(2);
+const [pidfile, marker, parentOnTerm, childOnTerm, parentEnd, childEnv = 'inherit'] = process.argv.slice(2);
 const childSource = childOnTerm === 'ignore'
   ? "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"
   : "setInterval(() => {}, 1000);";
-const child = spawn(process.execPath, ['-e', childSource], { detached: true, stdio: 'ignore' });
+const env = childEnv === 'stripped' ? { PATH: process.env.PATH } : process.env;
+const child = spawn(process.execPath, ['-e', childSource], { detached: true, stdio: 'ignore', env });
+fs.writeFileSync(pidfile + '.parent', String(process.pid));
 fs.writeFileSync(pidfile, String(child.pid));
 if (parentOnTerm === 'ignore') process.on('SIGTERM', () => {});
+else if (parentOnTerm === 'die') process.on('SIGTERM', () => process.exit(143));
 else process.on('SIGTERM', () => {
   fs.writeFileSync(marker, 'term');
   try { process.kill(-child.pid, 'SIGTERM'); } catch {}
@@ -60,12 +65,17 @@ class SuperviseAttemptTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         # The probe owns its fixture: never leave it running, even when an assertion failed.
-        if self.child is not None and alive(self.child):
-            try:
-                os.kill(self.child, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        for pid in (self.child, self.parent()):
+            if pid is not None and alive(pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
         shutil.rmtree(self.dir, ignore_errors=True)
+
+    def parent(self):
+        path = Path(str(self.pidfile) + ".parent")
+        return int(path.read_text(encoding="utf-8")) if path.exists() else None
 
     def run_attempt(self, deadline: int, grace: int, *flags: str) -> subprocess.CompletedProcess:
         started = time.monotonic()
@@ -97,6 +107,41 @@ class SuperviseAttemptTest(unittest.TestCase):
         self.assertIsNotNone(self.child)
         self.assertFalse(alive(self.child), "a finished attempt left its detached child running")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_deadline_reaps_a_tokenless_detached_child_whose_parent_dies_on_term(self) -> None:
+        # The parent exits on the session TERM before forwarding it; the child was re-parented and has no token.
+        result = self.run_attempt(2, 2, "die", "ignore", "hang", "stripped")
+        self.assertIsNotNone(self.child)
+        self.assertFalse(alive(self.child), "detached child without the attempt token survived the timed-out attempt")
+        self.assertEqual(result.returncode, 124, result.stderr)
+
+    def test_cancelling_the_supervisor_tears_down_the_attempt(self) -> None:
+        # Output goes to a file: an orphaned command would hold a pipe open past the supervisor's exit.
+        log = open(self.dir / "supervisor.log", "w+", encoding="utf-8")
+        self.addCleanup(log.close)
+        supervisor = subprocess.Popen(
+            [SUPERVISOR, "60", "2", "--", NODE, str(self.fixture), str(self.pidfile), str(self.marker), "ignore", "ignore", "hang"],
+            stdout=subprocess.DEVNULL, stderr=log,
+        )
+        try:
+            deadline = time.monotonic() + 10
+            while not self.pidfile.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            time.sleep(0.2)
+            self.child = int(self.pidfile.read_text(encoding="utf-8"))
+            started = time.monotonic()
+            supervisor.send_signal(signal.SIGTERM)
+            supervisor.wait(timeout=30)
+            elapsed = time.monotonic() - started
+            time.sleep(0.2)
+        finally:
+            if supervisor.poll() is None:
+                supervisor.kill()
+        self.assertFalse(alive(self.child), "cancelling the supervisor left the detached child running")
+        self.assertFalse(alive(self.parent()), "cancelling the supervisor left the command running")
+        log.seek(0)
+        self.assertEqual(supervisor.returncode, 143, log.read())
+        self.assertLess(elapsed, 2 + 5 + 3, "cancellation teardown exceeded its bounded budget")
 
     def test_command_status_is_preserved(self) -> None:
         result = subprocess.run([SUPERVISOR, "5", "1", "--", "sh", "-c", "exit 3"], capture_output=True, text=True, timeout=30, check=False)
