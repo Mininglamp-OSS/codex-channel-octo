@@ -53,7 +53,7 @@ def alive(pid: int) -> bool:
         return False
 
 
-@unittest.skipUnless(sys.platform.startswith("linux") and NODE and shutil.which("setsid"), "Linux process probe")
+@unittest.skipUnless(sys.platform.startswith("linux") and NODE, "Linux process probe")
 class SuperviseAttemptTest(unittest.TestCase):
     def setUp(self) -> None:
         self.dir = Path(tempfile.mkdtemp(prefix="supervise-attempt-"))
@@ -107,6 +107,18 @@ class SuperviseAttemptTest(unittest.TestCase):
         self.assertIsNotNone(self.child)
         self.assertFalse(alive(self.child), "a finished attempt left its detached child running")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_tokenless_detached_child_of_an_immediately_exiting_command_is_reaped(self) -> None:
+        # The command exits right after spawning, before any tree snapshot, so the child is
+        # re-parented with no token and no remembered ancestry. Repeat to cover the race.
+        for trial in range(3):
+            with self.subTest(trial=trial):
+                result = self.run_attempt(20, 2, "exit", "ignore", "exit", "stripped")
+                self.assertIsNotNone(self.child)
+                self.assertFalse(alive(self.child), "a finished attempt left its tokenless detached child running")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.tearDown()
+                self.setUp()
 
     def test_deadline_reaps_a_tokenless_detached_child_whose_parent_dies_on_term(self) -> None:
         # The parent exits on the session TERM before forwarding it; the child was re-parented and has no token.

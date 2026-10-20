@@ -3,9 +3,12 @@
 #
 #   scripts/supervise-attempt.sh <deadline-s> <grace-s> -- <command> [args...]
 #
-# The command runs in its own session. Every process it starts inherits an
-# attempt token in its environment, which survives `detached` spawns that
-# leave the session (the JSONL proxy starts its CLI that way). On the
+# The command runs in its own session under scripts/attempt_subreaper.py, a
+# child subreaper: a descendant whose parent exits is re-parented to it rather
+# than to init, so the whole attempt stays reachable by parent link from the
+# session leader until it has been torn down. Every process the command starts
+# also inherits an attempt token in its environment, which survives `detached`
+# spawns that leave the session (the JSONL proxy starts its CLI that way). On the
 # deadline the supervisor sends TERM to the session and to every owned
 # process so termination handlers run, waits up to <grace-s>, then sends KILL
 # and waits for every owned process to disappear. Owned processes left
@@ -13,9 +16,10 @@
 # supervisor is cancelled (TERM/INT/HUP), are torn down the same way.
 #
 # A child spawned with a replaced environment (the Codex SDK does this) has
-# no token, so the tree is also snapshotted by parent link while the attempt
-# runs and before any signal is sent; a re-parented orphan is still owned.
-# Remembered processes are matched by PID and start time, never PID alone.
+# no token; it stays owned through the subreaper even when its parent exits
+# before any snapshot. The tree is also snapshotted while the attempt runs and
+# before any signal is sent. Remembered processes are matched by PID and
+# start time, never PID alone.
 #
 # Exit status: the command's status; 124 on the deadline; 125 if an owned
 # process could not be reaped; 128+N when the supervisor got signal N.
@@ -31,6 +35,9 @@ shift 3
 
 token="$$-$(date +%s)-${RANDOM}${RANDOM}"
 reap_wait=5
+subreaper="$(dirname "$0")/attempt_subreaper.py"
+status_file=$(mktemp) || exit 2
+trap 'rm -f "$status_file"' EXIT
 
 # Prints "<state> <start-time>" for a live PID (fields 3 and 22 of
 # /proc/<pid>/stat, parsed after the last ")" so a comm with spaces is safe).
@@ -128,7 +135,7 @@ teardown() {
   return 0
 }
 
-# shellcheck disable=SC2329 # invoked by the traps below
+# shellcheck disable=SC2317,SC2329 # invoked by the traps below
 cancel() {
   trap '' TERM INT HUP
   echo "supervise-attempt: cancelled by signal $1; terminating the attempt" >&2
@@ -142,12 +149,14 @@ trap 'cancel 15' TERM
 trap 'cancel 2' INT
 trap 'cancel 1' HUP
 
-CODEX_CI_ATTEMPT=$token setsid -w "$@" &
+# The subreaper leads the session and exits only once the command and every
+# descendant it adopted are gone; it records the command's status first.
+CODEX_CI_ATTEMPT=$token python3 "$subreaper" "$status_file" "$@" &
 leader=$!
 
 status=
 end=$((SECONDS + deadline))
-while kill -0 "$leader" 2>/dev/null; do
+while kill -0 "$leader" 2>/dev/null && [ ! -s "$status_file" ]; do
   # shellcheck disable=SC2046 # PIDs are plain integers
   remember $(tree)
   if [ "$SECONDS" -ge "$end" ]; then
@@ -159,13 +168,16 @@ while kill -0 "$leader" 2>/dev/null; do
 done
 
 if [ -z "$status" ]; then
-  wait "$leader"
-  status=$?
+  unreaped=0
   leftover=$(owned | grep -vx "$leader" | tr '\n' ' ')
   if [ -n "${leftover// /}" ]; then
     echo "supervise-attempt: command left owned processes running: ${leftover}" >&2
-    teardown || status=125
+    teardown || unreaped=1
   fi
+  wait "$leader"
+  status=$?
+  [ -s "$status_file" ] && status=$(cat "$status_file")
+  [ "$unreaped" -eq 0 ] || status=125
 else
   teardown || status=125
   wait "$leader" 2>/dev/null
