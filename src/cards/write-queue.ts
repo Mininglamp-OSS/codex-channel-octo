@@ -475,6 +475,8 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
     let notBefore = firstNotBefore;
     for (let attempt = 1; attempt <= EDIT_MAX_ATTEMPTS; attempt++) {
       if (!(await waitEligible(card, notBefore, interrupted))) return fencedOut ? { kind: "fenced", unresolved: false } : { kind: "interrupted" };
+      // close() may run between the eligible wake and this continuation: recheck before reservation and transport.
+      if (interrupted() || fencedOut) return fencedOut ? { kind: "fenced", unresolved: false } : { kind: "interrupted" };
       const auth = authorize(card);
       if (auth === undefined) return { kind: "done", outcome: "policy", ...(seq !== undefined ? { seq } : {}) };
       if (seq === undefined) {
