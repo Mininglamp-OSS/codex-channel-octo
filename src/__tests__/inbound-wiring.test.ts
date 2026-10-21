@@ -77,6 +77,7 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     config = {
       botId: 'test', apiUrl: 'https://octo.example', botToken: 'test-token',
       baseDir: root, privateMemory: { enabled: true },
+      cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' },
       cwd: join(root, 'workspace'), dataDir: join(root, 'data'), sdk: {},
       groupConfigDir: join(root, 'instructions'),
       rateLimit: { maxPerMinute: 100 },
@@ -424,7 +425,7 @@ describe('production socket → gateway → onInbound → router wiring', () => 
       robot_id: 'second_bot', im_token: 'test-im-token', ws_url: 'ws://localhost',
       api_url: 'https://octo.example', owner_uid: 'human', owner_channel_id: 'owner-channel',
     });
-    const sibling = await startBot({ baseDir: root, maxResponseChars: 524288, dispatchTimeoutMs: 300000, botId: 'second', apiUrl: 'https://octo.example', botToken: 'test-token',
+    const sibling = await startBot({ cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' }, baseDir: root, maxResponseChars: 524288, dispatchTimeoutMs: 300000, botId: 'second', apiUrl: 'https://octo.example', botToken: 'test-token',
       cwd: join(root, 'sibling-workspace'), dataDir: join(root, 'sibling-data'), sdk: {},
       rateLimit: { maxPerMinute: 100 }, context: { maxContextChars: 6000, historyLimit: 40 } }, true);
     try {

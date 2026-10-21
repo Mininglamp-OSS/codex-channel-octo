@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Separate `sdk.privateDiagnosticsDetails` opt-in for bounded allowlisted SDK failure metadata; requires `privateDiagnostics` and never captures arbitrary text.
 - Opt-in `sdk.privateDiagnostics` saves bounded owner-only failure metadata and SDK message fingerprints. Raw SDK/error/prompt/tool payloads stay excluded; rotation is limited to three 1 MiB files and diagnostic I/O failure cannot alter task behavior.
 
+- Strict global/inline/per-bot `cards` field merge with independent frozen
+  startup snapshots. Defaults: `disable=false`, `eventTransport="off"`,
+  `reasoningSummary="off"`. Local preferences grant no server or routing
+  authority. Invalid card settings fail startup with fixed diagnostics;
+  deprecated card flags are ignored with bounded, value-free warnings.
+  Same-ID edits do not restart Bots; restart or explicit remove/re-add is
+  required. Runtime card wiring and production enablement remain separate.
+
 ### Changed
 
 - Harden private diagnostics with no-follow/inode/hard-link/permission checks; require a pre-existing data directory and POSIX safety flags. Unsupported flags fail closed before filesystem mutation; native Windows and network/FUSE filesystem compatibility are unverified.

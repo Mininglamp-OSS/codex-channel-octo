@@ -24,6 +24,12 @@ export interface DbAdapter {
   close(): void;
   readonly inTransaction: boolean;
   transaction<T>(fn: () => T): () => T;
+  /**
+   * Write a consistent online copy of the open database to `destPath` using
+   * SQLite's backup facility. Resolves only after every page is copied; the
+   * caller owns the destination directory and file permissions.
+   */
+  backup(destPath: string): Promise<void>;
 }
 
 class BetterSqliteAdapter implements DbAdapter {
@@ -84,6 +90,10 @@ class BetterSqliteAdapter implements DbAdapter {
 
   transaction<T>(fn: () => T): () => T {
     return this.db.transaction(fn);
+  }
+
+  async backup(destPath: string): Promise<void> {
+    await this.db.backup(destPath);
   }
 }
 

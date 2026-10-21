@@ -10,7 +10,7 @@ const roots: string[] = [];
 afterEach(() => { vi.unstubAllEnvs(); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })); });
 function config(): Config {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'profile-pinned-'))); roots.push(root);
-  return { baseDir: root, cwd: root, dataDir: root, maxResponseChars: 524288, dispatchTimeoutMs: 10000, botToken: 'synthetic', apiUrl: 'https://example.com', sdk: {}, rateLimit: { maxPerMinute: 10 }, context: { maxContextChars: 100, historyLimit: 10 } };
+  return { cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' }, baseDir: root, cwd: root, dataDir: root, maxResponseChars: 524288, dispatchTimeoutMs: 10000, botToken: 'synthetic', apiUrl: 'https://example.com', sdk: {}, rateLimit: { maxPerMinute: 10 }, context: { maxContextChars: 100, historyLimit: 10 } };
 }
 async function drain(c: Config) { for await (const event of queryAgentEvents('synthetic', c)) void event; }
 it('rejects a pinned executable without an isolated root before SDK construction', async () => {

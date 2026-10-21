@@ -22,7 +22,7 @@ function isolatedConfig(mode = 'success'): Config {
   vi.stubEnv('CODEX_OCTO_TEST_PROFILE_ROOT', root);
   vi.stubEnv('CODEX_OCTO_TEST_CONFIG_PATH', path);
   vi.stubEnv('CODEX_OCTO_TEST_CODEX_PATH', native);
-  return { baseDir: root, cwd: root, dataDir: root, maxResponseChars: 524288, dispatchTimeoutMs: 10000, botToken: 'synthetic', apiUrl: 'https://example.com',
+  return { cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' }, baseDir: root, cwd: root, dataDir: root, maxResponseChars: 524288, dispatchTimeoutMs: 10000, botToken: 'synthetic', apiUrl: 'https://example.com',
     sdk: { env: { PINNED_NATIVE_MODE: mode, PINNED_NATIVE_REPORT: join(root, 'native-pids') } },
     rateLimit: { maxPerMinute: 10 }, context: { maxContextChars: 100, historyLimit: 10 } };
 }
