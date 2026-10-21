@@ -18,6 +18,7 @@ const ROBOT_ID = 'bot-001';
 
 function makeConfig(overrides?: Partial<Config>): Config {
   return {
+    cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' },
     botToken: 'test-token',
     apiUrl: 'https://test.example.com',
     cwd: '/tmp',

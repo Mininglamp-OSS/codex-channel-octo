@@ -186,6 +186,50 @@ ignored, and the running bots keep running.
 Both settings apply when a bot starts. After editing them, restart the process
 or re-add the bot under a new id. Hot reload only adds or removes bots by id.
 
+### Card configuration (startup only)
+
+The global config, inline `bots[]` entry and per-bot config file accept a closed
+`cards` object. These are local preferences; configuration does not prove server
+policy, routing authority or event-consumer topology authorization.
+
+| Field | Exact values | Default | Meaning |
+|---|---|---|---|
+| `cards.disable` | `false`, `true` (boolean) | `false` | Local narrowing kill switch. `true` disables locally; `false` grants no capability. |
+| `cards.eventTransport` | `"off"`, `"short"`, `"long"` | `"off"` | Transport preference only. Selecting a mode cannot enable intake without independent topology and authorization proof. |
+| `cards.reasoningSummary` | `"off"`, `"on"`, `"stream"` | `"off"` | Summary preference only. It does not authorize reasoning content, source/privacy acceptance or production use. |
+
+Precedence is global → inline `bots[]` fields → `<id>/config.json`, with later
+explicit fields winning **individually**. Omitted fields inherit; defaults fill
+remaining omissions. For example, global `{"disable":true,"eventTransport":"off"}`
+and per-bot `{"reasoningSummary":"off"}` resolve to
+`{"disable":true,"eventTransport":"off","reasoningSummary":"off"}` for that bot
+only. An empty `cards: {}` inherits everything. Each bot receives a separate,
+frozen snapshot. No local preference can grant server capabilities.
+
+Wrong booleans/enums, null, arrays and unknown fields (including `_comment`
+inside `cards`) fail startup. Values are never coerced. An invalid lower layer
+is rejected even if a higher layer would override it. Diagnostics omit supplied
+keys, values, credentials, Bot ids and paths. Put example comments beside the
+`cards` object, not inside it.
+
+Settings are resolved when a bot starts. Editing source configuration does not
+change a running bot's snapshot. The existing watcher reconciles IDs only: an
+edit retaining the same ID does **not** restart that bot. An actual process/Bot
+restart, or explicit removal followed by re-addition, gets a fresh snapshot.
+Invalid edits leave the current running set intact. This is configuration
+boundary behavior, not a watcher, hot-reload or platform stability guarantee.
+
+Deprecated top-level `cardProgress`, `reasoningCardTemplateMode`, `cardDisplay`,
+`cardInteraction`, `OCTO_CARD_MESSAGE_ENABLED` and `OCTO_CARD_MERGE_FINAL` are
+ignored for canonical cards. The two `OCTO_` environment names are ignored too;
+each ignored key emits at most one fixed warning per process, without its value.
+They are not compatibility aliases. Generic `sdk.env` forwarding remains
+unchanged and cannot alter canonical card settings.
+
+This configuration boundary adds no event consumer, summary delivery or runtime
+card wiring. Live/deployment acceptance remains separate; configuration alone
+does not satisfy R03/S05 or authorize production enablement.
+
 ## Run
 
 ```bash

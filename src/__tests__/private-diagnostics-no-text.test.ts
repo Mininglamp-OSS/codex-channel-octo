@@ -45,6 +45,7 @@ describe('metadata-only diagnostics persist no arbitrary error text', () => {
       const config = {
         botToken: 'synthetic', apiUrl: 'https://example.com', baseDir: root,
         cwd: join(root, 'workspace'), cwdBase: join(root, 'workspace'), dataDir: root,
+        cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' },
         // A legacy extra key must not reactivate the removed capture path.
         sdk: { privateDiagnostics: true, privateDiagnosticsDetails: true, privateDiagnosticsText: true,
           recovery: { enabled: true } },

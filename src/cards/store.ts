@@ -49,6 +49,12 @@ const ACTIVE_SESSION_SQL = `('sending','pending','retry_wait','admitted','ambigu
 
 export type CardStoreErrorCode = 'storage_failure' | 'nested_transaction' | 'async_transaction' | 'invalid_input' | 'closed';
 
+/**
+ * Card rows whose edit sequence fences may still move: bound to a message and
+ * not in an absorbing terminal state ('done', 'error', 'expired', 'abandoned').
+ */
+const SEQUENCE_WRITABLE = "message_id IS NOT NULL AND state NOT IN ('done','error','expired','abandoned')";
+
 export class CardStoreError extends Error {
   constructor(
     readonly code: CardStoreErrorCode,
@@ -403,7 +409,8 @@ export type ReserveSequenceResult =
 export type AckSequenceResult =
   | { readonly kind: 'acked'; readonly seqAcked: number }
   | { readonly kind: 'not_reserved' }
-  | { readonly kind: 'not_found' };
+  | { readonly kind: 'not_found' }
+  | { readonly kind: 'invalid_state'; readonly state: CardMessageState };
 
 export interface EventIdentity {
   readonly eventId: string;
@@ -904,30 +911,45 @@ export class CardStore {
     return this.tx(() => this.sendOutcomeInTx(cardId, 'abandoned', this.now()));
   }
 
-  /** Reserve the next edit sequence before the edit is sent. */
+  /**
+   * Reserve the next edit sequence before the edit is sent. Only a bound,
+   * non-terminal card can reserve: the guard is part of the UPDATE predicate,
+   * so a terminal transition can never be followed by a sequence change.
+   */
   reserveSequence(cardId: string): ReserveSequenceResult {
     text(cardId);
     return this.tx(() => {
+      const changed = this.run(
+        `UPDATE card_messages SET seq_reserved = seq_reserved + 1, updated_at = ?
+         WHERE card_id = ? AND ${SEQUENCE_WRITABLE}`,
+        this.now(), cardId,
+      );
       const msg = this.get<MessageRow>('SELECT * FROM card_messages WHERE card_id = ?', cardId);
       if (!msg) return { kind: 'not_found' };
-      if (msg.message_id === null || msg.state === 'abandoned') return { kind: 'invalid_state', state: msg.state };
-      const seq = msg.seq_reserved + 1;
-      this.run('UPDATE card_messages SET seq_reserved = ?, updated_at = ? WHERE card_id = ?', seq, this.now(), cardId);
-      return { kind: 'reserved', seq };
+      if (changed === 0) return { kind: 'invalid_state', state: msg.state };
+      return { kind: 'reserved', seq: msg.seq_reserved };
     });
   }
 
-  /** Correlated edit acknowledgement; never moves the acked fence backwards. */
+  /**
+   * Correlated edit acknowledgement; never moves the acked fence backwards.
+   * Like reservation, it only applies to a bound, non-terminal card, enforced
+   * in the same UPDATE that moves the fence.
+   */
   ackSequence(cardId: string, seq: number): AckSequenceResult {
     text(cardId);
     int(seq);
     return this.tx(() => {
+      const changed = this.run(
+        `UPDATE card_messages SET seq_acked = MAX(seq_acked, ?), updated_at = ?
+         WHERE card_id = ? AND ? >= 1 AND ? <= seq_reserved AND ${SEQUENCE_WRITABLE}`,
+        seq, this.now(), cardId, seq, seq,
+      );
       const msg = this.get<MessageRow>('SELECT * FROM card_messages WHERE card_id = ?', cardId);
       if (!msg) return { kind: 'not_found' };
+      if (changed === 1) return { kind: 'acked', seqAcked: msg.seq_acked };
       if (seq < 1 || seq > msg.seq_reserved) return { kind: 'not_reserved' };
-      const acked = Math.max(msg.seq_acked, seq);
-      this.run('UPDATE card_messages SET seq_acked = ?, updated_at = ? WHERE card_id = ?', acked, this.now(), cardId);
-      return { kind: 'acked', seqAcked: acked };
+      return { kind: 'invalid_state', state: msg.state };
     });
   }
 

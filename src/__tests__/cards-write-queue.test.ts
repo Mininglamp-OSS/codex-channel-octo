@@ -1307,3 +1307,74 @@ describe("NB4: finalize after close or drain never starts new store or transport
     expect(r.net.requests).toHaveLength(0);
   });
 });
+
+// ─── XIN-2300: no nonterminal edit passes the shutdown fence after eligibility ─
+
+describe("P1: close right after a progress edit becomes eligible never starts that edit", () => {
+  function editGapRig(depth: number) {
+    const r = rig();
+    let closedAt: number | undefined;
+    const afterClose: string[] = [];
+    let armed = false;
+    let fired = false;
+    const act = () => {
+      closedAt = r.time.now();
+      queue.close({ reason: "shutdown", deadlineMono: r.time.now() + 3000, signal: new AbortController().signal });
+    };
+    const timers = {
+      setTimeout(callback: () => void, delayMs: number): unknown {
+        return r.time.timers.setTimeout(() => {
+          callback();
+          if (!armed || fired) return;
+          fired = true;
+          let chain = Promise.resolve();
+          for (let i = 1; i < depth; i++) chain = chain.then(() => undefined);
+          if (depth === 0) act(); else void chain.then(act);
+        }, delayMs);
+      },
+      clearTimeout(handle: unknown): void { r.time.timers.clearTimeout(handle); },
+    };
+    const store = new Proxy(r.store, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        if (prop !== "reserveSequence" || typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          if (closedAt !== undefined) afterClose.push("reserveSequence");
+          return (value as (...a: unknown[]) => unknown).apply(target, args);
+        };
+      },
+    });
+    const api = {
+      ...r.api,
+      editRegistry: (...args: Parameters<typeof r.api.editRegistry>) => {
+        if (closedAt !== undefined) afterClose.push("editRegistry");
+        return r.api.editRegistry(...args);
+      },
+      editAuthored: (...args: Parameters<typeof r.api.editAuthored>) => {
+        if (closedAt !== undefined) afterClose.push("editAuthored");
+        return r.api.editAuthored(...args);
+      },
+    };
+    const queue = createWriteQueue({ api, store, policy: r.policy, pacer: r.pacer, clock: r.time.clock, timers });
+    const s = r.spec();
+    queue.open(s);
+    queue.enqueue(s.cardId, frame("first"));
+    const arm = () => { armed = true; };
+    return { r, queue, s, afterClose, arm, closed: () => closedAt !== undefined };
+  }
+
+  it.each([0, 1, 2, 3, 4, 5, 6, 8])("depth %i microtasks after the debounce wake", async (depth) => {
+    const { r, queue, s, afterClose, arm, closed } = editGapRig(depth);
+    await r.time.advance(800);
+    expect(queue.status(s.cardId)?.phase).toBe("active");
+    const editsBefore = r.net.edits().length;
+    arm();
+    queue.enqueue(s.cardId, frame("progress"));
+    await r.time.advance(800);
+    await r.time.advance(5000);
+    expect(closed()).toBe(true);
+    expect(afterClose).toEqual([]);
+    // Either the edit started before close (one edit) or it was fenced (none); never one after close.
+    expect(r.net.edits().length - editsBefore).toBeLessThanOrEqual(1);
+  });
+});

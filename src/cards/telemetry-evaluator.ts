@@ -901,19 +901,27 @@ export function windowEvaluation(k: number, receipt: EvaluationReceipt, check?: 
   return result(incomplete ? "incomplete" : "complete", extra);
 }
 
-/** O-11o A: revision only toward caution — signals are sticky; completeness never returns to complete. */
+/**
+ * O-11o A: revision only toward caution — signals, drills and runtime halts are sticky; completeness never
+ * returns to complete. Observations are unioned by their full identity (including `atUtc`), so only identical
+ * observations collapse and a later or partial collection can never drop confirmed fault evidence.
+ */
 export function revise(prev: WindowEvaluation | null, next: WindowEvaluation): WindowEvaluation {
   if (!prev) return next;
-  const key = (s: ActionSignal): string => JSON.stringify([s.action, s.metric, s.scope, s.reason]);
-  const seen = new Set(prev.signals.map(key));
-  const signals = [...prev.signals, ...next.signals.filter((s) => !seen.has(key(s)))];
-  const dkey = (s: DrillSignal): string => JSON.stringify([s.scope, s.atUtc]);
-  const seenDrills = new Set(prev.drills.map(dkey));
-  const drills = [...prev.drills, ...next.drills.filter((s) => !seenDrills.has(dkey(s)))];
+  const union = <T>(a: readonly T[], b: readonly T[], key: (s: T) => string): T[] => {
+    const seen = new Set(a.map(key));
+    return [...a, ...b.filter((s) => !seen.has(key(s)))];
+  };
+  const signals = union(prev.signals, next.signals,
+    (s) => JSON.stringify([s.action, s.metric, s.scope, s.source, s.atUtc, s.reason, s.batchId ?? null]));
+  const drills = union(prev.drills, next.drills, (s) => JSON.stringify([s.scope, s.atUtc]));
+  const runtimeSignals = union(prev.runtimeSignals, next.runtimeSignals, (s) => JSON.stringify([s.code, s.atUtc]));
   const rank = { pending: 0, complete: 1, incomplete: 2 } as const;
   const completeness = next.completeness === "pending" ? prev.completeness
     : rank[next.completeness] >= rank[prev.completeness] ? next.completeness : prev.completeness;
-  return Object.freeze({ ...next, signals: freezeAll(signals), drills: freezeAll(drills), completeness });
+  return Object.freeze({
+    ...next, signals: freezeAll(signals), drills: freezeAll(drills), completeness, runtimeSignals: freezeAll(runtimeSignals),
+  });
 }
 
 // ─── Batch evaluation (§5.1–§5.3) ───────────────────────────────────────────
