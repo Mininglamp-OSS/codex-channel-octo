@@ -154,6 +154,14 @@ describe("reportAllowsDone", () => {
       expect(reportAllowsDone(r as unknown as DeliveryReport)).toBe(false);
     }
   });
+
+  it("rejects a full-count report whose ids are not all non-empty strings", () => {
+    for (const ids of [[""], [1], [null], ["1", ""], ["1", undefined], [{}, "2"]]) {
+      const r = { expected: ids.length, acked: ids.length, failed: 0, messageIds: ids, emptyNotice: false };
+      expect(reportAllowsDone(r as unknown as DeliveryReport)).toBe(false);
+    }
+    expect(reportAllowsDone(report(2, 2, 0, ["1", "2"]))).toBe(true);
+  });
 });
 
 // ─── Store read port ────────────────────────────────────────────────────────
