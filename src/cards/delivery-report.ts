@@ -106,6 +106,10 @@ export function reportAllowsDone(report: DeliveryReport): boolean {
   const { expected, acked, failed, messageIds, emptyNotice } = report;
   if (!count(expected) || !count(acked) || !count(failed) || !Array.isArray(messageIds) || typeof emptyNotice !== "boolean") return false;
   if (failed !== 0 || acked !== expected || messageIds.length !== acked) return false;
-  if (!messageIds.every(id => typeof id === "string" && id.length > 0)) return false;
+  // Indexed on purpose: every/some/forEach skip holes in a sparse array.
+  for (let i = 0; i < messageIds.length; i++) {
+    const id: unknown = messageIds[i];
+    if (typeof id !== "string" || id.length === 0) return false;
+  }
   return expected > 0 ? !emptyNotice : emptyNotice;
 }
