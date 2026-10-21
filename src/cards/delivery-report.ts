@@ -106,5 +106,6 @@ export function reportAllowsDone(report: DeliveryReport): boolean {
   const { expected, acked, failed, messageIds, emptyNotice } = report;
   if (!count(expected) || !count(acked) || !count(failed) || !Array.isArray(messageIds) || typeof emptyNotice !== "boolean") return false;
   if (failed !== 0 || acked !== expected || messageIds.length !== acked) return false;
+  if (!messageIds.every(id => typeof id === "string" && id.length > 0)) return false;
   return expected > 0 ? !emptyNotice : emptyNotice;
 }
