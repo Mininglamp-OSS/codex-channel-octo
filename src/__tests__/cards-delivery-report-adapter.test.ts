@@ -162,6 +162,24 @@ describe("reportAllowsDone", () => {
     }
     expect(reportAllowsDone(report(2, 2, 0, ["1", "2"]))).toBe(true);
   });
+
+  it("rejects sparse id arrays, whose holes iteration helpers skip", () => {
+    const leading: string[] = []; leading[1] = "2";
+    const middle: string[] = ["1"]; middle[2] = "3";
+    for (const ids of [new Array(1), new Array(3), leading, middle, ["1", , "3"]] as unknown[][]) {
+      const r = { expected: ids.length, acked: ids.length, failed: 0, messageIds: ids, emptyNotice: false };
+      expect(reportAllowsDone(r as unknown as DeliveryReport)).toBe(false);
+    }
+  });
+});
+
+describe("adaptDeliveryReport sparse input", () => {
+  it("treats a hole in the parts array as a fault", () => {
+    const tail: DeliveryPartRow[] = [row(0, "confirmed", "1")]; tail.length = 2;
+    for (const parts of [new Array(1), tail, [row(0, "confirmed", "1"), , row(2, "confirmed", "3")]] as DeliveryPartRow[][]) {
+      expect(adaptDeliveryReport(parts, { emptyNotice: false })).toEqual(ZERO);
+    }
+  });
 });
 
 // ─── Store read port ────────────────────────────────────────────────────────
