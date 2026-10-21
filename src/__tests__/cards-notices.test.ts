@@ -116,7 +116,7 @@ function makeConfig(overrides?: Partial<Config>): Config {
     dispatchTimeoutMs: 300_000,
     botBlocklist: [],
     ...overrides,
-  };
+  } as Config;
 }
 
 function makeDmMsg(content: string, overrides?: Partial<BotMessage>): BotMessage {

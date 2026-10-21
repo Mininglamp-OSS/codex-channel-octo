@@ -15,7 +15,7 @@ import corpus from '../cards/__fixtures__/privacy-corpus.v1.json' with { type: '
 let dir:string;
 beforeEach(()=>{dir=mkdtempSync(join(tmpdir(),'wp05-'));runs=[];});
 afterEach(()=>{rmSync(dir,{recursive:true,force:true});vi.restoreAllMocks();});
-function cfg():Config {return {baseDir:dir,cwd:dir,cwdBase:dir,dataDir:dir,apiUrl:'https://example.com',botToken:'synthetic',sdk:{},rateLimit:{maxPerMinute:5},context:{maxContextChars:6000,historyLimit:40},maxResponseChars:524288,dispatchTimeoutMs:300000};}
+function cfg():Config {return {baseDir:dir,cwd:dir,cwdBase:dir,dataDir:dir,apiUrl:'https://example.com',botToken:'synthetic',sdk:{},rateLimit:{maxPerMinute:5},context:{maxContextChars:6000,historyLimit:40},maxResponseChars:524288,dispatchTimeoutMs:300000} as Config;}
 const done={type:'turn.completed',usage:{}};
 async function drain(onSafeItem?: (facts:ReducedItemFacts)=>void, legacy?: (name:string,input?:unknown)=>void){
   const out=[];for await(const e of queryAgentEvents('synthetic request',cfg(),undefined,legacy,undefined,onSafeItem))out.push(e);return out;
