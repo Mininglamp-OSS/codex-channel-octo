@@ -283,10 +283,11 @@ export function createTurnCoordinator(deps: CoordinatorDeps): AutomaticTurn {
   /** NB2: a `contract` outcome on a card that is still open means the frame was not queued. */
   async function finalizeWith(frame: RegistryFrame, reason: TerminalReason): Promise<void> {
     try {
-      const result = await queue.finalize(cardId, frame);
+      // The queue records the durable terminal only once this edit is acknowledged.
+      const result = await queue.finalize(cardId, frame, reason);
       if (result.outcome === "contract" && queue.status(cardId)?.phase !== "closed") {
         const minimal = buildClosureFrame(reason, template as PinnedTemplate, options());
-        if (minimal !== undefined) await queue.finalize(cardId, minimal);
+        if (minimal !== undefined) await queue.finalize(cardId, minimal, reason);
       }
     } finally {
       closure.revoke(cardCtx);
