@@ -12,6 +12,14 @@
  * - `close(reason)` runs the single aggregate drain, retires the card store
  *   lease, and only then releases the shared pacer (N5(c)).
  *
+ * At open, automatic restart recovery (WP-13A-2) runs before the write queue
+ * exists: the live automatic rows are classified and C1 rows rolled forward,
+ * the policy is read fresh, and only C0a rows that pass every precondition
+ * get a startup adoption grant. The queue is built with those grants, every
+ * row is adopted and its Error/interrupted closure enqueued before the
+ * runtime is returned, so no turn can open a card first. Recovery registers
+ * as the `recovery` resource owner and drains with the rest on shutdown.
+ *
  * Nothing here can throw into the ordinary path, and every failure leaves the
  * Bot card-inert. Telemetry is an optional injected port; no telemetry module
  * is imported (N6).
@@ -40,7 +48,17 @@ import type {
 import { createClosureGrants, createTurnCoordinator, type AutomaticTurn } from "./lifecycle.js";
 import { createPacer, systemTimers, type Pacer, type TimerPort } from "./pacer.js";
 import { createPolicy, type CardPolicy } from "./policy.js";
-import { openCardSubsystem, type CardQueueFactory, type CardSubsystem } from "./recovery.js";
+import {
+  openCardSubsystem,
+  prepareAutomaticRecovery,
+  recoveryGrants,
+  runAutomaticRecovery,
+  scanAutomaticRecovery,
+  type AutomaticRecoveryResult,
+  type CardQueueFactory,
+  type CardSubsystem,
+  type PreparedAutomaticRecovery,
+} from "./recovery.js";
 import { createResourceRegistry, type CardDrainResult } from "./resource-registry.js";
 import type { CardBinding } from "./store.js";
 
@@ -93,6 +111,8 @@ export interface CardRuntime extends DispatchObserver {
   beginTurn(input: CardTurnInput): AutomaticTurn | undefined;
   /** Resolves when tracked policy/terminal work has settled. */
   idle(): Promise<void>;
+  /** Automatic restart recovery of this open; resolves once every recovery closure settled. Never rejects. */
+  readonly recovery: Promise<AutomaticRecoveryResult>;
   /** Fence, close and drain every card resource of this Bot once; never rejects. */
   close(reason?: ShutdownReason): Promise<CardDrainResult | undefined>;
 }
@@ -154,15 +174,41 @@ export async function openCardRuntime(options: OpenCardRuntimeOptions): Promise<
     return undefined;
   }
   if (subsystem.state !== "ready") return undefined;
-  const runtime = createCardRuntime(subsystem, options);
+  let runtime: CardRuntime | undefined;
+  const base = createRuntimeBase(options);
+  if (base !== undefined) {
+    let prepared: PreparedAutomaticRecovery;
+    try {
+      // Before the queue exists: classify, roll C1 forward, then the P1–P5 preconditions.
+      const scan = scanAutomaticRecovery(subsystem.store);
+      const wall = options.wall ?? WALL;
+      prepared = await prepareAutomaticRecovery(scan, { botRef: base.botRef, policy: base.policy,
+        eligible: () => base.pacer.gate(base.api.origin).eligible, nowUtcMs: () => wall.nowUtcMs(), newId: base.newId });
+    } catch {
+      prepared = Object.freeze({ scan: "failed", counts: Object.freeze({ scanned: 0, restored: 0, rolledForward: 0, uncertain: 0,
+        legacy: 0, deferred: 0, failed: 0 }), closures: Object.freeze([]) });
+    }
+    runtime = assembleRuntime(subsystem, options, base, prepared);
+  }
   if (runtime === undefined) {
     try { subsystem.store.retire(); } catch { /* lease already gone */ }
   }
   return runtime;
 }
 
-/** Build the runtime over a ready subsystem; undefined (never a throw) on any configuration fault. */
-export function createCardRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions): CardRuntime | undefined {
+interface RuntimeBase {
+  readonly clock: MonotonicClock;
+  readonly timers: TimerPort;
+  readonly newId: () => string;
+  readonly api: CardApi;
+  readonly botRef: BotRef;
+  readonly policy: CardPolicy;
+  readonly pacer: Pacer;
+  readonly ownsShared: boolean;
+}
+
+/** API client, policy and pacer of one Bot; undefined (never a throw) on any configuration fault. */
+function createRuntimeBase(options: CardRuntimeOptions): RuntimeBase | undefined {
   const clock = options.clock ?? MONOTONIC;
   const timers = options.timers ?? systemTimers;
   const newId = options.newId ?? randomUUID;
@@ -180,12 +226,29 @@ export function createCardRuntime(subsystem: ReadySubsystem, options: CardRuntim
   }
   const ownsShared = options.pacer === undefined && options.clock === undefined;
   const pacer = options.pacer ?? (ownsShared ? acquireSharedPacer() : createPacer({ clock, timers }));
+  return Object.freeze({ clock, timers, newId, api, botRef, policy, pacer, ownsShared });
+}
+
+/**
+ * Build the runtime over a ready subsystem without restart recovery;
+ * undefined (never a throw) on any configuration fault. `openCardRuntime` is
+ * the production entry point and always runs recovery first.
+ */
+export function createCardRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions): CardRuntime | undefined {
+  const base = createRuntimeBase(options);
+  return base === undefined ? undefined : assembleRuntime(subsystem, options, base, undefined);
+}
+
+function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions, base: RuntimeBase,
+  prepared: PreparedAutomaticRecovery | undefined): CardRuntime | undefined {
+  const { clock, timers, newId, api, botRef, policy, pacer, ownsShared } = base;
   const grants = createClosureGrants(policy);
   const registry = createResourceRegistry({ clock, timers });
   let queue: ReturnType<CardQueueFactory>;
   try {
     queue = subsystem.queueFactory({ api, policy: grants, pacer, clock, timers,
-      ...(options.telemetry !== undefined ? { telemetry: options.telemetry } : {}) });
+      ...(options.telemetry !== undefined ? { telemetry: options.telemetry } : {}),
+      ...(prepared !== undefined && prepared.closures.length > 0 ? { recoveryGrants: recoveryGrants(prepared) } : {}) });
   } catch {
     if (ownsShared) releaseSharedPacer(pacer);
     return undefined;
@@ -223,6 +286,17 @@ export function createCardRuntime(subsystem: ReadySubsystem, options: CardRuntim
   registry.register(queue);
   registry.register(policyOwner);
 
+  // Every adoption runs here, before the runtime can admit a turn (the queue's startup window).
+  let recovery: Promise<AutomaticRecoveryResult>;
+  if (prepared === undefined) {
+    recovery = Promise.resolve(Object.freeze({ scan: "ok" as const, report: Object.freeze({ scanned: 0, restored: 0,
+      rolledForward: 0, uncertain: 0, legacy: 0, deferred: 0, failed: 0 }) }));
+  } else {
+    const run = runAutomaticRecovery(prepared, queue, { botRef }, { clock, timers });
+    registry.register(run.owner);
+    recovery = run.result;
+  }
+
   /** Permission reads consult the shared origin gate first; an ineligible origin is no read. */
   const refresh = async (): Promise<PolicySnapshot | undefined> => {
     if (!pacer.gate(api.origin).eligible) return undefined;
@@ -242,6 +316,7 @@ export function createCardRuntime(subsystem: ReadySubsystem, options: CardRuntim
 
   const runtime: CardRuntime = {
     get closing() { return closing; },
+    recovery,
 
     beginTurn(input) {
       try {
