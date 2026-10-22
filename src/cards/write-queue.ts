@@ -750,7 +750,12 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
         controller.abort();
         for (const card of active) interruptWait(card);
       } else {
-        settled = active.length;
+        // A shared fence signal can abort in-flight transports before this drain's own deadline
+        // timer fires; those workers settle early, but their outcome is still unknown.
+        for (const card of active) {
+          if (card.outcome === "unresolved") unresolved++;
+          else settled++;
+        }
       }
       return Object.freeze({ settled, aborted, unresolved });
     },
