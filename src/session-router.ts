@@ -16,6 +16,7 @@ import { normalizeInboundMention, normalizeMessageId } from './inbound-mention.j
 import { MentionPreferences } from './mention-prefs.js';
 import { summarizeAgentError } from './agent-errors.js';
 import { ConversationMarkdown, type ConversationTurnContext } from './conversation-md.js';
+import type { DispatchObserver } from './cards/contracts.js';
 
 export interface RouteResult {
   sessionKey: string;
@@ -85,6 +86,7 @@ export class SessionRouter {
   private readonly pendingCleanup = new Map<string, TurnContext>();
   private readonly ledger?: TurnLedger;
   private readonly conversationMarkdown: ConversationMarkdown;
+  private dispatchObserver?: DispatchObserver;
 
   constructor(config: Config, robotId: string, ownerUid: string | (() => string) = '', documentStore?: import('./conversation-md.js').ConversationDocumentStore) {
     if (documentStore && 'beginTurn' in documentStore) this.ledger = documentStore as typeof documentStore & TurnLedger;
@@ -94,6 +96,14 @@ export class SessionRouter {
     this.knownBotUids.add(robotId);
     this.mentionPreferences = new MentionPreferences(config);
     this.conversationMarkdown = new ConversationMarkdown(config, documentStore);
+  }
+
+  /**
+   * Card runtime hook: told the exact dispatch handle id when that dispatch
+   * times out. It observes only; ordinary timeout handling is unchanged.
+   */
+  setDispatchObserver(observer: DispatchObserver | undefined): void {
+    this.dispatchObserver = observer;
   }
 
   /** G14: register another known bot uid (future multi-bot support). */
@@ -297,6 +307,7 @@ export class SessionRouter {
       await Promise.race(waits);
       if ((timedOut || performance.now() >= turn.deadline) && !this.stopping) {
         turn.interruption = 'timed_out';
+        try { this.dispatchObserver?.onTimeout(id); } catch { /* observer-only: never alters timeout handling */ }
         this.finishCancelledTurn(result.sessionKey, turn);
         await this.replySafe(result.message, turn.executionRisk === 'proven_not_started' ? `⚠️ 任务超时，模型执行未启动；可以发送新任务。编号 ${turn.turnId}` : `⚠️ 任务超时，正在停止原执行。新请求将等待停止完成；部分操作可能已完成。编号 ${turn.turnId}`);
         await this.waitForCleanup(settled, result, turn);

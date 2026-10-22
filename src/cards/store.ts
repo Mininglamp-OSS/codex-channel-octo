@@ -401,6 +401,17 @@ export type SendOutcomeResult =
   | { readonly kind: 'not_found' }
   | { readonly kind: 'invalid_state'; readonly state: CardMessageState };
 
+export type MarkTerminalResult =
+  | { readonly kind: 'updated' }
+  /** The same terminal outcome is already recorded; nothing changed. */
+  | { readonly kind: 'already_terminal' }
+  | { readonly kind: 'not_found' }
+  /** Not an acknowledged live automatic card, or a different terminal outcome is recorded; nothing changed. */
+  | { readonly kind: 'invalid_state'; readonly state: CardMessageState };
+
+/** Terminal reasons an automatic card can record; `expired` belongs to interactive cards. */
+const AUTOMATIC_TERMINAL_REASONS: ReadonlySet<string> = new Set<CardTerminalReason>(['completed', 'failed', 'interrupted', 'timed_out', 'policy_revoked']);
+
 export type ReserveSequenceResult =
   | { readonly kind: 'reserved'; readonly seq: number }
   | { readonly kind: 'not_found' }
@@ -909,6 +920,37 @@ export class CardStore {
   abandonUnsent(cardId: string): SendOutcomeResult {
     text(cardId);
     return this.tx(() => this.sendOutcomeInTx(cardId, 'abandoned', this.now()));
+  }
+
+  /**
+   * Record the acknowledged terminal of an automatic card: `completed` →
+   * `done`, any other automatic reason → `error`, with the existing
+   * retention. Only a bound live automatic card (`active`/`answering`) moves.
+   * The same outcome again is idempotent; a different recorded outcome is
+   * absorbing and nothing is written. Sending/ambiguous rows are refused, so
+   * N2 suspension is never lifted here.
+   */
+  markTerminal(cardId: string, reason: CardTerminalReason): MarkTerminalResult {
+    text(cardId);
+    if (typeof reason !== 'string' || !AUTOMATIC_TERMINAL_REASONS.has(reason)) throw new CardStoreError('invalid_input');
+    const target = reason === 'completed' ? 'done' : 'error';
+    return this.tx<MarkTerminalResult>(() => {
+      const msg = this.get<MessageRow>('SELECT * FROM card_messages WHERE card_id = ?', cardId);
+      if (!msg) return { kind: 'not_found' };
+      // Only a bound automatic card: a send-failed or unsent row never had a terminal edit.
+      if (msg.kind !== 'automatic' || msg.message_id === null) return { kind: 'invalid_state', state: msg.state };
+      if (msg.state === 'done' || msg.state === 'error') {
+        return msg.state === target && msg.terminal_reason === reason ? { kind: 'already_terminal' } : { kind: 'invalid_state', state: msg.state };
+      }
+      if (msg.state !== 'active' && msg.state !== 'answering') return { kind: 'invalid_state', state: msg.state };
+      const now = this.now();
+      this.run(
+        `UPDATE card_messages SET state = ?, terminal_reason = ?, terminal_at = ?, retain_until = ?, updated_at = ?
+         WHERE card_id = ? AND state IN ('active','answering')`,
+        target, reason, now, now + RETENTION_MS, now, cardId,
+      );
+      return { kind: 'updated' };
+    });
   }
 
   /**
@@ -1651,6 +1693,20 @@ export class CardStore {
 
   activeSessions(): number {
     return this.read(() => this.activeSessionCount());
+  }
+
+  /**
+   * Kinds of cards whose initial send may have been accepted (`sending` or
+   * `ambiguous`): the D-B/N2 suspension input of every write-queue
+   * construction. Read-only; a read failure throws so callers fail closed.
+   */
+  unresolvedSendKinds(): readonly string[] {
+    return this.read(() => {
+      const rows = this.adapter
+        .prepare(`SELECT DISTINCT kind FROM card_messages WHERE state IN ('ambiguous','sending') ORDER BY kind`)
+        .all() as Array<{ kind: string }>;
+      return Object.freeze(rows.map((r) => r.kind));
+    });
   }
 
   checkInvariants(): InvariantViolation[] {

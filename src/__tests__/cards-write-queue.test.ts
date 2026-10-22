@@ -11,7 +11,7 @@ import { createPacer, type Pacer } from "../cards/pacer.js";
 import { createPolicy, type Authorization, type CardPolicy } from "../cards/policy.js";
 import { CardStore, type CardBinding } from "../cards/store.js";
 import { botRefOf, createTelemetrySink, originRefOf } from "../cards/telemetry.js";
-import { createWriteQueue, type CardFrame, type CardSpec } from "../cards/write-queue.js";
+import { createWriteQueue, type CardFrame, type CardSpec, type OpenResult } from "../cards/write-queue.js";
 import { createAdapter, type DbAdapter } from "../db-adapter.js";
 import { SessionStore } from "../session-store.js";
 import { profile } from "./fixtures/card-profile.js";
@@ -750,7 +750,11 @@ describe("T19: the ordinary final/typing/apology paths never consult the pacer",
     const src = join(process.cwd(), "src");
     const importers = sources(src).filter((path) => /from\s+["'][^"']*(?:pacer|write-queue)\.js["']/.test(readFileSync(path, "utf8")))
       .map((path) => relative(src, path).split("\\").join("/")).sort();
-    expect(importers).toEqual(["cards/write-queue.ts"]);
+    // WP-13A-1: the startup queue factory and the drain registry's timer port, both inside the card subsystem.
+    expect(importers).toEqual(["cards/recovery.ts", "cards/resource-registry.ts", "cards/runtime.ts", "cards/write-queue.ts"]);
+    const ordinary = sources(src).filter((path) => !relative(src, path).startsWith("cards"))
+      .filter((path) => /from\s+["'][^"']*cards\/(?:recovery|resource-registry)\.js["']/.test(readFileSync(path, "utf8")));
+    expect(ordinary).toEqual([]);
   });
 
   it("ordinary delivery proceeds during an active card cooldown with zero gate consultations", async () => {
@@ -1376,5 +1380,320 @@ describe("P1: close right after a progress edit becomes eligible never starts th
     expect(afterClose).toEqual([]);
     // Either the edit started before close (one edit) or it was fenced (none); never one after close.
     expect(r.net.edits().length - editsBefore).toBeLessThanOrEqual(1);
+  });
+});
+
+// ─── U1-a: kind/capability contract at open ─────────────────────────────────
+
+describe("U1-a: open() rejects a spec whose kind and capability differ", () => {
+  type Untyped = { kind: string; capability: string };
+  const mismatched: ReadonlyArray<readonly [string, Untyped]> = [
+    ["automatic kind on the display capability", { kind: "automatic", capability: "display" }],
+    ["display kind on the automatic capability", { kind: "display", capability: "automatic" }],
+    ["interactive kind on the automatic capability", { kind: "interactive", capability: "automatic" }],
+    ["interactive kind on the interaction capability", { kind: "interactive", capability: "interaction" }],
+    ["equal values outside the domain", { kind: "interaction", capability: "interaction" }],
+  ];
+  const contractMetrics = (r: Rig) => r.metrics().filter((m) => m.name === "card_send_total" && m.labels.code === "contract");
+
+  it.each(mismatched)("%s -> contract with 0 reservations, 0 gate calls and 0 transport calls", async (_name, pair) => {
+    const r = rig();
+    const reserve = vi.spyOn(r.store, "reserveMessage");
+    const s = r.spec(pair as unknown as Partial<CardSpec>);
+    expect(r.queue.open(s)).toBe("contract");
+    expect(r.queue.status(s.cardId)).toBeUndefined();
+    expect(r.queue.enqueue(s.cardId, frame("a"))).toBe("unknown");
+    await r.time.advance(5000);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(r.gateCalls()).toBe(0);
+    expect(r.net.requests).toHaveLength(0);
+    expect(r.queue.suspendedCapabilities()).toEqual([]);
+    expect(contractMetrics(r)).toHaveLength(1);
+    expect(contractMetrics(r)[0].labels).toMatchObject({ bot_ref: botRefOf(r.bot), origin_ref: originRefOf(API), code: "contract" });
+  });
+
+  it("emits the contract metric through the existing reason set before open() returns", () => {
+    const r = rig();
+    const events: string[] = [];
+    const sink = { emit: (name: string, labels: Readonly<Record<string, string>>) => { events.push(`${name}:${labels.code}`); } };
+    const reserve = vi.spyOn(r.store, "reserveMessage").mockImplementation(() => { events.push("reserve"); throw new Error("unreachable"); });
+    const queue = createWriteQueue({ api: r.api, store: r.store, policy: r.policy, pacer: r.pacer, clock: r.time.clock,
+      timers: r.time.timers, telemetry: { sink, botRef: botRefOf(r.bot), originRef: originRefOf(API) } });
+    const result = queue.open(r.spec({ kind: "display", capability: "automatic" }));
+    events.push(`open:${result}`);
+    expect(events).toEqual(["card_send_total:contract", "open:contract"]);
+    expect(reserve).not.toHaveBeenCalled();
+  });
+
+  it("the contract check precedes the suspension check", async () => {
+    const r = rig();
+    r.net.reply({ status: 503 });
+    const s = r.spec();
+    r.queue.open(s);
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    expect(r.queue.suspendedCapabilities()).toEqual(["automatic"]);
+    const sends = r.net.sends().length;
+    expect(r.queue.open(r.spec({ kind: "display", capability: "automatic" }))).toBe("contract");
+    expect(r.queue.open(r.spec({ kind: "automatic", capability: "display" }))).toBe("contract");
+    expect(r.queue.open(r.spec())).toBe("suspended");
+    expect(contractMetrics(r)).toHaveLength(2);
+    expect(r.net.sends()).toHaveLength(sends);
+  });
+
+  it("a mismatched spec never replaces or disturbs an open card with the same id", async () => {
+    const r = rig();
+    const s = r.spec();
+    expect(r.queue.open(s)).toBe("opened");
+    expect(r.queue.open({ ...s, kind: "display" })).toBe("contract");
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    expect(r.queue.status(s.cardId)?.phase).toBe("active");
+    expect(storeRow(r, s.cardId)?.kind).toBe("automatic");
+  });
+
+  it("matching specs keep every existing result", async () => {
+    const r = rig();
+    const a = r.spec();
+    expect(r.queue.open(a)).toBe("opened");
+    expect(r.queue.open(a)).toBe("duplicate");
+    expect(r.queue.open(r.spec({ kind: "display", capability: "display" }))).toBe("opened");
+    r.net.reply({ status: 503 });
+    r.queue.enqueue(a.cardId, frame("a"));
+    await r.time.advance(800);
+    expect(r.queue.open(r.spec())).toBe("suspended");
+    const report = r.queue.drain({ reason: "shutdown", deadlineMono: r.time.now() + 3000, signal: new AbortController().signal });
+    expect(r.queue.open(r.spec({ kind: "display", capability: "display" }))).toBe("closing");
+    await r.time.advance(3000);
+    await report;
+    expect(contractMetrics(r)).toHaveLength(0);
+  });
+
+  it("an exhaustive caller handles every OpenResult member", () => {
+    const disposition = (result: OpenResult): "card" | "no_card" => {
+      switch (result) {
+        case "opened": return "card";
+        case "duplicate":
+        case "suspended":
+        case "closing":
+        case "contract": return "no_card";
+        default: {
+          const unreachable: never = result;
+          return unreachable;
+        }
+      }
+    };
+    const all: Record<OpenResult, true> = { opened: true, duplicate: true, suspended: true, closing: true, contract: true };
+    expect(Object.keys(all).map((k) => [k, disposition(k as OpenResult)])).toEqual([
+      ["opened", "card"], ["duplicate", "no_card"], ["suspended", "no_card"], ["closing", "no_card"], ["contract", "no_card"],
+    ]);
+  });
+});
+
+// ─── Shared fence: the registry's deadline signal ───────────────────────────
+
+describe("drain under a shared fence whose signal aborts at the deadline", () => {
+  /** Fence whose signal is aborted by a timer armed before drain(), as an aggregate registry does. */
+  function sharedFence(r: Rig, ms: number) {
+    const controller = new AbortController();
+    r.time.timers.setTimeout(() => controller.abort(), ms);
+    return { reason: "shutdown" as const, deadlineMono: r.time.now() + ms, signal: controller.signal };
+  }
+
+  it("an in-flight initial send is still reported unresolved", async () => {
+    const r = rig();
+    const s = r.spec();
+    r.queue.open(s);
+    r.net.reply({ hold: true });
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    const f = sharedFence(r, 3000);
+    r.queue.close(f);
+    const report = r.queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 1 });
+    expect(r.queue.status(s.cardId)).toMatchObject({ phase: "closed", outcome: "unresolved" });
+    expect(storeRow(r, s.cardId)?.state).toBe("sending");
+  });
+
+  it("an in-flight edit is still reported unresolved", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ hold: true });
+    r.queue.enqueue(id, frame("p"));
+    await r.time.advance(800);
+    const f = sharedFence(r, 3000);
+    r.queue.close(f);
+    const report = r.queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 1 });
+    expect(r.queue.status(id)).toMatchObject({ phase: "closed", outcome: "unresolved" });
+  });
+
+  it("deadline-wins: mixed abort-honouring and abort-ignoring initial sends are both reported unresolved", async () => {
+    const r = rig();
+    // Self-contained transport: the first send settles on abort, the second never settles.
+    const sends: string[] = [];
+    const fetchImpl = ((_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const n = sends.push(typeof init?.body === "string" ? init.body : "");
+      if (n === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+        });
+      }
+      return new Promise<Response>(() => { /* ignores abort */ });
+    }) as typeof fetch;
+    const api = createCardApi({ apiUrl: API, credential: "token-a", fetchImpl, nowUtcMs: r.time.wall.nowUtcMs });
+    const queue = createWriteQueue({ api, store: r.store, policy: r.policy, pacer: r.pacer, clock: r.time.clock, timers: r.time.timers });
+    const honours = r.spec();
+    const ignores = r.spec();
+    queue.open(honours);
+    queue.open(ignores);
+    queue.enqueue(honours.cardId, frame("a"));
+    queue.enqueue(ignores.cardId, frame("b"));
+    await r.time.advance(800);
+    expect(sends).toHaveLength(2);
+    const f = sharedFence(r, 3000);
+    queue.close(f);
+    const report = queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 2 });
+    // The abort-settled send keeps its unresolved outcome; the abort-ignoring one is still in flight.
+    expect(queue.status(honours.cardId)).toMatchObject({ phase: "closed", outcome: "unresolved" });
+    expect(queue.status(ignores.cardId)).toMatchObject({ phase: "pending", inflight: true });
+    expect(queue.status(ignores.cardId)?.outcome).toBeUndefined();
+    for (const id of [honours.cardId, ignores.cardId]) {
+      expect(r.store.getMessage(queue.status(id)?.storeCardId as string)?.state).toBe("sending");
+    }
+  });
+
+  it("work that settles before the deadline is still reported settled", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const terminal = r.queue.finalize(id, done());
+    const f = sharedFence(r, 3000);
+    const report = r.queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 1, aborted: 0, unresolved: 0 });
+    expect(await terminal).toEqual({ outcome: "acked", seq: 1 });
+  });
+});
+
+// ─── WP-06 correction: durable automatic terminal ───────────────────────────
+
+describe("durable terminal: the row becomes terminal only after the terminal edit's ack is persisted", () => {
+  const fenceAt = (r: Rig, ms: number) => ({ reason: "shutdown" as const, deadlineMono: r.time.now() + ms, signal: new AbortController().signal });
+
+  it("an acknowledged completed terminal marks the row done/completed", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const result = await r.queue.finalize(id, done(), "completed");
+    expect(result.outcome).toBe("acked");
+    expect(storeRow(r, id)).toMatchObject({ state: "done", terminalReason: "completed", seqAcked: result.seq });
+    expect(storeRow(r, id)?.terminalAt).not.toBeNull();
+  });
+
+  it("an acknowledged error terminal records its reason", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    expect((await r.queue.finalize(id, frame("t", "error"), "timed_out")).outcome).toBe("acked");
+    expect(storeRow(r, id)).toMatchObject({ state: "error", terminalReason: "timed_out" });
+  });
+
+  it("a retried terminal edit persists once, after the acknowledged attempt", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ status: 503 });
+    const pending = r.queue.finalize(id, done(), "completed");
+    await r.time.advance(0);
+    expect(storeRow(r, id)?.state).toBe("active");
+    await r.time.advance(100);
+    expect((await pending).outcome).toBe("acked");
+    expect(r.net.edits()).toHaveLength(2);
+    expect(storeRow(r, id)).toMatchObject({ state: "done", terminalReason: "completed" });
+  });
+
+  it("without a terminal reason the row is left as before (no durable claim)", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    expect((await r.queue.finalize(id, done())).outcome).toBe("acked");
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a policy-denied terminal sends nothing and leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.policy.allowed = false;
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("policy");
+    expect(r.net.edits()).toHaveLength(0);
+    expect(storeRow(r, id)).toMatchObject({ state: "active", terminalReason: null, terminalAt: null });
+  });
+
+  it("a terminal edit rejected by the server leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ status: 400, body: { code: "bad" } });
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("contract");
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a terminal requested after close is cancelled and leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.queue.close(fenceAt(r, 3000));
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("cancelled");
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a terminal edit still in flight at the drain deadline is unresolved and leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ hold: true });
+    const result = r.queue.finalize(id, done(), "completed");
+    await r.time.advance(0);
+    const report = r.queue.drain(fenceAt(r, 3000));
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 1 });
+    await r.time.advance(1000);
+    expect((await result).outcome).toBe("unresolved");
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a failed ack persistence is store_failed: acknowledged remotely, never claimed durable", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    vi.spyOn(r.store, "ackSequence").mockImplementation(() => { throw new Error("disk"); });
+    const mark = vi.spyOn(r.store, "markTerminal");
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("store_failed");
+    expect(mark).not.toHaveBeenCalled();
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a failed terminal persistence is store_failed and never reported as acked", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    vi.spyOn(r.store, "markTerminal").mockImplementation(() => { throw new Error("disk"); });
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("store_failed");
+    const r2 = rig();
+    const id2 = await activeCard(r2);
+    vi.spyOn(r2.store, "markTerminal").mockReturnValue({ kind: "invalid_state", state: "error" });
+    expect((await r2.queue.finalize(id2, done(), "completed")).outcome).toBe("store_failed");
+  });
+
+  it("an idempotent repeat in the store still counts as durable", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    vi.spyOn(r.store, "markTerminal").mockReturnValue({ kind: "already_terminal" });
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("acked");
+  });
+
+  it("a card closed before its first send leaves no row to mark", async () => {
+    const r = rig();
+    const s = r.spec();
+    r.queue.open(s);
+    r.queue.enqueue(s.cardId, frame("first"));
+    const mark = vi.spyOn(r.store, "markTerminal");
+    expect((await r.queue.finalize(s.cardId, done(), "completed")).outcome).toBe("skipped");
+    expect(mark).not.toHaveBeenCalled();
   });
 });
