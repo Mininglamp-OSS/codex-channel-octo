@@ -370,9 +370,6 @@ npm pack
 
 CI covers both the committed lock and a refreshed latest stable runtime on Node 22/24, including strict types, native CLI startup, the real SDK/proxy/process regression suite and packaging. Future latest releases require a passing compatibility lane; an update failure must be reported, not silently presented as a successful upgrade. To deliberately reproduce an older release, use that release's committed lockfile. Never independently override the CLI version selected by the SDK.
 
-Linux launcher-repeat CI uses `scripts/ci/repeat-launcher.py`: cancellation gates every new child, natural descendant teardown has a bounded settle window, and surviving descendants fail the run after owned-tree cleanup. Timeout/cancellation/test exit codes remain distinct. Each attempt owns a private temporary directory; six original process checks plus cancellation/settle regressions validate the supervisor. Focused serial/default-concurrency repetitions supplement the full parallel suite. The canonical-options assertion is already enforced by the strict recovery/continuity test projects.
-
-
 ## License
 
 Apache-2.0
