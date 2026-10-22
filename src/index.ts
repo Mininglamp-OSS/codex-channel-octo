@@ -2,6 +2,7 @@
 import { recordPrivateFailure } from './private-diagnostics.js';
 import { sendMessage as sendTurnMessage } from './octo/api.js';
 import { AgentFailure, TurnFailure, classifyFailure, failureReply, type FailureStage } from './agent-failure.js';
+import { safeNotice, type ReducedItemFacts } from './cards/redact.js';
 /**
  * codex-channel-octo — Entry point.
  * Bridge OpenAI Codex (via @openai/codex-sdk) to Octo IM.
@@ -704,18 +705,17 @@ export async function handleMessage(
       // sessionCtx (cwd/memory partition) was built earlier so inbound images
       // could be downloaded into this session's sandbox.
 
-      // v0.3 tool progress (opt-in): send a brief "🔧 Running <tool>(<params>)"
-      // notice as the agent invokes tools. Dedup consecutive identical notices
+      // Opt-in safe progress notices. Dedup consecutive identical notices
       // and cap the count per turn so a tool-heavy run doesn't spam the channel.
-      let onToolUse: ((toolName: string, toolInput?: unknown) => void) | undefined;
+      let onSafeItem: ((facts: ReducedItemFacts) => void) | undefined;
       if (config.sdk.toolProgress) {
         let lastNotice = '';
         let noticeCount = 0;
         const MAX_TOOL_NOTICES = 10;
-        onToolUse = (toolName: string, toolInput?: unknown): void => {
+        onSafeItem = (facts: ReducedItemFacts): void => {
           turn.assertPublishable();
-          const params = formatToolParams(toolInput);
-          const label = params ? `${toolName}(${params})` : toolName;
+          const label = safeNotice(facts);
+          if (!label) return;
           if (label === lastNotice) return; // collapse exact repeats
           lastNotice = label;
           if (noticeCount >= MAX_TOOL_NOTICES) return;
@@ -726,9 +726,9 @@ export async function handleMessage(
             botToken: config.botToken,
             channelId,
             channelType,
-            content: `🔧 Running ${label}…`,
-          }).catch((err) =>
-            console.error(`[codex-channel-octo] tool-progress send failed: ${String(err)}`),
+            content: label,
+          }).catch(() =>
+            console.error('[codex-channel-octo] tool-progress send failed'),
           );
         };
       }
@@ -773,7 +773,7 @@ export async function handleMessage(
         sessionOpts = { ...(sessionOpts ?? {}), privateMemoryContext: loadPrivateMemory(config, msg, ownerUid) };
       }
       stage = 'inference'; turn.stage = stage;
-      const agentEvents = queryAgentEvents(userContentForLLM, config, sessionCtx, onToolUse, sessionOpts);
+      const agentEvents = queryAgentEvents(userContentForLLM, config, sessionCtx, undefined, sessionOpts, onSafeItem);
 
       // Select ONE reply for both delivery and history. The relay drains the
       // agent run through this iterable (so the typing heartbeat covers it),

@@ -48,6 +48,7 @@ beforeEach(() => {
   config = {
     baseDir: root, cwd: join(root, 'workspace'), dataDir: join(root, 'data'),
     botToken: 'synthetic', apiUrl: 'https://test.invalid',
+    cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' },
     sdk: { privateDiagnostics: true, sandboxMode: 'read-only',
       recovery: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
       env: { NOTIFICATION_RECORD_FILE: join(root, 'records') } },

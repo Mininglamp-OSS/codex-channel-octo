@@ -27,6 +27,10 @@ jobs:
       - run: npm run build
       - run: python3 -m unittest discover -s scripts -p test_profile_test.py
       - run: node scripts/check_profile_compat.mjs
+      - name: Verify pinned PSL in package
+        run: |
+          npm pack --json > psl-package-info.json
+          node --input-type=module -e "import fs from 'node:fs'; import crypto from 'node:crypto'; const sha='2919eb9803c91a3f73a507cc6fedc934de005543c22c4016f72e3343de5dd6e7'; const path='dist/cards/data/psl-'+sha+'.dat'; const info=JSON.parse(fs.readFileSync('psl-package-info.json'))[0]; if(crypto.createHash('sha256').update(fs.readFileSync(path)).digest('hex')!==sha || !info.files.some(f=>f.path===path) || info.files.some(f=>/__tests__|__fixtures__|privacy-corpus|harness/.test(f.path))) process.exit(1); for(const name of ['LICENSE-PSL.txt','NOTICE.txt','PSL-PROVENANCE.json']) if(!info.files.some(f=>f.path==='dist/cards/data/'+name)) process.exit(1)"
       - run: test -f dist/codex-jsonl-proxy.mjs && test -x dist/codex-jsonl-proxy.mjs
       - run: npm pack --json > package-info.json
       - run: node -e "const fs=require('fs');const info=JSON.parse(fs.readFileSync('package-info.json'))[0];if(!info.files.some(file=>file.path==='dist/codex-jsonl-proxy.mjs'&&(file.mode&73)))process.exit(1)"
@@ -44,6 +48,14 @@ jobs:
       - run: npm run type-check:mention-tests
       - run: npm run type-check:recovery-tests
       - run: npm run type-check:continuity-tests
+      - name: Type-check WP-05 corpus and notice contracts
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop --resolveJsonModule src/__tests__/cards-redact.test.ts src/__tests__/cards-redact-regressions.test.ts src/__tests__/cards-redact-idna.test.ts src/__tests__/cards-notices.test.ts src/__tests__/cards-safe-bridge.test.ts
+      - name: Type-check canonical options test contract
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop src/__tests__/agent-bridge-events.test.ts
+      - name: Type-check card telemetry tests
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --noUnusedLocals --noUnusedParameters --skipLibCheck --esModuleInterop src/__tests__/cards-telemetry-*.test.ts
+      - name: Type-check card pacer and write-queue tests
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --noUnusedLocals --noUnusedParameters --skipLibCheck --esModuleInterop src/__tests__/cards-pacer*.test.ts src/__tests__/cards-write-queue*.test.ts
 
   lint:
     name: ESLint (zero warnings)
@@ -70,13 +82,23 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: 'npm'
       - run: npm ci
-      - name: Verify launcher supervisor failure paths
-        timeout-minutes: 5
-        run: python3 scripts/ci/test_repeat_launcher.py
-      - name: Repeat Linux launcher contracts (serial)
-        # 20 × (90s run + 15s TERM grace + 3s KILL/reap + 1s wait + 2s natural settle) = 2220s; 180s slack.
-        timeout-minutes: 40
-        run: python3 scripts/ci/repeat-launcher.py --attempts 20 -- node node_modules/vitest/vitest.mjs run src/__tests__/sdk-jsonl.test.ts src/__tests__/jsonl-proxy-path.test.ts --maxWorkers=1 --minWorkers=1 --reporter=verbose
+      - name: Probe the launcher attempt supervisor
+        run: python3 -m unittest discover -s scripts -p supervise_attempt_test.py -v
+      - name: Repeat Unix launcher contracts
+        # 20 attempts of at most 30 s each, plus at most 10 s TERM grace and 5 s
+        # reaping per attempt for its teardown: 20 x 45 s = 15 min.
+        timeout-minutes: 15
+        run: |
+          for attempt in $(seq 1 20); do
+            echo "Launcher attempt ${attempt}/20"
+            start=$SECONDS
+            set +e
+            scripts/supervise-attempt.sh 30 10 -- npm run test -- src/__tests__/sdk-jsonl.test.ts src/__tests__/jsonl-proxy-path.test.ts --maxWorkers=1 --minWorkers=1
+            status=$?
+            set -e
+            echo "Launcher attempt ${attempt}/20 exit=${status} duration=$((SECONDS-start))s"
+            if [ "$status" -ne 0 ]; then exit "$status"; fi
+          done
       - run: npm test
 
   latest-sdk:
@@ -102,9 +124,5 @@ jobs:
       - run: npm run type-check:continuity-tests
       - run: npm run lint
       - run: npm run build
-      - name: Repeat updated SDK launcher contracts (default concurrency)
-        # 5 × 111s = 555s; 105s slack for startup and reporting.
-        timeout-minutes: 11
-        run: python3 scripts/ci/repeat-launcher.py --attempts 5 -- node node_modules/vitest/vitest.mjs run src/__tests__/sdk-jsonl.test.ts src/__tests__/jsonl-proxy-path.test.ts --reporter=verbose
       - run: npm test
       - run: npm pack --dry-run

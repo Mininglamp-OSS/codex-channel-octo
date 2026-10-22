@@ -55,7 +55,22 @@ export function runtimeConfigPath(): string {
   return path;
 }
 
+/** Local preferences only: none of these fields grants server or routing authority. */
+export interface CardConfig {
+  /** Local kill switch only; false grants nothing. Default false. */
+  disable: boolean;
+  /** Requires independent topology/authorization proof before intake. Default off. */
+  eventTransport: 'off' | 'short' | 'long';
+  /** Requires independent source/privacy/authorization proof. Default off. */
+  reasoningSummary: 'off' | 'on' | 'stream';
+}
+
 export interface Config {
+  /**
+   * Independent, frozen per-Bot startup snapshot. Same-ID watcher reconciliation
+   * does not restart a Bot; edits require restart or explicit remove/re-add.
+   */
+  readonly cards: Readonly<CardConfig>;
   botToken: string;
   apiUrl: string;
   /**
@@ -279,6 +294,8 @@ export interface Config {
  * `<baseDir>/<id>/{data,workspace,memory}` so a bot cannot escape its subtree.
  */
 export interface BotOverride {
+  /** Only explicitly supplied fields override global card preferences. */
+  cards?: Partial<CardConfig>;
   /**
    * Stable id — also the bot's subtree name under `baseDir`. Required in the
    * two-layer model (it selects `<baseDir>/<id>/config.json`). Must be a
@@ -302,6 +319,7 @@ export interface BotOverride {
 
 type PartialConfig = {
   privateMemory?: Config['privateMemory'];
+  cards?: Partial<CardConfig>;
   botToken?: string;
   apiUrl?: string;
   groupConfigDir?: string;
@@ -318,6 +336,7 @@ type PartialConfig = {
 
 function defaults(): Config {
   return {
+    cards: resolveCards(),
     botToken: '',
     apiUrl: '',
     // baseDir is set by loadConfig() from the config path's directory; the
@@ -383,6 +402,14 @@ function readConfigFile(configFilePath: string): PartialConfig {
   for (const [k, v] of Object.entries(parsed)) {
     if (!k.startsWith('_')) cleaned[k] = v;
   }
+  // Validate each source layer BEFORE merging: a valid higher-priority value
+  // must never hide an invalid global/inline/per-file card setting.
+  checkCardSource(cleaned);
+  if (Array.isArray(cleaned.bots)) {
+    for (const bot of cleaned.bots) {
+      if (bot !== null && typeof bot === 'object') checkCardSource(bot);
+    }
+  }
   return cleaned as PartialConfig;
 }
 
@@ -395,9 +422,71 @@ function assertPrivateMemory(value: Config['privateMemory']): void {
   }
 }
 
+const DEPRECATED_CARD_KEYS = [
+  'cardProgress', 'reasoningCardTemplateMode', 'cardDisplay', 'cardInteraction',
+  'OCTO_CARD_MESSAGE_ENABLED', 'OCTO_CARD_MERGE_FINAL',
+] as const;
+// Six fixed keys bound both memory and warnings for the entire process lifetime,
+// including repeated config reads by the existing watcher. Never retain values.
+const warnedCardKeys = new Set<string>();
+
+function warnIgnoredCardKeys(source: object): void {
+  for (const key of DEPRECATED_CARD_KEYS) {
+    if (Object.hasOwn(source, key) && !warnedCardKeys.has(key)) {
+      warnedCardKeys.add(key);
+      console.warn(`[codex-channel-octo] WARNING: ignored deprecated card setting ${key}`);
+    }
+  }
+}
+
+function checkCardSource(source: object): void {
+  if (Object.hasOwn(source, 'cards')) assertCards((source as { cards: unknown }).cards);
+  warnIgnoredCardKeys(source);
+}
+
+/** Fixed diagnostics deliberately omit source paths, Bot ids, keys and values. */
+function assertCards(value: unknown): asserts value is Partial<CardConfig> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid cards configuration: expected object');
+  }
+  for (const key of Object.keys(value)) {
+    if (key !== 'disable' && key !== 'eventTransport' && key !== 'reasoningSummary') {
+      throw new Error('Invalid cards configuration: unknown field');
+    }
+  }
+  const cards = value as Record<string, unknown>;
+  if (Object.hasOwn(cards, 'disable') && typeof cards.disable !== 'boolean') {
+    throw new Error('Invalid cards configuration: disable must be boolean');
+  }
+  if (Object.hasOwn(cards, 'eventTransport') &&
+      cards.eventTransport !== 'off' && cards.eventTransport !== 'short' && cards.eventTransport !== 'long') {
+    throw new Error('Invalid cards configuration: eventTransport must be off, short or long');
+  }
+  if (Object.hasOwn(cards, 'reasoningSummary') &&
+      cards.reasoningSummary !== 'off' && cards.reasoningSummary !== 'on' && cards.reasoningSummary !== 'stream') {
+    throw new Error('Invalid cards configuration: reasoningSummary must be off, on or stream');
+  }
+}
+
+/** Resolve explicit fields in precedence order; always copy/freeze a fresh snapshot. */
+function resolveCards(...layers: (Partial<CardConfig> | undefined)[]): Readonly<CardConfig> {
+  const merged: Partial<CardConfig> = {};
+  for (const layer of layers) {
+    if (layer === undefined) continue;
+    assertCards(layer);
+    Object.assign(merged, layer);
+  }
+  return Object.freeze({
+    disable: merged.disable ?? false,
+    eventTransport: merged.eventTransport ?? 'off',
+    reasoningSummary: merged.reasoningSummary ?? 'off',
+  });
+}
+
 function mergeConfig(base: Config, override: PartialConfig): Config {
   assertPrivateMemory(override.privateMemory);
   return {
+    cards: resolveCards(base.cards, override.cards),
     botToken: override.botToken ?? base.botToken,
     apiUrl: override.apiUrl ?? base.apiUrl,
     // baseDir + derived dirs are filled by loadConfig()/resolveBotConfigs(),
@@ -437,6 +526,8 @@ function mergeConfig(base: Config, override: PartialConfig): Config {
  */
 
 export function loadConfig(configPath?: string): Config {
+  // Ignored environment flags warn once but never participate in resolution.
+  warnIgnoredCardKeys(process.env);
   const path = configPath ?? runtimeConfigPath();
   // Migration aid: if the fixed global config is missing but a legacy
   // ./config.json exists in the cwd, point the operator at the move rather than
@@ -561,6 +652,7 @@ function isPathInside(child: string, parent: string): boolean {
  * apiUrl (fail fast at boot).
  */
 export function resolveBotConfigs(config: Config): Config[] {
+  checkCardSource(config);
   // Zero-bot idle: no bots[] list and no global botToken — and no token in the
   // default per-bot file either. Return [] so the gateway can run idle (online,
   // no bots) until the first bot is provisioned, instead of throwing. A legacy
@@ -582,6 +674,7 @@ export function resolveBotConfigs(config: Config): Config[] {
   const seenIds = new Set<string>();
   const seenTokens = new Set<string>();
   const resolvedBots = entries.map((bot, i) => {
+    checkCardSource(bot);
     const id = bot.id ?? `bot${i}`;
     // The id becomes a path segment for the bot's subtree, so restrict it to a
     // conservative slug — otherwise ids like "../ops" or "a/b" could escape or
@@ -634,6 +727,7 @@ export function resolveBotConfigs(config: Config): Config[] {
 
     const resolved: Config = {
       ...config,
+      cards: resolveCards(config.cards, bot.cards, perBotFile.cards),
       bots: undefined, // a per-bot config is single-bot
       botId: id,
       botToken,

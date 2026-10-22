@@ -135,6 +135,37 @@ npm install -g @mininglamp-oss/codex-channel-octo
 
 两项设置都在 bot 启动时生效。修改后需重启进程，或以新 id 重新添加该 bot。热重载只会按 id 增删 bot。
 
+### Card configuration (startup only)
+
+The closed `cards` object accepts `disable: false|true` (boolean, default
+`false`), `eventTransport: "off"|"short"|"long"` (default `"off"`) and
+`reasoningSummary: "off"|"on"|"stream"` (default `"off"`). `disable=true` is a
+local narrowing kill switch; `false` grants nothing. Transport and summary
+preferences cannot authorize intake or reasoning content. Configuration does
+not prove server policy, routing authority, topology authorization, source/privacy
+acceptance, R03/S05 or production use.
+
+Merge precedence is global → inline `bots[]` entry → `<id>/config.json`.
+Explicit fields override individually; omitted fields inherit, then defaults
+fill remaining omissions. Empty `cards: {}` inherits everything. Each bot gets
+a separate frozen startup snapshot. Null, arrays, wrong booleans/enums and
+unknown keys (including `_comment` inside `cards`) fail startup without
+coercion, even when a higher layer would replace the invalid value. Diagnostics
+omit supplied keys/values, credentials, Bot ids and paths.
+
+The existing watcher reconciles IDs only. Same-ID edits do not restart a bot or
+change its snapshot. An actual process/Bot restart or explicit removal followed
+by re-addition gets fresh settings. Invalid edits keep the running set intact;
+this is not a watcher, hot-reload or platform stability guarantee.
+
+Deprecated top-level `cardProgress`, `reasoningCardTemplateMode`, `cardDisplay`,
+`cardInteraction`, `OCTO_CARD_MESSAGE_ENABLED` and `OCTO_CARD_MERGE_FINAL` are
+ignored; the two `OCTO_` environment names are ignored too. At most one fixed,
+value-free warning per key is emitted per process. Generic `sdk.env` forwarding
+is unchanged and cannot alter canonical cards. No runtime card wiring, intake,
+summary delivery or production enablement is added. See the English README's
+card configuration table and the canonical examples for details.
+
 ## 运行
 
 ```bash

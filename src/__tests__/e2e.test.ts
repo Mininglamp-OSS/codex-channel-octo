@@ -292,16 +292,19 @@ describe('E2E smoke tests', () => {
   // --- v0.3 tool progress display ---
 
   it('sends 🔧 progress messages when sdk.toolProgress is on, deduped', async () => {
-    // Mock queryAgent to drive the onToolUse callback (4th arg) like the SDK
-    // would, then yield the final answer.
+    // Mock queryAgent to drive the safe-item callback (6th arg) like the bridge
+    // would, then yield the final answer. The legacy onToolUse slot is unused.
     (queryAgent as ReturnType<typeof vi.fn>).mockImplementation(
       async function* (
         _u: string, _cfg: Config, _ctx: unknown,
-        onToolUse?: (t: string) => void,
+        onToolUse: unknown,
+        _opts: unknown,
+        onSafeItem?: (facts: import('../cards/redact.js').ReducedItemFacts) => void,
       ) {
-        onToolUse?.('Bash');
-        onToolUse?.('Bash'); // consecutive repeat → collapsed
-        onToolUse?.('Read');
+        expect(onToolUse).toBeUndefined();
+        onSafeItem?.({ category: 'command', program: 'git' as import('../cards/contracts.js').SafeProgram });
+        onSafeItem?.({ category: 'command' }); // consecutive repeat → collapsed
+        onSafeItem?.({ category: 'file_change', fileCount: 1 });
         yield 'done';
       },
     );
@@ -310,26 +313,33 @@ describe('E2E smoke tests', () => {
     await simulateMessage(makeDmMsg('do work'), cfg, store, router, groupContext, streamRelay);
 
     const sent = (sendMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0].content as string);
-    const progress = sent.filter((s) => s.startsWith('🔧 Running'));
-    expect(progress).toEqual(['🔧 Running Bash…', '🔧 Running Read…']); // repeat collapsed
+    const progress = sent.filter((s) => s.startsWith('🔧 '));
+    expect(progress).toEqual(['🔧 Running command…', '🔧 Editing files…']); // repeat collapsed
     // The final answer is still delivered.
     expect(sent.some((s) => s.includes('done'))).toBe(true);
+    expect(store.buildHistoryPrefix(USER_UID, 40)).toContain('done');
+    expect(progress.join(' ').includes('git')).toBe(false);
   });
 
   it('sends NO progress messages when toolProgress is off (default)', async () => {
     (queryAgent as ReturnType<typeof vi.fn>).mockImplementation(
       async function* (
         _u: string, _cfg: Config, _ctx: unknown,
-        onToolUse?: (t: string) => void,
+        onToolUse: unknown,
+        _opts: unknown,
+        onSafeItem?: (facts: import('../cards/redact.js').ReducedItemFacts) => void,
       ) {
-        onToolUse?.('Bash'); // callback should be undefined → no-op
+        expect(onToolUse).toBeUndefined();
+        expect(onSafeItem).toBeUndefined(); // callback is undefined → no-op
+        onSafeItem?.({ category: 'command' });
         yield 'done';
       },
     );
 
     await simulateMessage(makeDmMsg('do work'), config, store, router, groupContext, streamRelay);
     const sent = (sendMessage as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0].content as string);
-    expect(sent.some((s) => s.startsWith('🔧 Running'))).toBe(false);
+    expect(sent.some((s) => s.startsWith('🔧 '))).toBe(false);
+    expect(sent.some((s) => s.includes('done'))).toBe(true);
   });
 
   // --- SDK sessions (always-on: the SDK session owns history) ---

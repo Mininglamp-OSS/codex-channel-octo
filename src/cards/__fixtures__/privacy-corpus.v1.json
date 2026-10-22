@@ -1,0 +1,1221 @@
+{
+  "version": 1,
+  "canary": "WP05_CANARY_7q9V",
+  "cases": [
+    {
+      "id": "posix",
+      "item": {
+        "type": "command_execution",
+        "command": "/private/WP05_CANARY_7q9V/git --token=WP05_CANARY_7q9V",
+        "aggregated_output": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "relative",
+      "item": {
+        "type": "command_execution",
+        "command": "./WP05_CANARY_7q9V/npm WP05_CANARY_7q9V",
+        "aggregated_output": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "npm",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "home",
+      "item": {
+        "type": "command_execution",
+        "command": "~/WP05_CANARY_7q9V/node WP05_CANARY_7q9V",
+        "aggregated_output": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "node",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "windows",
+      "item": {
+        "type": "command_execution",
+        "command": "C:\\WP05_CANARY_7q9V\\python WP05_CANARY_7q9V",
+        "aggregated_output": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "python",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "env",
+      "item": {
+        "type": "command_execution",
+        "command": "PASSWORD=WP05_CANARY_7q9V TOKEN=WP05_CANARY_7q9V /usr/bin/rg WP05_CANARY_7q9V",
+        "aggregated_output": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "rg",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "quoted-env",
+      "item": {
+        "type": "command_execution",
+        "command": "TOKEN=\"WP05_CANARY_7q9V spaced\" git WP05_CANARY_7q9V",
+        "aggregated_output": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "unknown",
+      "item": {
+        "type": "command_execution",
+        "command": "WP05_CANARY_7q9V WP05_CANARY_7q9V",
+        "aggregated_output": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "command",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "export",
+      "item": {
+        "type": "command_execution",
+        "command": "export TOKEN=WP05_CANARY_7q9V",
+        "aggregated_output": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "command",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "grep",
+      "item": {
+        "type": "command_execution",
+        "command": "grep WP05_CANARY_7q9V ./WP05_CANARY_7q9V",
+        "aggregated_output": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "grep",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "missing",
+      "item": {
+        "type": "command_execution",
+        "command": "",
+        "aggregated_output": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "command",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "files",
+      "item": {
+        "type": "file_change",
+        "changes": [
+          {
+            "path": "/WP05_CANARY_7q9V"
+          },
+          {
+            "path": "./WP05_CANARY_7q9V"
+          },
+          {
+            "path": "~/WP05_CANARY_7q9V"
+          },
+          {
+            "path": "C:\\WP05_CANARY_7q9V"
+          }
+        ]
+      },
+      "expected": {
+        "category": "file_change",
+        "fileCount": 4
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "search",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "mcp",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "WP05_CANARY_7q9V",
+        "tool": "WP05_CANARY_7q9V",
+        "arguments": {
+          "token": "WP05_CANARY_7q9V"
+        },
+        "result": {
+          "content": "WP05_CANARY_7q9V"
+        },
+        "error": {
+          "message": "WP05_CANARY_7q9V"
+        },
+        "status": "failed"
+      },
+      "expected": {
+        "category": "tool",
+        "errorClass": "failed"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "reasoning",
+      "item": {
+        "type": "reasoning",
+        "text": "WP05_CANARY_7q9V [memory] [system_prompt]"
+      },
+      "expected": {
+        "category": "activity",
+        "activity": "thinking"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "todo",
+      "item": {
+        "type": "todo_list",
+        "items": [
+          {
+            "text": "WP05_CANARY_7q9V"
+          }
+        ]
+      },
+      "expected": {
+        "category": "activity",
+        "activity": "planning"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "closed-agent_message",
+      "item": {
+        "type": "agent_message",
+        "text": "WP05_CANARY_7q9V",
+        "message": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "activity"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "closed-error",
+      "item": {
+        "type": "error",
+        "text": "WP05_CANARY_7q9V",
+        "message": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "activity"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "closed-unknown",
+      "item": {
+        "type": "unknown",
+        "text": "WP05_CANARY_7q9V",
+        "message": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "activity"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "closed-constructor",
+      "item": {
+        "type": "constructor",
+        "text": "WP05_CANARY_7q9V",
+        "message": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "activity"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "closed-__proto__",
+      "item": {
+        "type": "__proto__",
+        "text": "WP05_CANARY_7q9V",
+        "message": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "activity"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-userinfo",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "https://WP05_CANARY_7q9V:WP05_CANARY_7q9V@sub-canary-7q9v.example.co.uk/WP05_CANARY_7q9V?q=WP05_CANARY_7q9V#WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "example.co.uk"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V",
+        "sub-canary-7q9v"
+      ]
+    },
+    {
+      "id": "url-private-psl",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "https://sub.tenant.blogspot.com/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "tenant.blogspot.com"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-idn",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "https://sub.\u98df\u72ee.com.cn/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "xn--85x722f.com.cn"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-punycode",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "https://sub.xn--85x722f.com.cn/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "xn--85x722f.com.cn"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-wildcard",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "https://a.b.ck/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "a.b.ck"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-exception",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "https://a.www.ck/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "www.ck"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-http",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "http://sub.example.com/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "example.com"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-suffix",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "https://co.uk"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "link"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-private-suffix",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "https://blogspot.com"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "link"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-localhost",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "http://localhost/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "link"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-ipv4",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "http://192.168.0.1/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "link"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-ipv6",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "http://[::1]/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "link"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-public-ip",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "http://8.8.8.8/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "link"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-numeric-ip",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "http://2130706433/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "link"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-custom",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "file:///WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "link"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-malformed",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "https://%/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "link"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-unknown-tld",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "https://host.privateinvalid/WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "link"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "url-encoded-host",
+      "item": {
+        "type": "web_search",
+        "query": "WP05_CANARY_7q9V",
+        "url": "https://sub-canary-7q9v.example.com/%2e?q=WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "web_search",
+        "domain": "example.com"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V",
+        "sub-canary-7q9v"
+      ]
+    },
+    {
+      "id": "status-38",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "in_progress",
+        "exit_code": 0
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-39",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "in_progress",
+        "exit_code": 2
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-40",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "in_progress",
+        "exit_code": null
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-41",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "in_progress",
+        "exit_code": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-42",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "completed",
+        "exit_code": 0
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "ok"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-43",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "completed",
+        "exit_code": 2
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "nonzero"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-44",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "completed",
+        "exit_code": null
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-45",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "completed",
+        "exit_code": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-46",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "failed",
+        "exit_code": 0
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown",
+        "errorClass": "failed"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-47",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "failed",
+        "exit_code": 2
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown",
+        "errorClass": "failed"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-48",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "failed",
+        "exit_code": null
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown",
+        "errorClass": "failed"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-49",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "failed",
+        "exit_code": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown",
+        "errorClass": "failed"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-50",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "WP05_CANARY_7q9V",
+        "exit_code": 0
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-51",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "WP05_CANARY_7q9V",
+        "exit_code": 2
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-52",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "WP05_CANARY_7q9V",
+        "exit_code": null
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "status-53",
+      "item": {
+        "type": "command_execution",
+        "command": "git WP05_CANARY_7q9V",
+        "status": "WP05_CANARY_7q9V",
+        "exit_code": "WP05_CANARY_7q9V"
+      },
+      "expected": {
+        "category": "command",
+        "program": "git",
+        "exitClass": "unknown"
+      },
+      "forbidden": [
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "payload-54",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "TOKEN=WP05_CANARY_7q9V",
+        "tool": "TOKEN=WP05_CANARY_7q9V",
+        "arguments": {
+          "secret": "TOKEN=WP05_CANARY_7q9V"
+        },
+        "result": {
+          "text": "TOKEN=WP05_CANARY_7q9V"
+        }
+      },
+      "expected": {
+        "category": "tool"
+      },
+      "forbidden": [
+        "TOKEN=WP05_CANARY_7q9V",
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "payload-55",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "export TOKEN=WP05_CANARY_7q9V",
+        "tool": "export TOKEN=WP05_CANARY_7q9V",
+        "arguments": {
+          "secret": "export TOKEN=WP05_CANARY_7q9V"
+        },
+        "result": {
+          "text": "export TOKEN=WP05_CANARY_7q9V"
+        }
+      },
+      "expected": {
+        "category": "tool"
+      },
+      "forbidden": [
+        "export TOKEN=WP05_CANARY_7q9V",
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "payload-56",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "postgres://user:pass@db.example.com/name",
+        "tool": "postgres://user:pass@db.example.com/name",
+        "arguments": {
+          "secret": "postgres://user:pass@db.example.com/name"
+        },
+        "result": {
+          "text": "postgres://user:pass@db.example.com/name"
+        }
+      },
+      "expected": {
+        "category": "tool"
+      },
+      "forbidden": [
+        "postgres://user:pass@db.example.com/name",
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "payload-57",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl",
+        "tool": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl",
+        "arguments": {
+          "secret": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"
+        },
+        "result": {
+          "text": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"
+        }
+      },
+      "expected": {
+        "category": "tool"
+      },
+      "forbidden": [
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl",
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "payload-58",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "ghp_1234567890abcdefghijklmnopqrstuv",
+        "tool": "ghp_1234567890abcdefghijklmnopqrstuv",
+        "arguments": {
+          "secret": "ghp_1234567890abcdefghijklmnopqrstuv"
+        },
+        "result": {
+          "text": "ghp_1234567890abcdefghijklmnopqrstuv"
+        }
+      },
+      "expected": {
+        "category": "tool"
+      },
+      "forbidden": [
+        "ghp_1234567890abcdefghijklmnopqrstuv",
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "payload-59",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "sk-proj-1234567890abcdefghijklmnopqrstuv",
+        "tool": "sk-proj-1234567890abcdefghijklmnopqrstuv",
+        "arguments": {
+          "secret": "sk-proj-1234567890abcdefghijklmnopqrstuv"
+        },
+        "result": {
+          "text": "sk-proj-1234567890abcdefghijklmnopqrstuv"
+        }
+      },
+      "expected": {
+        "category": "tool"
+      },
+      "forbidden": [
+        "sk-proj-1234567890abcdefghijklmnopqrstuv",
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "payload-60",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "AKIAIOSFODNN7EXAMPLE",
+        "tool": "AKIAIOSFODNN7EXAMPLE",
+        "arguments": {
+          "secret": "AKIAIOSFODNN7EXAMPLE"
+        },
+        "result": {
+          "text": "AKIAIOSFODNN7EXAMPLE"
+        }
+      },
+      "expected": {
+        "category": "tool"
+      },
+      "forbidden": [
+        "AKIAIOSFODNN7EXAMPLE",
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "payload-61",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "a3f07b28c91d4e65f0a9b8c7d6e51423",
+        "tool": "a3f07b28c91d4e65f0a9b8c7d6e51423",
+        "arguments": {
+          "secret": "a3f07b28c91d4e65f0a9b8c7d6e51423"
+        },
+        "result": {
+          "text": "a3f07b28c91d4e65f0a9b8c7d6e51423"
+        }
+      },
+      "expected": {
+        "category": "tool"
+      },
+      "forbidden": [
+        "a3f07b28c91d4e65f0a9b8c7d6e51423",
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "payload-62",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "QUJDREVGR0hJSktMTU5PUFFSUlNUVVZX",
+        "tool": "QUJDREVGR0hJSktMTU5PUFFSUlNUVVZX",
+        "arguments": {
+          "secret": "QUJDREVGR0hJSktMTU5PUFFSUlNUVVZX"
+        },
+        "result": {
+          "text": "QUJDREVGR0hJSktMTU5PUFFSUlNUVVZX"
+        }
+      },
+      "expected": {
+        "category": "tool"
+      },
+      "forbidden": [
+        "QUJDREVGR0hJSktMTU5PUFFSUlNUVVZX",
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "payload-63",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "-----BEGIN PRIVATE KEY-----",
+        "tool": "-----BEGIN PRIVATE KEY-----",
+        "arguments": {
+          "secret": "-----BEGIN PRIVATE KEY-----"
+        },
+        "result": {
+          "text": "-----BEGIN PRIVATE KEY-----"
+        }
+      },
+      "expected": {
+        "category": "tool"
+      },
+      "forbidden": [
+        "-----BEGIN PRIVATE KEY-----",
+        "WP05_CANARY_7q9V"
+      ]
+    },
+    {
+      "id": "payload-64",
+      "item": {
+        "type": "mcp_tool_call",
+        "server": "https://user:pass@example.com",
+        "tool": "https://user:pass@example.com",
+        "arguments": {
+          "secret": "https://user:pass@example.com"
+        },
+        "result": {
+          "text": "https://user:pass@example.com"
+        }
+      },
+      "expected": {
+        "category": "tool"
+      },
+      "forbidden": [
+        "https://user:pass@example.com",
+        "WP05_CANARY_7q9V"
+      ]
+    }
+  ],
+  "textCases": [
+    {
+      "id": "unicode-normalization",
+      "input": "e\u0301\u202e\u2066\u200b\u0000",
+      "expected": "\u00e9",
+      "scalars": 192,
+      "bytes": 768
+    },
+    {
+      "id": "malformed-surrogates",
+      "input": "a\ud800b\udc00c",
+      "expected": "abc",
+      "scalars": 192,
+      "bytes": 768
+    },
+    {
+      "id": "scalar-191",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scalars": 192,
+      "bytes": 768
+    },
+    {
+      "id": "scalar-192",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scalars": 192,
+      "bytes": 768
+    },
+    {
+      "id": "scalar-193",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scalars": 192,
+      "bytes": 768
+    },
+    {
+      "id": "byte-3",
+      "input": "\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "expected": "\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "scalars": 192,
+      "bytes": 16
+    },
+    {
+      "id": "byte-4",
+      "input": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "expected": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "scalars": 192,
+      "bytes": 16
+    },
+    {
+      "id": "byte-5",
+      "input": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "expected": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "scalars": 192,
+      "bytes": 16
+    },
+    {
+      "id": "mixed-boundary",
+      "input": "a\ud83d\ude00\u00e9Z",
+      "expected": "a\ud83d\ude00\u00e9",
+      "scalars": 3,
+      "bytes": 7
+    },
+    {
+      "id": "byte-not-scalar",
+      "input": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "expected": "\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "scalars": 10,
+      "bytes": 15
+    }
+  ],
+  "secretCases": [
+    {
+      "id": "hex-boundary-23",
+      "input": "a3f07b28c91d4e65f0a9b8c",
+      "secret": false
+    },
+    {
+      "id": "hex-boundary-24",
+      "input": "a3f07b28c91d4e65f0a9b8c7d",
+      "secret": true
+    },
+    {
+      "id": "base64-boundary-31",
+      "input": "QUJDREVGR0hJSktMTU5PUFFSUlNUVVZ",
+      "secret": false
+    },
+    {
+      "id": "base64-boundary-32",
+      "input": "QUJDREVGR0hJSktMTU5PUFFSUlNUVVZX",
+      "secret": true
+    },
+    {
+      "id": "control-token",
+      "input": "TO\u202eKEN=WP05_CANARY_7q9V",
+      "secret": true
+    },
+    {
+      "id": "compatibility-token",
+      "input": "\uff34\uff2f\uff2b\uff25\uff2e=WP05_CANARY_7q9V",
+      "secret": true
+    },
+    {
+      "id": "unicode-benign",
+      "input": "\u00e9 \u98df\u72ee \ud83d\ude00",
+      "secret": false
+    }
+  ]
+}

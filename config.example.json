@@ -2,6 +2,13 @@
   "_comment": "GLOBAL config — install at ~/.codex-channel-octo/config.json. Holds SHARED defaults + the list of bots to run. It does NOT hold a botToken: each bot's token lives in ~/.codex-channel-octo/<id>/config.json (see config.bot.example.json). The directory containing THIS file is the baseDir; every bot is a self-contained subtree at <baseDir>/<id>/{config.json, SOUL.md, data/, workspace/, codex-home/}, all auto-created. Per-bot dirs are NOT configurable — they are always derived from baseDir + id, so a bot can never escape its subtree.",
   "apiUrl": "https://your-octo-instance.com",
 
+  "_comment_cards": "Local preferences only; no server capability, routing authority or topology authorization is granted. Exact defaults: disable=false; eventTransport=off (off|short|long); reasoningSummary=off (off|on|stream). Fields merge individually: global < inline bots[] < per-bot file. Unknown card keys and wrong types fail startup. Same-ID edits do not restart Bots; restart or explicit remove/re-add is required. Transport/summary choices require independent authorization and source/privacy proof before use.",
+  "cards": {
+    "disable": false,
+    "eventTransport": "off",
+    "reasoningSummary": "off"
+  },
+
   "_comment_bots": "Which bots to run. Each entry's `id` selects its subtree <baseDir>/<id>/ and its per-bot config.json. A single bot is just one entry, conventionally id 'default'. Per-bot config.json overrides anything here.",
   "bots": [
     { "id": "default" }

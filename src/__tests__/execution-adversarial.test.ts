@@ -73,7 +73,7 @@ beforeEach(() => {
 });
 afterEach(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
 function config(mode: string): Config {
-  return { baseDir:root, dataDir:join(root,'data'), botToken:'fake', apiUrl:'https://test.invalid', maxResponseChars:524288, cwd: root, cwdBase: root, sdk: { env: {
+  return { cards:{disable:false,eventTransport:'off',reasoningSummary:'off'}, baseDir:root, dataDir:join(root,'data'), botToken:'fake', apiUrl:'https://test.invalid', maxResponseChars:524288, cwd: root, cwdBase: root, sdk: { env: {
     OWNED_MODE: mode, OWNED_PID_FILE: join(root, 'child'), OWNED_PARENT_PID_FILE: join(root, 'parent'),
     OWNED_EFFECT_FILE: join(root, 'effects'), OWNED_REPORT_FILE: join(root, 'report'),
   } }, dispatchTimeoutMs: 10000, rateLimit: { maxPerMinute: 100 }, context: { maxContextChars: 6000, historyLimit: 40 } };

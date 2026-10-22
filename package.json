@@ -36,7 +36,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "tsc && node -e \"const fs=require('node:fs'); fs.copyFileSync('src/codex-jsonl-proxy.mjs', 'dist/codex-jsonl-proxy.mjs'); fs.chmodSync('dist/codex-jsonl-proxy.mjs', 0o755)\"",
+    "build": "tsc && node -e \"const fs=require('node:fs'); fs.copyFileSync('src/codex-jsonl-proxy.mjs', 'dist/codex-jsonl-proxy.mjs'); fs.chmodSync('dist/codex-jsonl-proxy.mjs', 0o755)\" && node -e \"require('node:fs').cpSync('src/cards/data', 'dist/cards/data', {recursive:true})\"",
     "dev": "npm run build && tsc --watch",
     "prepack": "npm run build",
     "start": "node dist/index.js",

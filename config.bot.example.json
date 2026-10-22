@@ -4,6 +4,9 @@
   "_comment_privateMemory": "Opt-in MEMORY.md beside SOUL.md, loaded only for the current registration owner's DMs. Groups/topics/other DMs receive none. Bounded background data, never shared AGENTS.md. Does not restrict filesystem tools under danger-full-access.",
   "privateMemory": { "enabled": false, "maxBytes": 16384 },
 
+  "_comment_cards": "Empty cards inherits all global/inline fields for THIS Bot. Explicit fields override individually. Defaults: disable=false (boolean local kill switch only), eventTransport=off (off|short|long), reasoningSummary=off (off|on|stream). No setting grants server policy, routing authority, topology or reasoning authorization. Unknown card keys/wrong types fail startup. Same-ID edits require restart or explicit remove/re-add for a new snapshot.",
+  "cards": {},
+
   "_comment_overrides": "Any of these optional fields override the global config for THIS bot only:",
   "_comment_apiUrl": "apiUrl — override the Octo API base for this bot.",
 
