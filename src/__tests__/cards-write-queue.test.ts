@@ -577,7 +577,7 @@ describe("T14: lazy/finalize race", () => {
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "acked", seq: 1 });
     expect(r.net.edits().map(seqOf)).toEqual([1]);
-    expect(storeRow(r, s.cardId)).toMatchObject({ state: "active", seqAcked: 1 });
+    expect(storeRow(r, s.cardId)).toMatchObject({ state: "done", terminalReason: "completed", seqAcked: 1 });
   });
 });
 
