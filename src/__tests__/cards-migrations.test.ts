@@ -355,9 +355,9 @@ describe('schema rejection', () => {
   it('newer schema version is rejected and left untouched', async () => {
     const a = openDb();
     migrateCardSchema(a, { installationRef: INSTALL, lineageId: 'lineage-1', nowMs: T0 });
-    a.prepare(`UPDATE card_meta SET v = '2' WHERE k = 'schema_version'`).run();
+    a.prepare(`UPDATE card_meta SET v = '3' WHERE k = 'schema_version'`).run();
     a.exec('CREATE TABLE card_v2_extra (x TEXT)');
-    expect(inspectCardSchema(a)).toEqual({ state: 'newer', schemaVersion: 2 });
+    expect(inspectCardSchema(a)).toEqual({ state: 'newer', schemaVersion: 3 });
     expect(await init(a)).toEqual({ state: 'disabled', reason: 'newer_schema' });
     expect(cardObjects(a)).toContain('card_v2_extra');
   });
