@@ -265,7 +265,7 @@ interface Observation {
   failures: string[];
 }
 
-interface Run { obs: Observation; notices: string[]; cards: { sends: number; terminal?: { state: string; label: string } } }
+interface Run { obs: Observation; notices: string[]; cards: { sends: number; terminal?: { state: string; label: string } }; rows: unknown[] }
 
 class Harness {
   root = tempDir("wp06-parity-");
@@ -351,6 +351,13 @@ class Harness {
     return { sends, terminal: { state, label } };
   }
 
+  /** Durable automatic card rows, read before the runtime closes. */
+  rows(): unknown[] {
+    try {
+      return this.adapter.prepare("SELECT kind, state, terminal_reason AS reason, terminal_at IS NOT NULL AS terminal FROM card_messages ORDER BY rowid").all();
+    } catch { return []; }
+  }
+
   async close(): Promise<void> {
     await this.runtime?.close("shutdown");
     try { this.store.close(); } catch { /* closed */ }
@@ -411,7 +418,7 @@ async function runCase(c: Case, cards: boolean): Promise<Run> {
     h.stub(c.responder(h));
     await h.turn();
     if (c.path === "abort") { await new Promise((r) => setTimeout(r, 20)); await h.time.advance(0); await h.runtime?.idle(); }
-    return { obs: h.observe(), notices: h.notices.slice(), cards: h.cards() };
+    return { obs: h.observe(), notices: h.notices.slice(), cards: h.cards(), rows: h.rows() };
   } finally {
     await h.close();
   }
@@ -448,13 +455,17 @@ describe("card-off / card-on parity over the S04-M cases (AC-009.1/.2, AC-020.1,
       if (c.path === "return") {
         expect(committed || noticeResolved).toBe(true);
         expect(on.cards.terminal).toEqual({ state: "completed", label: "Completed" });
+        expect(on.rows).toEqual([{ kind: "automatic", state: "done", reason: "completed", terminal: 1 }]);
       } else if (c.path === "catch") {
         expect(on.cards.terminal?.state).toBe("error");
         expect(on.cards.terminal?.label).toBe("Failed");
+        expect(on.rows).toEqual([{ kind: "automatic", state: "error", reason: "failed", terminal: 1 }]);
       } else {
         expect(on.cards.terminal?.state).toBe("error");
         expect(on.cards.terminal?.label).toBe("Interrupted; outcome needs review");
+        expect(on.rows).toEqual([{ kind: "automatic", state: "error", reason: "interrupted", terminal: 1 }]);
       }
+      expect(off.rows).toEqual([]);
       expect(agentScript.calls.map((x) => x.itemStates)).toEqual([false, true]);
     });
   }

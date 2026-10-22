@@ -97,6 +97,7 @@ interface Outcome {
   nextSends: string[];
   cardRequests: { path: string; body: string }[];
   revoked: boolean;
+  rows: unknown[];
 }
 
 const roots: string[] = [];
@@ -178,6 +179,7 @@ async function run(cards: boolean, events: () => unknown[]): Promise<Outcome> {
       parts: adapter.prepare("SELECT * FROM delivery_parts").all(),
       quarantined: store.isTurnQuarantined("human"),
       revoked,
+      rows: cards ? adapter.prepare("SELECT state, terminal_reason AS reason, terminal_at IS NOT NULL AS terminal FROM card_messages").all() : [],
     };
     sends.length = 0;
     const second = await router.routeAndHandle(msg(2), async () => { throw new Error("must not run while quarantined"); });
@@ -231,6 +233,8 @@ describe("dispatch timeout with an uncertain execution (late answer)", () => {
     expect(terminal.state).toBe("error");
     expect(terminal.data.statusLabel).toBe("Timed out");
     expect(terminal.transient).toBeUndefined();
+    // Durable: the acknowledged timed_out terminal is persisted on the card row.
+    expect(on.rows).toEqual([{ state: "error", reason: "timed_out", terminal: 1 }]);
   });
 
   it("the timed_out card text contains no late-reply promise", async () => {
