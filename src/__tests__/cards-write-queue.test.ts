@@ -1530,6 +1530,43 @@ describe("drain under a shared fence whose signal aborts at the deadline", () =>
     expect(r.queue.status(id)).toMatchObject({ phase: "closed", outcome: "unresolved" });
   });
 
+  it("deadline-wins: mixed abort-honouring and abort-ignoring initial sends are both reported unresolved", async () => {
+    const r = rig();
+    // Self-contained transport: the first send settles on abort, the second never settles.
+    const sends: string[] = [];
+    const fetchImpl = ((_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const n = sends.push(typeof init?.body === "string" ? init.body : "");
+      if (n === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+        });
+      }
+      return new Promise<Response>(() => { /* ignores abort */ });
+    }) as typeof fetch;
+    const api = createCardApi({ apiUrl: API, credential: "token-a", fetchImpl, nowUtcMs: r.time.wall.nowUtcMs });
+    const queue = createWriteQueue({ api, store: r.store, policy: r.policy, pacer: r.pacer, clock: r.time.clock, timers: r.time.timers });
+    const honours = r.spec();
+    const ignores = r.spec();
+    queue.open(honours);
+    queue.open(ignores);
+    queue.enqueue(honours.cardId, frame("a"));
+    queue.enqueue(ignores.cardId, frame("b"));
+    await r.time.advance(800);
+    expect(sends).toHaveLength(2);
+    const f = sharedFence(r, 3000);
+    queue.close(f);
+    const report = queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 2 });
+    // The abort-settled send keeps its unresolved outcome; the abort-ignoring one is still in flight.
+    expect(queue.status(honours.cardId)).toMatchObject({ phase: "closed", outcome: "unresolved" });
+    expect(queue.status(ignores.cardId)).toMatchObject({ phase: "pending", inflight: true });
+    expect(queue.status(ignores.cardId)?.outcome).toBeUndefined();
+    for (const id of [honours.cardId, ignores.cardId]) {
+      expect(r.store.getMessage(queue.status(id)?.storeCardId as string)?.state).toBe("sending");
+    }
+  });
+
   it("work that settles before the deadline is still reported settled", async () => {
     const r = rig();
     const id = await activeCard(r);
