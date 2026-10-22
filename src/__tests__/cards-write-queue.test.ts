@@ -11,7 +11,7 @@ import { createPacer, type Pacer } from "../cards/pacer.js";
 import { createPolicy, type Authorization, type CardPolicy } from "../cards/policy.js";
 import { CardStore, type CardBinding } from "../cards/store.js";
 import { botRefOf, createTelemetrySink, originRefOf } from "../cards/telemetry.js";
-import { createWriteQueue, type CardFrame, type CardSpec } from "../cards/write-queue.js";
+import { createWriteQueue, type CardFrame, type CardSpec, type OpenResult } from "../cards/write-queue.js";
 import { createAdapter, type DbAdapter } from "../db-adapter.js";
 import { SessionStore } from "../session-store.js";
 import { profile } from "./fixtures/card-profile.js";
@@ -1376,5 +1376,112 @@ describe("P1: close right after a progress edit becomes eligible never starts th
     expect(afterClose).toEqual([]);
     // Either the edit started before close (one edit) or it was fenced (none); never one after close.
     expect(r.net.edits().length - editsBefore).toBeLessThanOrEqual(1);
+  });
+});
+
+// ─── U1-a: kind/capability contract at open ─────────────────────────────────
+
+describe("U1-a: open() rejects a spec whose kind and capability differ", () => {
+  type Untyped = { kind: string; capability: string };
+  const mismatched: ReadonlyArray<readonly [string, Untyped]> = [
+    ["automatic kind on the display capability", { kind: "automatic", capability: "display" }],
+    ["display kind on the automatic capability", { kind: "display", capability: "automatic" }],
+    ["interactive kind on the automatic capability", { kind: "interactive", capability: "automatic" }],
+    ["interactive kind on the interaction capability", { kind: "interactive", capability: "interaction" }],
+    ["equal values outside the domain", { kind: "interaction", capability: "interaction" }],
+  ];
+  const contractMetrics = (r: Rig) => r.metrics().filter((m) => m.name === "card_send_total" && m.labels.code === "contract");
+
+  it.each(mismatched)("%s -> contract with 0 reservations, 0 gate calls and 0 transport calls", async (_name, pair) => {
+    const r = rig();
+    const reserve = vi.spyOn(r.store, "reserveMessage");
+    const s = r.spec(pair as unknown as Partial<CardSpec>);
+    expect(r.queue.open(s)).toBe("contract");
+    expect(r.queue.status(s.cardId)).toBeUndefined();
+    expect(r.queue.enqueue(s.cardId, frame("a"))).toBe("unknown");
+    await r.time.advance(5000);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(r.gateCalls()).toBe(0);
+    expect(r.net.requests).toHaveLength(0);
+    expect(r.queue.suspendedCapabilities()).toEqual([]);
+    expect(contractMetrics(r)).toHaveLength(1);
+    expect(contractMetrics(r)[0].labels).toMatchObject({ bot_ref: botRefOf(r.bot), origin_ref: originRefOf(API), code: "contract" });
+  });
+
+  it("emits the contract metric through the existing reason set before open() returns", () => {
+    const r = rig();
+    const events: string[] = [];
+    const sink = { emit: (name: string, labels: Readonly<Record<string, string>>) => { events.push(`${name}:${labels.code}`); } };
+    const reserve = vi.spyOn(r.store, "reserveMessage").mockImplementation(() => { events.push("reserve"); throw new Error("unreachable"); });
+    const queue = createWriteQueue({ api: r.api, store: r.store, policy: r.policy, pacer: r.pacer, clock: r.time.clock,
+      timers: r.time.timers, telemetry: { sink, botRef: botRefOf(r.bot), originRef: originRefOf(API) } });
+    const result = queue.open(r.spec({ kind: "display", capability: "automatic" }));
+    events.push(`open:${result}`);
+    expect(events).toEqual(["card_send_total:contract", "open:contract"]);
+    expect(reserve).not.toHaveBeenCalled();
+  });
+
+  it("the contract check precedes the suspension check", async () => {
+    const r = rig();
+    r.net.reply({ status: 503 });
+    const s = r.spec();
+    r.queue.open(s);
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    expect(r.queue.suspendedCapabilities()).toEqual(["automatic"]);
+    const sends = r.net.sends().length;
+    expect(r.queue.open(r.spec({ kind: "display", capability: "automatic" }))).toBe("contract");
+    expect(r.queue.open(r.spec({ kind: "automatic", capability: "display" }))).toBe("contract");
+    expect(r.queue.open(r.spec())).toBe("suspended");
+    expect(contractMetrics(r)).toHaveLength(2);
+    expect(r.net.sends()).toHaveLength(sends);
+  });
+
+  it("a mismatched spec never replaces or disturbs an open card with the same id", async () => {
+    const r = rig();
+    const s = r.spec();
+    expect(r.queue.open(s)).toBe("opened");
+    expect(r.queue.open({ ...s, kind: "display" })).toBe("contract");
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    expect(r.queue.status(s.cardId)?.phase).toBe("active");
+    expect(storeRow(r, s.cardId)?.kind).toBe("automatic");
+  });
+
+  it("matching specs keep every existing result", async () => {
+    const r = rig();
+    const a = r.spec();
+    expect(r.queue.open(a)).toBe("opened");
+    expect(r.queue.open(a)).toBe("duplicate");
+    expect(r.queue.open(r.spec({ kind: "display", capability: "display" }))).toBe("opened");
+    r.net.reply({ status: 503 });
+    r.queue.enqueue(a.cardId, frame("a"));
+    await r.time.advance(800);
+    expect(r.queue.open(r.spec())).toBe("suspended");
+    const report = r.queue.drain({ reason: "shutdown", deadlineMono: r.time.now() + 3000, signal: new AbortController().signal });
+    expect(r.queue.open(r.spec({ kind: "display", capability: "display" }))).toBe("closing");
+    await r.time.advance(3000);
+    await report;
+    expect(contractMetrics(r)).toHaveLength(0);
+  });
+
+  it("an exhaustive caller handles every OpenResult member", () => {
+    const disposition = (result: OpenResult): "card" | "no_card" => {
+      switch (result) {
+        case "opened": return "card";
+        case "duplicate":
+        case "suspended":
+        case "closing":
+        case "contract": return "no_card";
+        default: {
+          const unreachable: never = result;
+          return unreachable;
+        }
+      }
+    };
+    const all: Record<OpenResult, true> = { opened: true, duplicate: true, suspended: true, closing: true, contract: true };
+    expect(Object.keys(all).map((k) => [k, disposition(k as OpenResult)])).toEqual([
+      ["opened", "card"], ["duplicate", "no_card"], ["suspended", "no_card"], ["closing", "no_card"], ["contract", "no_card"],
+    ]);
   });
 });
