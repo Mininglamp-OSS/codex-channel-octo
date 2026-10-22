@@ -11,7 +11,7 @@ import { createPacer, type Pacer } from "../cards/pacer.js";
 import { createPolicy, type Authorization, type CardPolicy } from "../cards/policy.js";
 import { CardStore, type CardBinding } from "../cards/store.js";
 import { botRefOf, createTelemetrySink, originRefOf } from "../cards/telemetry.js";
-import { createWriteQueue, type CardFrame, type CardSpec } from "../cards/write-queue.js";
+import { createWriteQueue, type CardFrame, type CardSpec, type OpenResult } from "../cards/write-queue.js";
 import { createAdapter, type DbAdapter } from "../db-adapter.js";
 import { SessionStore } from "../session-store.js";
 import { profile } from "./fixtures/card-profile.js";
@@ -221,7 +221,7 @@ describe("T2: edit retries reuse seq and body; 100 then 250 ms; 3 total attempts
     const r = rig();
     const id = await activeCard(r);
     r.net.reply({ status: 500 }, { status: 502 }, { status: 504 });
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(1000);
     expect(await result).toEqual({ outcome: "retry_exhausted", seq: 1 });
     expect(r.net.edits()).toHaveLength(3);
@@ -424,7 +424,7 @@ describe("T11: policy is re-authorized after every wait", () => {
     r.queue.enqueue(s.cardId, frame("p"));
     await r.time.advance(800);
     expect(r.net.edits()).toHaveLength(1);
-    const result = r.queue.finalize(s.cardId, done());
+    const result = r.queue.finalize(s.cardId, done(), "completed");
     await r.time.advance(130_000);
     expect(await result).toMatchObject({ outcome: "policy" });
     expect(r.net.edits()).toHaveLength(1);
@@ -446,7 +446,7 @@ describe("T11: policy is re-authorized after every wait", () => {
     expect(r.net.edits()).toHaveLength(1);
     // Only the write is dropped; the acknowledged card stays open for an independently authorized terminal.
     expect(r.queue.status(s.cardId)).toMatchObject({ phase: "active" });
-    const result = r.queue.finalize(s.cardId, done());
+    const result = r.queue.finalize(s.cardId, done(), "completed");
     await r.time.advance(1000);
     // Still revoked: the terminal is re-authorized on its own and denied, with no closure exception.
     expect(await result).toEqual({ outcome: "policy" });
@@ -487,7 +487,7 @@ describe("T13: terminal priority and absorbing terminal state", () => {
     r.queue.enqueue(id, frame("stale-progress"));
     await r.time.advance(300);
     const t = r.time.now();
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "acked", seq: 1 });
     const edits = r.net.edits();
@@ -506,7 +506,7 @@ describe("T13: terminal priority and absorbing terminal state", () => {
     r.queue.enqueue(id, frame("older"));
     await r.time.advance(800);
     expect(r.net.heldCount()).toBe(1);
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(100);
     expect(r.net.edits()).toHaveLength(1);
     r.net.release();
@@ -514,7 +514,7 @@ describe("T13: terminal priority and absorbing terminal state", () => {
     expect(await result).toEqual({ outcome: "acked", seq: 2 });
     expect(r.net.edits().map(seqOf)).toEqual([1, 2]);
     expect(r.queue.enqueue(id, frame("late"))).toBe("absorbed");
-    expect(await r.queue.finalize(id, done("again"))).toEqual({ outcome: "acked", seq: 2 });
+    expect(await r.queue.finalize(id, done("again"), "completed")).toEqual({ outcome: "acked", seq: 2 });
     await r.time.advance(5000);
     expect(r.net.edits()).toHaveLength(2);
     expect(storeRow(r, id)).toMatchObject({ seqReserved: 2, seqAcked: 2 });
@@ -526,7 +526,7 @@ describe("T13: terminal priority and absorbing terminal state", () => {
     r.net.reply({ status: 503 });
     r.queue.enqueue(id, frame("older"));
     await r.time.advance(850);
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(1000);
     expect(await result).toEqual({ outcome: "acked", seq: 2 });
     expect(r.net.edits().map((e) => [seqOf(e), progressOf(e.body)])).toEqual([[1, "older"], [2, "done"]]);
@@ -540,7 +540,7 @@ describe("T13: terminal priority and absorbing terminal state", () => {
     r.queue.enqueue(other, frame("x"));
     await r.time.advance(800);
     const e = r.time.now() + 60_000;
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advanceTo(e - 1);
     expect(r.net.edits().filter((x) => progressOf(x.body) === "done")).toHaveLength(0);
     await r.time.advanceTo(e);
@@ -555,7 +555,7 @@ describe("T14: lazy/finalize race", () => {
     r.queue.open(s);
     r.queue.enqueue(s.cardId, frame("a"));
     await r.time.advance(500);
-    expect(await r.queue.finalize(s.cardId, done())).toEqual({ outcome: "skipped" });
+    expect(await r.queue.finalize(s.cardId, done(), "completed")).toEqual({ outcome: "skipped" });
     await r.time.advance(5000);
     expect(r.net.requests).toHaveLength(0);
     expect(r.queue.status(s.cardId)?.storeCardId).toBeUndefined();
@@ -569,7 +569,7 @@ describe("T14: lazy/finalize race", () => {
     r.queue.enqueue(s.cardId, frame("a"));
     await r.time.advance(800);
     expect(r.net.sends()).toHaveLength(1);
-    const result = r.queue.finalize(s.cardId, done());
+    const result = r.queue.finalize(s.cardId, done(), "completed");
     await r.time.advance(200);
     expect(r.net.edits()).toHaveLength(0);
     expect(r.queue.status(s.cardId)?.terminalPending).toBe(true);
@@ -577,7 +577,7 @@ describe("T14: lazy/finalize race", () => {
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "acked", seq: 1 });
     expect(r.net.edits().map(seqOf)).toEqual([1]);
-    expect(storeRow(r, s.cardId)).toMatchObject({ state: "active", seqAcked: 1 });
+    expect(storeRow(r, s.cardId)).toMatchObject({ state: "done", terminalReason: "completed", seqAcked: 1 });
   });
 });
 
@@ -598,7 +598,7 @@ describe("T15: ambiguous initial sends are never resent", () => {
     r.queue.open(s2);
     r.queue.enqueue(s2.cardId, frame("a"));
     await r.time.advance(800);
-    const terminal = r.queue.finalize(s2.cardId, done());
+    const terminal = r.queue.finalize(s2.cardId, done(), "completed");
     r.queue.enqueue(s2.cardId, frame("b"));
     await r.time.advance(60_000);
     expect(await terminal).toEqual({ outcome: "ambiguous" });
@@ -621,7 +621,7 @@ describe("T16: §5.3 classification is preserved", () => {
     await r.time.advance(2000);
     expect(r.net.edits()).toHaveLength(1);
     expect(r.queue.status(id)).toMatchObject({ phase: "closed", outcome: "gone" });
-    expect(await r.queue.finalize(id, done())).toEqual({ outcome: "gone" });
+    expect(await r.queue.finalize(id, done(), "completed")).toEqual({ outcome: "gone" });
     expect(r.net.edits()).toHaveLength(1);
   });
 
@@ -640,7 +640,7 @@ describe("T16: §5.3 classification is preserved", () => {
     const r = rig();
     const id = await activeCard(r);
     r.net.reply({ status });
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(2000);
     expect(await result).toEqual({ outcome: "policy", seq: 1 });
     expect(r.net.edits()).toHaveLength(1);
@@ -656,7 +656,7 @@ describe("T16: §5.3 classification is preserved", () => {
     expect(r.net.edits()).toHaveLength(1);
     expect(r.metrics().filter((m) => m.name === "card_edit_total").map((m) => m.labels.code)).toEqual(["contract"]);
     expect(r.queue.status(id)?.phase).toBe("active");
-    expect(await (async () => { const p = r.queue.finalize(id, done()); await r.time.advance(0); return p; })())
+    expect(await (async () => { const p = r.queue.finalize(id, done(), "completed"); await r.time.advance(0); return p; })())
       .toEqual({ outcome: "acked", seq: 2 });
   });
 
@@ -664,7 +664,7 @@ describe("T16: §5.3 classification is preserved", () => {
     const r = rig({ staleSequence: { status: 409, field: "code", value: "stale_card_seq" } });
     const id = await activeCard(r);
     r.net.reply({ status: 409, body: { code: "stale_card_seq" } });
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(2000);
     expect(await result).toEqual({ outcome: "stale", seq: 1 });
     expect(r.net.edits()).toHaveLength(1);
@@ -750,7 +750,11 @@ describe("T19: the ordinary final/typing/apology paths never consult the pacer",
     const src = join(process.cwd(), "src");
     const importers = sources(src).filter((path) => /from\s+["'][^"']*(?:pacer|write-queue)\.js["']/.test(readFileSync(path, "utf8")))
       .map((path) => relative(src, path).split("\\").join("/")).sort();
-    expect(importers).toEqual(["cards/write-queue.ts"]);
+    // WP-13A-1: the startup queue factory and the drain registry's timer port, both inside the card subsystem.
+    expect(importers).toEqual(["cards/recovery.ts", "cards/resource-registry.ts", "cards/runtime.ts", "cards/write-queue.ts"]);
+    const ordinary = sources(src).filter((path) => !relative(src, path).startsWith("cards"))
+      .filter((path) => /from\s+["'][^"']*cards\/(?:recovery|resource-registry)\.js["']/.test(readFileSync(path, "utf8")));
+    expect(ordinary).toEqual([]);
   });
 
   it("ordinary delivery proceeds during an active card cooldown with zero gate consultations", async () => {
@@ -827,7 +831,7 @@ describe("T21: bounded drain and abort fencing", () => {
     r.queue.enqueue(other, frame("x"));
     await r.time.advance(800);
     const requests = r.net.requests.length;
-    const terminal = r.queue.finalize(id, done());
+    const terminal = r.queue.finalize(id, done(), "completed");
     const report = r.queue.drain(fenceAt(r, 3000));
     await r.time.advance(3000);
     expect(await report).toMatchObject({ unresolved: 0 });
@@ -843,7 +847,7 @@ describe("T21: bounded drain and abort fencing", () => {
     r.queue.open(lazy);
     r.queue.enqueue(lazy.cardId, frame("never"));
     r.queue.enqueue(id, frame("progress"));
-    const terminal = r.queue.finalize(id, done());
+    const terminal = r.queue.finalize(id, done(), "completed");
     const report = r.queue.drain(fenceAt(r, 3000));
     await r.time.advance(0);
     expect(await report).toEqual({ settled: 2, aborted: 0, unresolved: 0 });
@@ -863,7 +867,7 @@ describe("T21: bounded drain and abort fencing", () => {
     expect(r.queue.enqueue(id, frame("more"))).toBe("fenced");
     await r.time.advance(2000);
     expect(r.net.edits()).toHaveLength(0);
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "acked", seq: 1 });
     expect(r.queue.cancelNonterminal("turn-1")).toBe(0);
@@ -884,7 +888,7 @@ describe("B1: a non-terminal policy denial drops the write, never the acknowledg
     expect(r.queue.status(id)).toMatchObject({ phase: "active", dirty: false });
     expect(r.metrics().filter((m) => m.name === "card_edit_total").map((m) => m.labels.code)).toEqual(["policy"]);
     r.policy.allowed = true;
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "acked", seq: 1 });
     expect(r.net.edits().map((e) => [seqOf(e), progressOf(e.body)])).toEqual([[1, "done"]]);
@@ -908,7 +912,7 @@ describe("B1: a non-terminal policy denial drops the write, never the acknowledg
     r.policy.allowed = false;
     r.queue.enqueue(id, frame("denied"));
     await r.time.advance(800);
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "policy" });
     expect(r.net.edits()).toHaveLength(0);
@@ -952,7 +956,7 @@ describe("B2: retries carry the exact frozen body even if the caller mutates its
     const id = await activeCard(r);
     const f = done("final");
     r.net.reply({ network: true });
-    const result = r.queue.finalize(id, f);
+    const result = r.queue.finalize(id, f, "completed");
     await r.time.advance(0);
     (f as unknown as Mutable).data.progressText = "MUTATED";
     await r.time.advance(200);
@@ -1214,7 +1218,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     const reserveSeq = vi.spyOn(r.store, "reserveSequence");
     const requests = r.net.requests.length;
     r.queue.close(fenceAt(r, 3000));
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "cancelled" });
     await r.time.advance(5000);
@@ -1223,7 +1227,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     expect(r.queue.status(id)).toMatchObject({ outcome: "cancelled", terminalPending: true, inflight: false });
     expect(storeRow(r, id)).toMatchObject({ state: "active", seqReserved: 0, seqAcked: 0 });
     // Absorbing: a repeated finalize returns the same settled result without new work.
-    expect(await r.queue.finalize(id, done("again"))).toEqual({ outcome: "cancelled" });
+    expect(await r.queue.finalize(id, done("again"), "completed")).toEqual({ outcome: "cancelled" });
     expect(r.net.requests.length).toBe(requests);
   });
 
@@ -1235,7 +1239,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     const report = r.queue.drain(fenceAt(r, 3000));
     await r.time.advance(0);
     expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 0 });
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "cancelled" });
     await r.time.advance(5000);
@@ -1253,7 +1257,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     expect(r.net.heldCount()).toBe(1);
     const reserveSeq = vi.spyOn(r.store, "reserveSequence");
     const report = r.queue.drain(fenceAt(r, 3000));
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "cancelled" });
     r.net.release();
@@ -1269,7 +1273,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
   it("a terminal accepted before close still drains and is sent within the deadline", async () => {
     const r = rig();
     const id = await activeCard(r);
-    const terminal = r.queue.finalize(id, done());
+    const terminal = r.queue.finalize(id, done(), "completed");
     r.queue.close(fenceAt(r, 3000));
     await r.time.advance(0);
     expect(await terminal).toEqual({ outcome: "acked", seq: 1 });
@@ -1283,7 +1287,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     r.net.reply({ hold: true });
     r.queue.enqueue(id, frame("older"));
     await r.time.advance(800);
-    const terminal = r.queue.finalize(id, done());
+    const terminal = r.queue.finalize(id, done(), "completed");
     const report = r.queue.drain(fenceAt(r, 3000));
     await r.time.advance(100);
     r.net.release();
@@ -1300,7 +1304,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     r.queue.enqueue(s.cardId, frame("never"));
     const reserve = vi.spyOn(r.store, "reserveMessage");
     r.queue.close(fenceAt(r, 3000));
-    const result = r.queue.finalize(s.cardId, done());
+    const result = r.queue.finalize(s.cardId, done(), "completed");
     await r.time.advance(5000);
     expect(await result).toEqual({ outcome: "skipped" });
     expect(reserve).not.toHaveBeenCalled();
@@ -1376,5 +1380,322 @@ describe("P1: close right after a progress edit becomes eligible never starts th
     expect(afterClose).toEqual([]);
     // Either the edit started before close (one edit) or it was fenced (none); never one after close.
     expect(r.net.edits().length - editsBefore).toBeLessThanOrEqual(1);
+  });
+});
+
+// ─── U1-a: kind/capability contract at open ─────────────────────────────────
+
+describe("U1-a: open() rejects a spec whose kind and capability differ", () => {
+  type Untyped = { kind: string; capability: string };
+  const mismatched: ReadonlyArray<readonly [string, Untyped]> = [
+    ["automatic kind on the display capability", { kind: "automatic", capability: "display" }],
+    ["display kind on the automatic capability", { kind: "display", capability: "automatic" }],
+    ["interactive kind on the automatic capability", { kind: "interactive", capability: "automatic" }],
+    ["interactive kind on the interaction capability", { kind: "interactive", capability: "interaction" }],
+    ["equal values outside the domain", { kind: "interaction", capability: "interaction" }],
+  ];
+  const contractMetrics = (r: Rig) => r.metrics().filter((m) => m.name === "card_send_total" && m.labels.code === "contract");
+
+  it.each(mismatched)("%s -> contract with 0 reservations, 0 gate calls and 0 transport calls", async (_name, pair) => {
+    const r = rig();
+    const reserve = vi.spyOn(r.store, "reserveMessage");
+    const s = r.spec(pair as unknown as Partial<CardSpec>);
+    expect(r.queue.open(s)).toBe("contract");
+    expect(r.queue.status(s.cardId)).toBeUndefined();
+    expect(r.queue.enqueue(s.cardId, frame("a"))).toBe("unknown");
+    await r.time.advance(5000);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(r.gateCalls()).toBe(0);
+    expect(r.net.requests).toHaveLength(0);
+    expect(r.queue.suspendedCapabilities()).toEqual([]);
+    expect(contractMetrics(r)).toHaveLength(1);
+    expect(contractMetrics(r)[0].labels).toMatchObject({ bot_ref: botRefOf(r.bot), origin_ref: originRefOf(API), code: "contract" });
+  });
+
+  it("emits the contract metric through the existing reason set before open() returns", () => {
+    const r = rig();
+    const events: string[] = [];
+    const sink = { emit: (name: string, labels: Readonly<Record<string, string>>) => { events.push(`${name}:${labels.code}`); } };
+    const reserve = vi.spyOn(r.store, "reserveMessage").mockImplementation(() => { events.push("reserve"); throw new Error("unreachable"); });
+    const queue = createWriteQueue({ api: r.api, store: r.store, policy: r.policy, pacer: r.pacer, clock: r.time.clock,
+      timers: r.time.timers, telemetry: { sink, botRef: botRefOf(r.bot), originRef: originRefOf(API) } });
+    const result = queue.open(r.spec({ kind: "display", capability: "automatic" }));
+    events.push(`open:${result}`);
+    expect(events).toEqual(["card_send_total:contract", "open:contract"]);
+    expect(reserve).not.toHaveBeenCalled();
+  });
+
+  it("the contract check precedes the suspension check", async () => {
+    const r = rig();
+    r.net.reply({ status: 503 });
+    const s = r.spec();
+    r.queue.open(s);
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    expect(r.queue.suspendedCapabilities()).toEqual(["automatic"]);
+    const sends = r.net.sends().length;
+    expect(r.queue.open(r.spec({ kind: "display", capability: "automatic" }))).toBe("contract");
+    expect(r.queue.open(r.spec({ kind: "automatic", capability: "display" }))).toBe("contract");
+    expect(r.queue.open(r.spec())).toBe("suspended");
+    expect(contractMetrics(r)).toHaveLength(2);
+    expect(r.net.sends()).toHaveLength(sends);
+  });
+
+  it("a mismatched spec never replaces or disturbs an open card with the same id", async () => {
+    const r = rig();
+    const s = r.spec();
+    expect(r.queue.open(s)).toBe("opened");
+    expect(r.queue.open({ ...s, kind: "display" })).toBe("contract");
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    expect(r.queue.status(s.cardId)?.phase).toBe("active");
+    expect(storeRow(r, s.cardId)?.kind).toBe("automatic");
+  });
+
+  it("matching specs keep every existing result", async () => {
+    const r = rig();
+    const a = r.spec();
+    expect(r.queue.open(a)).toBe("opened");
+    expect(r.queue.open(a)).toBe("duplicate");
+    expect(r.queue.open(r.spec({ kind: "display", capability: "display" }))).toBe("opened");
+    r.net.reply({ status: 503 });
+    r.queue.enqueue(a.cardId, frame("a"));
+    await r.time.advance(800);
+    expect(r.queue.open(r.spec())).toBe("suspended");
+    const report = r.queue.drain({ reason: "shutdown", deadlineMono: r.time.now() + 3000, signal: new AbortController().signal });
+    expect(r.queue.open(r.spec({ kind: "display", capability: "display" }))).toBe("closing");
+    await r.time.advance(3000);
+    await report;
+    expect(contractMetrics(r)).toHaveLength(0);
+  });
+
+  it("an exhaustive caller handles every OpenResult member", () => {
+    const disposition = (result: OpenResult): "card" | "no_card" => {
+      switch (result) {
+        case "opened": return "card";
+        case "duplicate":
+        case "suspended":
+        case "closing":
+        case "contract": return "no_card";
+        default: {
+          const unreachable: never = result;
+          return unreachable;
+        }
+      }
+    };
+    const all: Record<OpenResult, true> = { opened: true, duplicate: true, suspended: true, closing: true, contract: true };
+    expect(Object.keys(all).map((k) => [k, disposition(k as OpenResult)])).toEqual([
+      ["opened", "card"], ["duplicate", "no_card"], ["suspended", "no_card"], ["closing", "no_card"], ["contract", "no_card"],
+    ]);
+  });
+});
+
+// ─── Shared fence: the registry's deadline signal ───────────────────────────
+
+describe("drain under a shared fence whose signal aborts at the deadline", () => {
+  /** Fence whose signal is aborted by a timer armed before drain(), as an aggregate registry does. */
+  function sharedFence(r: Rig, ms: number) {
+    const controller = new AbortController();
+    r.time.timers.setTimeout(() => controller.abort(), ms);
+    return { reason: "shutdown" as const, deadlineMono: r.time.now() + ms, signal: controller.signal };
+  }
+
+  it("an in-flight initial send is still reported unresolved", async () => {
+    const r = rig();
+    const s = r.spec();
+    r.queue.open(s);
+    r.net.reply({ hold: true });
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    const f = sharedFence(r, 3000);
+    r.queue.close(f);
+    const report = r.queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 1 });
+    expect(r.queue.status(s.cardId)).toMatchObject({ phase: "closed", outcome: "unresolved" });
+    expect(storeRow(r, s.cardId)?.state).toBe("sending");
+  });
+
+  it("an in-flight edit is still reported unresolved", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ hold: true });
+    r.queue.enqueue(id, frame("p"));
+    await r.time.advance(800);
+    const f = sharedFence(r, 3000);
+    r.queue.close(f);
+    const report = r.queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 1 });
+    expect(r.queue.status(id)).toMatchObject({ phase: "closed", outcome: "unresolved" });
+  });
+
+  it("deadline-wins: mixed abort-honouring and abort-ignoring initial sends are both reported unresolved", async () => {
+    const r = rig();
+    // Self-contained transport: the first send settles on abort, the second never settles.
+    const sends: string[] = [];
+    const fetchImpl = ((_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const n = sends.push(typeof init?.body === "string" ? init.body : "");
+      if (n === 1) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+        });
+      }
+      return new Promise<Response>(() => { /* ignores abort */ });
+    }) as typeof fetch;
+    const api = createCardApi({ apiUrl: API, credential: "token-a", fetchImpl, nowUtcMs: r.time.wall.nowUtcMs });
+    const queue = createWriteQueue({ api, store: r.store, policy: r.policy, pacer: r.pacer, clock: r.time.clock, timers: r.time.timers });
+    const honours = r.spec();
+    const ignores = r.spec();
+    queue.open(honours);
+    queue.open(ignores);
+    queue.enqueue(honours.cardId, frame("a"));
+    queue.enqueue(ignores.cardId, frame("b"));
+    await r.time.advance(800);
+    expect(sends).toHaveLength(2);
+    const f = sharedFence(r, 3000);
+    queue.close(f);
+    const report = queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 2 });
+    // The abort-settled send keeps its unresolved outcome; the abort-ignoring one is still in flight.
+    expect(queue.status(honours.cardId)).toMatchObject({ phase: "closed", outcome: "unresolved" });
+    expect(queue.status(ignores.cardId)).toMatchObject({ phase: "pending", inflight: true });
+    expect(queue.status(ignores.cardId)?.outcome).toBeUndefined();
+    for (const id of [honours.cardId, ignores.cardId]) {
+      expect(r.store.getMessage(queue.status(id)?.storeCardId as string)?.state).toBe("sending");
+    }
+  });
+
+  it("work that settles before the deadline is still reported settled", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const terminal = r.queue.finalize(id, done(), "completed");
+    const f = sharedFence(r, 3000);
+    const report = r.queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 1, aborted: 0, unresolved: 0 });
+    expect(await terminal).toEqual({ outcome: "acked", seq: 1 });
+  });
+});
+
+// ─── WP-06 correction: durable automatic terminal ───────────────────────────
+
+describe("durable terminal: the row becomes terminal only after the terminal edit's ack is persisted", () => {
+  const fenceAt = (r: Rig, ms: number) => ({ reason: "shutdown" as const, deadlineMono: r.time.now() + ms, signal: new AbortController().signal });
+
+  it("an acknowledged completed terminal marks the row done/completed", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const result = await r.queue.finalize(id, done(), "completed");
+    expect(result.outcome).toBe("acked");
+    expect(storeRow(r, id)).toMatchObject({ state: "done", terminalReason: "completed", seqAcked: result.seq });
+    expect(storeRow(r, id)?.terminalAt).not.toBeNull();
+  });
+
+  it("an acknowledged error terminal records its reason", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    expect((await r.queue.finalize(id, frame("t", "error"), "timed_out")).outcome).toBe("acked");
+    expect(storeRow(r, id)).toMatchObject({ state: "error", terminalReason: "timed_out" });
+  });
+
+  it("a retried terminal edit persists once, after the acknowledged attempt", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ status: 503 });
+    const pending = r.queue.finalize(id, done(), "completed");
+    await r.time.advance(0);
+    expect(storeRow(r, id)?.state).toBe("active");
+    await r.time.advance(100);
+    expect((await pending).outcome).toBe("acked");
+    expect(r.net.edits()).toHaveLength(2);
+    expect(storeRow(r, id)).toMatchObject({ state: "done", terminalReason: "completed" });
+  });
+
+  it("an automatic terminal without a reason is refused before reservation and transport", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const before = storeRow(r, id);
+    expect(await r.queue.finalize(id, done())).toEqual({ outcome: "contract" });
+    expect(r.net.edits()).toHaveLength(0);
+    expect(storeRow(r, id)).toMatchObject({ seqReserved: before?.seqReserved, terminalIntent: null, state: "active" });
+  });
+
+  it("a policy-denied terminal sends nothing and leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.policy.allowed = false;
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("policy");
+    expect(r.net.edits()).toHaveLength(0);
+    expect(storeRow(r, id)).toMatchObject({ state: "active", terminalReason: null, terminalAt: null });
+  });
+
+  it("a terminal edit rejected by the server leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ status: 400, body: { code: "bad" } });
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("contract");
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a terminal requested after close is cancelled and leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.queue.close(fenceAt(r, 3000));
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("cancelled");
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a terminal edit still in flight at the drain deadline is unresolved and leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ hold: true });
+    const result = r.queue.finalize(id, done(), "completed");
+    await r.time.advance(0);
+    const report = r.queue.drain(fenceAt(r, 3000));
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 1 });
+    await r.time.advance(1000);
+    expect((await result).outcome).toBe("unresolved");
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a failed ack persistence is store_failed: acknowledged remotely, never claimed durable", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    vi.spyOn(r.store, "ackSequence").mockImplementation(() => { throw new Error("disk"); });
+    const mark = vi.spyOn(r.store, "markTerminal");
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("store_failed");
+    expect(mark).not.toHaveBeenCalled();
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a failed terminal persistence is store_failed and never reported as acked", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    vi.spyOn(r.store, "markTerminal").mockImplementation(() => { throw new Error("disk"); });
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("store_failed");
+    const r2 = rig();
+    const id2 = await activeCard(r2);
+    vi.spyOn(r2.store, "markTerminal").mockReturnValue({ kind: "invalid_state", state: "error" });
+    expect((await r2.queue.finalize(id2, done(), "completed")).outcome).toBe("store_failed");
+  });
+
+  it("an idempotent repeat in the store still counts as durable", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    vi.spyOn(r.store, "markTerminal").mockReturnValue({ kind: "already_terminal" });
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("acked");
+  });
+
+  it("a card closed before its first send leaves no row to mark", async () => {
+    const r = rig();
+    const s = r.spec();
+    r.queue.open(s);
+    r.queue.enqueue(s.cardId, frame("first"));
+    const mark = vi.spyOn(r.store, "markTerminal");
+    expect((await r.queue.finalize(s.cardId, done(), "completed")).outcome).toBe("skipped");
+    expect(mark).not.toHaveBeenCalled();
   });
 });
