@@ -1485,3 +1485,55 @@ describe("U1-a: open() rejects a spec whose kind and capability differ", () => {
     ]);
   });
 });
+
+// ─── Shared fence: the registry's deadline signal ───────────────────────────
+
+describe("drain under a shared fence whose signal aborts at the deadline", () => {
+  /** Fence whose signal is aborted by a timer armed before drain(), as an aggregate registry does. */
+  function sharedFence(r: Rig, ms: number) {
+    const controller = new AbortController();
+    r.time.timers.setTimeout(() => controller.abort(), ms);
+    return { reason: "shutdown" as const, deadlineMono: r.time.now() + ms, signal: controller.signal };
+  }
+
+  it("an in-flight initial send is still reported unresolved", async () => {
+    const r = rig();
+    const s = r.spec();
+    r.queue.open(s);
+    r.net.reply({ hold: true });
+    r.queue.enqueue(s.cardId, frame("a"));
+    await r.time.advance(800);
+    const f = sharedFence(r, 3000);
+    r.queue.close(f);
+    const report = r.queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 1 });
+    expect(r.queue.status(s.cardId)).toMatchObject({ phase: "closed", outcome: "unresolved" });
+    expect(storeRow(r, s.cardId)?.state).toBe("sending");
+  });
+
+  it("an in-flight edit is still reported unresolved", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ hold: true });
+    r.queue.enqueue(id, frame("p"));
+    await r.time.advance(800);
+    const f = sharedFence(r, 3000);
+    r.queue.close(f);
+    const report = r.queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 1 });
+    expect(r.queue.status(id)).toMatchObject({ phase: "closed", outcome: "unresolved" });
+  });
+
+  it("work that settles before the deadline is still reported settled", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const terminal = r.queue.finalize(id, done());
+    const f = sharedFence(r, 3000);
+    const report = r.queue.drain(f);
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 1, aborted: 0, unresolved: 0 });
+    expect(await terminal).toEqual({ outcome: "acked", seq: 1 });
+  });
+});
