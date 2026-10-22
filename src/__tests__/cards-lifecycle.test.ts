@@ -303,6 +303,55 @@ describe("ordered writes and terminals (AC-007.1, AC-008.2)", () => {
   });
 });
 
+describe("durable terminal rows (WP-06 correction)", () => {
+  const row = (r: Rig, t: AutomaticTurn) => {
+    const id = r.queue.status(`card-${t.generation.slice(4)}`)?.storeCardId;
+    return id === undefined ? undefined : r.store.getMessage(id);
+  };
+
+  it("Done persists done/completed after the terminal edit is acknowledged", async () => {
+    const r = rig();
+    const t = await activeTurn(r);
+    expect(row(r, t)?.state).toBe("active");
+    await finish(r, t, report(1, 1));
+    expect(row(r, t)).toMatchObject({ state: "done", terminalReason: "completed" });
+  });
+
+  it("each Error reason persists its own terminal_reason", async () => {
+    for (const [signal, reason] of [
+      [{ t: "handler_error", category: "runtime_failed" }, "failed"],
+      [{ t: "handler_error", category: "stream_interrupted" }, "interrupted"],
+      [{ t: "dispatch_timeout" }, "timed_out"],
+      [{ t: "shutdown" }, "interrupted"],
+    ] as const) {
+      const r = rig();
+      const t = await activeTurn(r);
+      t.signal(signal);
+      t.settle();
+      await r.settleAll();
+      expect(row(r, t)).toMatchObject({ state: "error", terminalReason: reason });
+    }
+  });
+
+  it("a revoked terminal is never persisted as terminal", async () => {
+    const r = rig();
+    const t = await activeTurn(r);
+    await r.time.advance(61_000);
+    r.setProfile(() => json(200, profile({ config: { card_enabled: false, reasoning_enabled: false, reasoning_template_ref: null, display_enabled: false, interaction_enabled: false } })));
+    await finish(r, t, report(1, 1));
+    expect(row(r, t)).toMatchObject({ state: "active", terminalReason: null, terminalAt: null });
+  });
+
+  it("the expired-snapshot minimal closure is persisted once acknowledged", async () => {
+    const r = rig();
+    const t = await activeTurn(r);
+    await r.time.advance(61_000);
+    r.setProfile(() => { throw new TypeError("fetch failed"); });
+    await finish(r, t, report(1, 1));
+    expect(row(r, t)).toMatchObject({ state: "done", terminalReason: "completed" });
+  });
+});
+
 describe("D-A report rules (R1 C2/C3)", () => {
   it("a Done-shaped catch-path report followed by handler_error is Error", async () => {
     const r = rig();

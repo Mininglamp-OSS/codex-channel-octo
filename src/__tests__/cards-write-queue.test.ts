@@ -1578,3 +1578,122 @@ describe("drain under a shared fence whose signal aborts at the deadline", () =>
     expect(await terminal).toEqual({ outcome: "acked", seq: 1 });
   });
 });
+
+// ─── WP-06 correction: durable automatic terminal ───────────────────────────
+
+describe("durable terminal: the row becomes terminal only after the terminal edit's ack is persisted", () => {
+  const fenceAt = (r: Rig, ms: number) => ({ reason: "shutdown" as const, deadlineMono: r.time.now() + ms, signal: new AbortController().signal });
+
+  it("an acknowledged completed terminal marks the row done/completed", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    const result = await r.queue.finalize(id, done(), "completed");
+    expect(result.outcome).toBe("acked");
+    expect(storeRow(r, id)).toMatchObject({ state: "done", terminalReason: "completed", seqAcked: result.seq });
+    expect(storeRow(r, id)?.terminalAt).not.toBeNull();
+  });
+
+  it("an acknowledged error terminal records its reason", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    expect((await r.queue.finalize(id, frame("t", "error"), "timed_out")).outcome).toBe("acked");
+    expect(storeRow(r, id)).toMatchObject({ state: "error", terminalReason: "timed_out" });
+  });
+
+  it("a retried terminal edit persists once, after the acknowledged attempt", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ status: 503 });
+    const pending = r.queue.finalize(id, done(), "completed");
+    await r.time.advance(0);
+    expect(storeRow(r, id)?.state).toBe("active");
+    await r.time.advance(100);
+    expect((await pending).outcome).toBe("acked");
+    expect(r.net.edits()).toHaveLength(2);
+    expect(storeRow(r, id)).toMatchObject({ state: "done", terminalReason: "completed" });
+  });
+
+  it("without a terminal reason the row is left as before (no durable claim)", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    expect((await r.queue.finalize(id, done())).outcome).toBe("acked");
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a policy-denied terminal sends nothing and leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.policy.allowed = false;
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("policy");
+    expect(r.net.edits()).toHaveLength(0);
+    expect(storeRow(r, id)).toMatchObject({ state: "active", terminalReason: null, terminalAt: null });
+  });
+
+  it("a terminal edit rejected by the server leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ status: 400, body: { code: "bad" } });
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("contract");
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a terminal requested after close is cancelled and leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.queue.close(fenceAt(r, 3000));
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("cancelled");
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a terminal edit still in flight at the drain deadline is unresolved and leaves the row nonterminal", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    r.net.reply({ hold: true });
+    const result = r.queue.finalize(id, done(), "completed");
+    await r.time.advance(0);
+    const report = r.queue.drain(fenceAt(r, 3000));
+    await r.time.advance(3000);
+    expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 1 });
+    await r.time.advance(1000);
+    expect((await result).outcome).toBe("unresolved");
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a failed ack persistence is store_failed: acknowledged remotely, never claimed durable", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    vi.spyOn(r.store, "ackSequence").mockImplementation(() => { throw new Error("disk"); });
+    const mark = vi.spyOn(r.store, "markTerminal");
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("store_failed");
+    expect(mark).not.toHaveBeenCalled();
+    expect(storeRow(r, id)?.state).toBe("active");
+  });
+
+  it("a failed terminal persistence is store_failed and never reported as acked", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    vi.spyOn(r.store, "markTerminal").mockImplementation(() => { throw new Error("disk"); });
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("store_failed");
+    const r2 = rig();
+    const id2 = await activeCard(r2);
+    vi.spyOn(r2.store, "markTerminal").mockReturnValue({ kind: "invalid_state", state: "error" });
+    expect((await r2.queue.finalize(id2, done(), "completed")).outcome).toBe("store_failed");
+  });
+
+  it("an idempotent repeat in the store still counts as durable", async () => {
+    const r = rig();
+    const id = await activeCard(r);
+    vi.spyOn(r.store, "markTerminal").mockReturnValue({ kind: "already_terminal" });
+    expect((await r.queue.finalize(id, done(), "completed")).outcome).toBe("acked");
+  });
+
+  it("a card closed before its first send leaves no row to mark", async () => {
+    const r = rig();
+    const s = r.spec();
+    r.queue.open(s);
+    r.queue.enqueue(s.cardId, frame("first"));
+    const mark = vi.spyOn(r.store, "markTerminal");
+    expect((await r.queue.finalize(s.cardId, done(), "completed")).outcome).toBe("skipped");
+    expect(mark).not.toHaveBeenCalled();
+  });
+});
