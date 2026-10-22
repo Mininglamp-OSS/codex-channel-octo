@@ -168,11 +168,11 @@ class SuperviseAttemptTest(unittest.TestCase):
                 process.kill()
                 process.wait()
 
-    def test_a_subreaper_that_cannot_exit_is_killed_and_reported(self) -> None:
-        # A stand-in subreaper runs the command and then never exits; the supervisor must not
-        # wait on it forever or report the command's success.
+    def stuck_subreaper_supervisor(self) -> Path:
+        # A copy of the supervisor next to a stand-in subreaper that runs the command, records its
+        # status and then never exits.
         stub_dir = self.dir / "stub"
-        stub_dir.mkdir()
+        stub_dir.mkdir(exist_ok=True)
         shutil.copy(SUPERVISOR, stub_dir / "supervise-attempt.sh")
         (stub_dir / "attempt_subreaper.py").write_text(
             "import os, signal, subprocess, sys, time\n"
@@ -183,14 +183,70 @@ class SuperviseAttemptTest(unittest.TestCase):
             "while True: time.sleep(1)\n",
             encoding="utf-8",
         )
+        return stub_dir / "supervise-attempt.sh"
+
+    def test_a_subreaper_that_cannot_exit_is_killed_and_reported(self) -> None:
+        # The supervisor must not wait on a stuck subreaper forever or report the command's success.
         started = time.monotonic()
         result = subprocess.run(
-            [str(stub_dir / "supervise-attempt.sh"), "20", "1", "--", "sh", "-c", "exit 0"],
+            [str(self.stuck_subreaper_supervisor()), "20", "1", "--", "sh", "-c", "exit 0"],
             capture_output=True, text=True, timeout=60, check=False,
         )
         self.assertEqual(result.returncode, 125, result.stderr)
         self.assertIn("subreaper did not exit", result.stderr)
         self.assertLess(time.monotonic() - started, 5 + 5, "the stuck subreaper was not bounded by the reap budget")
+
+    def test_a_reaping_failure_keeps_the_originating_failure_status(self) -> None:
+        # The reaping failure is still reported, but the test's own failure stays the exit status.
+        result = subprocess.run(
+            [str(self.stuck_subreaper_supervisor()), "20", "1", "--", "sh", "-c", "exit 3"],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn("subreaper did not exit", result.stderr)
+
+    def test_a_reaping_failure_after_the_deadline_keeps_the_timeout_status(self) -> None:
+        # The detached child ignores TERM and the stand-in subreaper never exits, so teardown fails
+        # after the deadline; the deadline must remain the reported cause.
+        supervisor = self.stuck_subreaper_supervisor()
+        result = subprocess.run(
+            [str(supervisor), "2", "1", "--", NODE, str(self.fixture), str(self.pidfile), str(self.marker), "ignore", "ignore", "hang"],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+        if self.pidfile.exists():
+            self.child = int(self.pidfile.read_text(encoding="utf-8"))
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertIn("subreaper did not exit", result.stderr)
+
+    def test_each_attempt_gets_a_private_temp_dir_that_is_removed(self) -> None:
+        receipt = self.dir / "tmpdirs"
+        script = 'printf "%s %s %s\\n" "${TMPDIR:--}" "${TMP:--}" "${TEMP:--}" >> "$1"; touch "${TMPDIR:-.}/left-behind"'
+        outer = os.path.realpath(tempfile.gettempdir())
+        for _ in range(2):
+            result = subprocess.run(
+                [SUPERVISOR, "5", "1", "--", "sh", "-c", script, "sh", str(receipt)],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+        seen = [line.split() for line in receipt.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(seen), 2)
+        for tmpdir, tmp, temp in seen:
+            self.assertTrue(os.path.isabs(tmpdir), "the attempt has no private temp dir")
+            self.assertEqual({tmpdir, tmp, temp}, {tmpdir}, "TMPDIR, TMP and TEMP differ")
+            self.assertNotEqual(os.path.realpath(tmpdir), outer, "the attempt shares the runner's temp dir")
+            self.assertFalse(Path(tmpdir).exists(), "the attempt's temp dir outlived the attempt")
+        self.assertNotEqual(seen[0][0], seen[1][0], "consecutive attempts shared a temp dir")
+
+    def test_a_timed_out_attempt_removes_its_temp_dir_after_teardown(self) -> None:
+        receipt = self.dir / "tmpdir"
+        script = 'printf "%s" "$TMPDIR" > "$1"; touch "$TMPDIR/in-use"; exec sleep 60'
+        result = subprocess.run(
+            [SUPERVISOR, "1", "1", "--", "sh", "-c", script, "sh", str(receipt)],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        self.assertEqual(result.returncode, 124, result.stderr)
+        self.assertTrue(receipt.read_text(encoding="utf-8"))
+        self.assertFalse(Path(receipt.read_text(encoding="utf-8")).exists(), "the timed-out attempt's temp dir survived")
 
     def test_deadline_reaps_a_tokenless_detached_child_whose_parent_dies_on_term(self) -> None:
         # The parent exits on the session TERM before forwarding it; the child was re-parented and has no token.
