@@ -221,7 +221,7 @@ describe("T2: edit retries reuse seq and body; 100 then 250 ms; 3 total attempts
     const r = rig();
     const id = await activeCard(r);
     r.net.reply({ status: 500 }, { status: 502 }, { status: 504 });
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(1000);
     expect(await result).toEqual({ outcome: "retry_exhausted", seq: 1 });
     expect(r.net.edits()).toHaveLength(3);
@@ -424,7 +424,7 @@ describe("T11: policy is re-authorized after every wait", () => {
     r.queue.enqueue(s.cardId, frame("p"));
     await r.time.advance(800);
     expect(r.net.edits()).toHaveLength(1);
-    const result = r.queue.finalize(s.cardId, done());
+    const result = r.queue.finalize(s.cardId, done(), "completed");
     await r.time.advance(130_000);
     expect(await result).toMatchObject({ outcome: "policy" });
     expect(r.net.edits()).toHaveLength(1);
@@ -446,7 +446,7 @@ describe("T11: policy is re-authorized after every wait", () => {
     expect(r.net.edits()).toHaveLength(1);
     // Only the write is dropped; the acknowledged card stays open for an independently authorized terminal.
     expect(r.queue.status(s.cardId)).toMatchObject({ phase: "active" });
-    const result = r.queue.finalize(s.cardId, done());
+    const result = r.queue.finalize(s.cardId, done(), "completed");
     await r.time.advance(1000);
     // Still revoked: the terminal is re-authorized on its own and denied, with no closure exception.
     expect(await result).toEqual({ outcome: "policy" });
@@ -487,7 +487,7 @@ describe("T13: terminal priority and absorbing terminal state", () => {
     r.queue.enqueue(id, frame("stale-progress"));
     await r.time.advance(300);
     const t = r.time.now();
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "acked", seq: 1 });
     const edits = r.net.edits();
@@ -506,7 +506,7 @@ describe("T13: terminal priority and absorbing terminal state", () => {
     r.queue.enqueue(id, frame("older"));
     await r.time.advance(800);
     expect(r.net.heldCount()).toBe(1);
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(100);
     expect(r.net.edits()).toHaveLength(1);
     r.net.release();
@@ -514,7 +514,7 @@ describe("T13: terminal priority and absorbing terminal state", () => {
     expect(await result).toEqual({ outcome: "acked", seq: 2 });
     expect(r.net.edits().map(seqOf)).toEqual([1, 2]);
     expect(r.queue.enqueue(id, frame("late"))).toBe("absorbed");
-    expect(await r.queue.finalize(id, done("again"))).toEqual({ outcome: "acked", seq: 2 });
+    expect(await r.queue.finalize(id, done("again"), "completed")).toEqual({ outcome: "acked", seq: 2 });
     await r.time.advance(5000);
     expect(r.net.edits()).toHaveLength(2);
     expect(storeRow(r, id)).toMatchObject({ seqReserved: 2, seqAcked: 2 });
@@ -526,7 +526,7 @@ describe("T13: terminal priority and absorbing terminal state", () => {
     r.net.reply({ status: 503 });
     r.queue.enqueue(id, frame("older"));
     await r.time.advance(850);
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(1000);
     expect(await result).toEqual({ outcome: "acked", seq: 2 });
     expect(r.net.edits().map((e) => [seqOf(e), progressOf(e.body)])).toEqual([[1, "older"], [2, "done"]]);
@@ -540,7 +540,7 @@ describe("T13: terminal priority and absorbing terminal state", () => {
     r.queue.enqueue(other, frame("x"));
     await r.time.advance(800);
     const e = r.time.now() + 60_000;
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advanceTo(e - 1);
     expect(r.net.edits().filter((x) => progressOf(x.body) === "done")).toHaveLength(0);
     await r.time.advanceTo(e);
@@ -555,7 +555,7 @@ describe("T14: lazy/finalize race", () => {
     r.queue.open(s);
     r.queue.enqueue(s.cardId, frame("a"));
     await r.time.advance(500);
-    expect(await r.queue.finalize(s.cardId, done())).toEqual({ outcome: "skipped" });
+    expect(await r.queue.finalize(s.cardId, done(), "completed")).toEqual({ outcome: "skipped" });
     await r.time.advance(5000);
     expect(r.net.requests).toHaveLength(0);
     expect(r.queue.status(s.cardId)?.storeCardId).toBeUndefined();
@@ -569,7 +569,7 @@ describe("T14: lazy/finalize race", () => {
     r.queue.enqueue(s.cardId, frame("a"));
     await r.time.advance(800);
     expect(r.net.sends()).toHaveLength(1);
-    const result = r.queue.finalize(s.cardId, done());
+    const result = r.queue.finalize(s.cardId, done(), "completed");
     await r.time.advance(200);
     expect(r.net.edits()).toHaveLength(0);
     expect(r.queue.status(s.cardId)?.terminalPending).toBe(true);
@@ -598,7 +598,7 @@ describe("T15: ambiguous initial sends are never resent", () => {
     r.queue.open(s2);
     r.queue.enqueue(s2.cardId, frame("a"));
     await r.time.advance(800);
-    const terminal = r.queue.finalize(s2.cardId, done());
+    const terminal = r.queue.finalize(s2.cardId, done(), "completed");
     r.queue.enqueue(s2.cardId, frame("b"));
     await r.time.advance(60_000);
     expect(await terminal).toEqual({ outcome: "ambiguous" });
@@ -621,7 +621,7 @@ describe("T16: §5.3 classification is preserved", () => {
     await r.time.advance(2000);
     expect(r.net.edits()).toHaveLength(1);
     expect(r.queue.status(id)).toMatchObject({ phase: "closed", outcome: "gone" });
-    expect(await r.queue.finalize(id, done())).toEqual({ outcome: "gone" });
+    expect(await r.queue.finalize(id, done(), "completed")).toEqual({ outcome: "gone" });
     expect(r.net.edits()).toHaveLength(1);
   });
 
@@ -640,7 +640,7 @@ describe("T16: §5.3 classification is preserved", () => {
     const r = rig();
     const id = await activeCard(r);
     r.net.reply({ status });
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(2000);
     expect(await result).toEqual({ outcome: "policy", seq: 1 });
     expect(r.net.edits()).toHaveLength(1);
@@ -656,7 +656,7 @@ describe("T16: §5.3 classification is preserved", () => {
     expect(r.net.edits()).toHaveLength(1);
     expect(r.metrics().filter((m) => m.name === "card_edit_total").map((m) => m.labels.code)).toEqual(["contract"]);
     expect(r.queue.status(id)?.phase).toBe("active");
-    expect(await (async () => { const p = r.queue.finalize(id, done()); await r.time.advance(0); return p; })())
+    expect(await (async () => { const p = r.queue.finalize(id, done(), "completed"); await r.time.advance(0); return p; })())
       .toEqual({ outcome: "acked", seq: 2 });
   });
 
@@ -664,7 +664,7 @@ describe("T16: §5.3 classification is preserved", () => {
     const r = rig({ staleSequence: { status: 409, field: "code", value: "stale_card_seq" } });
     const id = await activeCard(r);
     r.net.reply({ status: 409, body: { code: "stale_card_seq" } });
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(2000);
     expect(await result).toEqual({ outcome: "stale", seq: 1 });
     expect(r.net.edits()).toHaveLength(1);
@@ -831,7 +831,7 @@ describe("T21: bounded drain and abort fencing", () => {
     r.queue.enqueue(other, frame("x"));
     await r.time.advance(800);
     const requests = r.net.requests.length;
-    const terminal = r.queue.finalize(id, done());
+    const terminal = r.queue.finalize(id, done(), "completed");
     const report = r.queue.drain(fenceAt(r, 3000));
     await r.time.advance(3000);
     expect(await report).toMatchObject({ unresolved: 0 });
@@ -847,7 +847,7 @@ describe("T21: bounded drain and abort fencing", () => {
     r.queue.open(lazy);
     r.queue.enqueue(lazy.cardId, frame("never"));
     r.queue.enqueue(id, frame("progress"));
-    const terminal = r.queue.finalize(id, done());
+    const terminal = r.queue.finalize(id, done(), "completed");
     const report = r.queue.drain(fenceAt(r, 3000));
     await r.time.advance(0);
     expect(await report).toEqual({ settled: 2, aborted: 0, unresolved: 0 });
@@ -867,7 +867,7 @@ describe("T21: bounded drain and abort fencing", () => {
     expect(r.queue.enqueue(id, frame("more"))).toBe("fenced");
     await r.time.advance(2000);
     expect(r.net.edits()).toHaveLength(0);
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "acked", seq: 1 });
     expect(r.queue.cancelNonterminal("turn-1")).toBe(0);
@@ -888,7 +888,7 @@ describe("B1: a non-terminal policy denial drops the write, never the acknowledg
     expect(r.queue.status(id)).toMatchObject({ phase: "active", dirty: false });
     expect(r.metrics().filter((m) => m.name === "card_edit_total").map((m) => m.labels.code)).toEqual(["policy"]);
     r.policy.allowed = true;
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "acked", seq: 1 });
     expect(r.net.edits().map((e) => [seqOf(e), progressOf(e.body)])).toEqual([[1, "done"]]);
@@ -912,7 +912,7 @@ describe("B1: a non-terminal policy denial drops the write, never the acknowledg
     r.policy.allowed = false;
     r.queue.enqueue(id, frame("denied"));
     await r.time.advance(800);
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "policy" });
     expect(r.net.edits()).toHaveLength(0);
@@ -956,7 +956,7 @@ describe("B2: retries carry the exact frozen body even if the caller mutates its
     const id = await activeCard(r);
     const f = done("final");
     r.net.reply({ network: true });
-    const result = r.queue.finalize(id, f);
+    const result = r.queue.finalize(id, f, "completed");
     await r.time.advance(0);
     (f as unknown as Mutable).data.progressText = "MUTATED";
     await r.time.advance(200);
@@ -1218,7 +1218,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     const reserveSeq = vi.spyOn(r.store, "reserveSequence");
     const requests = r.net.requests.length;
     r.queue.close(fenceAt(r, 3000));
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "cancelled" });
     await r.time.advance(5000);
@@ -1227,7 +1227,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     expect(r.queue.status(id)).toMatchObject({ outcome: "cancelled", terminalPending: true, inflight: false });
     expect(storeRow(r, id)).toMatchObject({ state: "active", seqReserved: 0, seqAcked: 0 });
     // Absorbing: a repeated finalize returns the same settled result without new work.
-    expect(await r.queue.finalize(id, done("again"))).toEqual({ outcome: "cancelled" });
+    expect(await r.queue.finalize(id, done("again"), "completed")).toEqual({ outcome: "cancelled" });
     expect(r.net.requests.length).toBe(requests);
   });
 
@@ -1239,7 +1239,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     const report = r.queue.drain(fenceAt(r, 3000));
     await r.time.advance(0);
     expect(await report).toEqual({ settled: 0, aborted: 0, unresolved: 0 });
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "cancelled" });
     await r.time.advance(5000);
@@ -1257,7 +1257,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     expect(r.net.heldCount()).toBe(1);
     const reserveSeq = vi.spyOn(r.store, "reserveSequence");
     const report = r.queue.drain(fenceAt(r, 3000));
-    const result = r.queue.finalize(id, done());
+    const result = r.queue.finalize(id, done(), "completed");
     await r.time.advance(0);
     expect(await result).toEqual({ outcome: "cancelled" });
     r.net.release();
@@ -1273,7 +1273,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
   it("a terminal accepted before close still drains and is sent within the deadline", async () => {
     const r = rig();
     const id = await activeCard(r);
-    const terminal = r.queue.finalize(id, done());
+    const terminal = r.queue.finalize(id, done(), "completed");
     r.queue.close(fenceAt(r, 3000));
     await r.time.advance(0);
     expect(await terminal).toEqual({ outcome: "acked", seq: 1 });
@@ -1287,7 +1287,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     r.net.reply({ hold: true });
     r.queue.enqueue(id, frame("older"));
     await r.time.advance(800);
-    const terminal = r.queue.finalize(id, done());
+    const terminal = r.queue.finalize(id, done(), "completed");
     const report = r.queue.drain(fenceAt(r, 3000));
     await r.time.advance(100);
     r.net.release();
@@ -1304,7 +1304,7 @@ describe("NB4: finalize after close or drain never starts new store or transport
     r.queue.enqueue(s.cardId, frame("never"));
     const reserve = vi.spyOn(r.store, "reserveMessage");
     r.queue.close(fenceAt(r, 3000));
-    const result = r.queue.finalize(s.cardId, done());
+    const result = r.queue.finalize(s.cardId, done(), "completed");
     await r.time.advance(5000);
     expect(await result).toEqual({ outcome: "skipped" });
     expect(reserve).not.toHaveBeenCalled();
@@ -1570,7 +1570,7 @@ describe("drain under a shared fence whose signal aborts at the deadline", () =>
   it("work that settles before the deadline is still reported settled", async () => {
     const r = rig();
     const id = await activeCard(r);
-    const terminal = r.queue.finalize(id, done());
+    const terminal = r.queue.finalize(id, done(), "completed");
     const f = sharedFence(r, 3000);
     const report = r.queue.drain(f);
     await r.time.advance(3000);
@@ -1613,11 +1613,13 @@ describe("durable terminal: the row becomes terminal only after the terminal edi
     expect(storeRow(r, id)).toMatchObject({ state: "done", terminalReason: "completed" });
   });
 
-  it("without a terminal reason the row is left as before (no durable claim)", async () => {
+  it("an automatic terminal without a reason is refused before reservation and transport", async () => {
     const r = rig();
     const id = await activeCard(r);
-    expect((await r.queue.finalize(id, done())).outcome).toBe("acked");
-    expect(storeRow(r, id)?.state).toBe("active");
+    const before = storeRow(r, id);
+    expect(await r.queue.finalize(id, done())).toEqual({ outcome: "contract" });
+    expect(r.net.edits()).toHaveLength(0);
+    expect(storeRow(r, id)).toMatchObject({ seqReserved: before?.seqReserved, terminalIntent: null, state: "active" });
   });
 
   it("a policy-denied terminal sends nothing and leaves the row nonterminal", async () => {

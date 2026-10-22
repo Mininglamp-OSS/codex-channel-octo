@@ -282,7 +282,7 @@ describe("N5(c): write-queue drain completes before the pacer is released", () =
     net.reply({ status: 429, headers: { "retry-after": "900" } });
     queue.enqueue("c1", frame("p"));
     await time.advance(800);
-    const terminal = queue.finalize("c1", frame("done"));
+    const terminal = queue.finalize("c1", frame("done"), "completed");
     await time.advance(10);
     expect(base.gate(normalizeOrigin("https://api.example.com")).eligible).toBe(false);
 

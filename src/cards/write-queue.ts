@@ -19,6 +19,12 @@
  * from the store's unresolved sends (D-B/N2), and nothing in a running queue
  * lifts it.
  *
+ * Automatic terminals carry a durable intent (DTI-2.1 §3): the terminal
+ * sequence and its reason are committed together before transport, and an
+ * automatic terminal without a reason is refused before any reservation.
+ * Recovery may adopt a live automatic row only through a grant passed at
+ * construction, before the first ordinary open.
+ *
  * Every card request passes the shared origin pacer; terminal writes never
  * bypass it. Nothing here is wired into the runtime: lifecycle, recovery and
  * drain orchestration are later packages. Write outcomes are emitted through
@@ -71,6 +77,12 @@ export type CardFrame =
   | { readonly k: "registry"; readonly ref: TemplateRef; readonly state: WireState; readonly data: RegistryData }
   | ({ readonly k: "authored"; readonly plain: string } & AuthoredCard);
 
+/** Recovery capability for one live automatic row, granted at construction only. */
+export interface RecoveryGrant {
+  readonly storeCardId: string;
+  readonly messageId: string;
+}
+
 export interface CardSpec {
   /** Queue-local card identity chosen by the caller. */
   readonly cardId: string;
@@ -82,6 +94,12 @@ export interface CardSpec {
   /** Persisted before the first send; never regenerated. */
   readonly clientMsgNo: string;
   readonly presentation?: CardPresentation;
+  /**
+   * Adopt an existing live automatic row instead of sending a new card. Only
+   * honoured for an unconsumed recovery grant while the adoption window is
+   * open, and only when the spec matches the row exactly (DTI-2.1 §3.4).
+   */
+  readonly adopt?: RecoveryGrant;
 }
 
 /**
@@ -118,7 +136,8 @@ export interface CardStatus {
 }
 
 type QueueStore = Pick<CardStore, "reserveMessage" | "ackMessage" | "markSendAmbiguous" | "markSendFailed"
-  | "reserveSequence" | "ackSequence" | "unresolvedSendKinds" | "markTerminal">;
+  | "reserveSequence" | "ackSequence" | "unresolvedSendKinds" | "markTerminal" | "reserveTerminalSequence" | "getMessage"
+  | "liveAutomaticCards">;
 type QueueApi = Pick<CardApi, "origin" | "sendRegistry" | "sendAuthored" | "editRegistry" | "editAuthored">;
 
 /** Structural subset of the WP-14 `TelemetrySink` used for write outcomes. */
@@ -142,6 +161,8 @@ export interface WriteQueueOptions {
   readonly clock: MonotonicClock;
   readonly timers?: TimerPort;
   readonly telemetry?: WriteTelemetry;
+  /** Startup-only adoption grants built by recovery; each is consumed by its first adoption attempt. */
+  readonly recoveryGrants?: readonly RecoveryGrant[];
 }
 
 export interface CardWriteQueue extends CardResourceOwner {
@@ -152,7 +173,9 @@ export interface CardWriteQueue extends CardResourceOwner {
    * Terminal intent; idempotent and absorbing. Never rejects. With a
    * `reason`, the row is recorded terminal only after the terminal edit was
    * acknowledged and that acknowledgement persisted; a failure to record it
-   * resolves `store_failed`, never `acked`.
+   * resolves `store_failed`, never `acked`. An automatic card requires a
+   * `reason`: without one the terminal resolves `contract` and nothing is
+   * reserved or sent.
    */
   finalize(cardId: string, frame: CardFrame, reason?: CardTerminalReason): Promise<TerminalResult>;
   /** Fence non-terminal writes of a superseded generation; returns the number of cards fenced. */
@@ -190,6 +213,8 @@ interface CardState {
   terminalReason?: CardTerminalReason;
   /** Terminal requested after close(): retained as intent, never sent by this queue. */
   fencedTerminal?: CardFrame;
+  /** Adopted live row: its stored template is the only valid closure template. */
+  adopted?: { readonly templateId: string | null; readonly templateVersion: string | null };
   terminalResult?: Deferred<TerminalResult>;
   terminalSeq?: number;
   cancelled: boolean;
@@ -261,6 +286,18 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
   const origin = api.origin;
 
   const cards = new Map<string, CardState>();
+  // Adoption grants keyed by store card id; the window only ever closes.
+  const grants = new Map<string, RecoveryGrant>();
+  for (const g of options.recoveryGrants ?? []) {
+    if (g !== null && typeof g === "object" && typeof g.storeCardId === "string" && typeof g.messageId === "string") {
+      grants.set(g.storeCardId, Object.freeze({ storeCardId: g.storeCardId, messageId: g.messageId }));
+    }
+  }
+  let adoptionOpen = grants.size > 0;
+  function closeAdoption(): void {
+    adoptionOpen = false;
+    grants.clear();
+  }
   // Seeded before the factory returns; only ever grows within this instance.
   const suspended = new Set<string>(reconstructSuspension(store));
   const controller = new AbortController();
@@ -390,10 +427,24 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
     return { signal: controller.signal, deadlineMs: Math.min(CARD_API_DEADLINE_MS, remaining) };
   }
 
-  function authorize(card: CardState): { readonly capBytes: number } | undefined {
+  function authorize(card: CardState): { readonly capBytes: number; readonly snapshot: PolicySnapshot } | undefined {
     const auth = policy.authorize(card.spec.capability, card.spec.ctx, card.spec.pinned);
     if (!auth.allowed) return undefined;
-    return { capBytes: Math.min(auth.limits.maxPayloadBytes, CARD_ENVELOPE_MAX_BYTES) };
+    return { capBytes: Math.min(auth.limits.maxPayloadBytes, CARD_ENVELOPE_MAX_BYTES), snapshot: auth.snapshot };
+  }
+
+  /**
+   * Template fence of an adopted card: the current automatic template and the
+   * closure frame must both be the row's own template. Authored frames never
+   * close an adopted card.
+   */
+  function adoptedTemplateMatches(card: CardState, frame: CardFrame, snapshot: PolicySnapshot): boolean {
+    const row = card.adopted;
+    if (row === undefined) return true;
+    let current: { readonly id: string; readonly version: string } | undefined;
+    try { current = snapshot.automatic.template; } catch { return false; }
+    return current !== undefined && current.id === row.templateId && current.version === row.templateVersion
+      && frame.k === "registry" && frame.ref.id === row.templateId && frame.ref.version === row.templateVersion;
   }
 
   // ── request construction ──
@@ -514,11 +565,25 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       if (!(await waitEligible(card, notBefore, interrupted))) return fencedOut ? { kind: "fenced", unresolved: false } : { kind: "interrupted" };
       // close() may run between the eligible wake and this continuation: recheck before reservation and transport.
       if (interrupted() || fencedOut) return fencedOut ? { kind: "fenced", unresolved: false } : { kind: "interrupted" };
+      // B3: an automatic terminal must carry the reason its durable intent records.
+      const automaticTerminal = terminal && card.spec.kind === "automatic";
+      if (automaticTerminal && seq === undefined && card.terminalReason === undefined) return { kind: "done", outcome: "contract" };
       const auth = authorize(card);
       if (auth === undefined) return { kind: "done", outcome: "policy", ...(seq !== undefined ? { seq } : {}) };
+      let opts: ReturnType<typeof callOptions> | undefined;
       if (seq === undefined) {
+        if (terminal) {
+          if (!adoptedTemplateMatches(card, frame, auth.snapshot)) return { kind: "done", outcome: "contract" };
+          // Fenced before reservation: no sequence and no intent are written. Nothing awaits from here to transport.
+          opts = callOptions();
+          if (opts === FENCED) return { kind: "fenced", unresolved: false };
+        }
         let r;
-        try { r = store.reserveSequence(card.storeCardId as string); } catch { return { kind: "store_failed" }; }
+        try {
+          r = automaticTerminal
+            ? store.reserveTerminalSequence(card.storeCardId as string, card.terminalReason as CardTerminalReason)
+            : store.reserveSequence(card.storeCardId as string);
+        } catch { return { kind: "store_failed" }; }
         if (r.kind !== "reserved") return { kind: "done", outcome: r.kind === "not_found" ? "gone" : "contract" };
         seq = r.seq;
         card.seqReserved = Math.max(card.seqReserved, seq);
@@ -534,7 +599,7 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       let current: string;
       try { current = freezeEdit(req).body; } catch { current = ""; }
       if (current !== (frozen as FrozenRequest).body) return { kind: "done", outcome: "contract", seq };
-      const opts = callOptions();
+      if (opts === undefined) opts = callOptions();
       if (opts === FENCED) return { kind: "fenced", unresolved: false };
       card.inflight = true;
       try {
@@ -636,12 +701,63 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
     }
   }
 
+  // ── adoption ──
+
+  /**
+   * Adopt a live automatic row for its recovery closure (DTI-2.1 §3.4). Any
+   * failed check returns `contract` and writes nothing; the matching grant is
+   * consumed by the attempt whatever its result.
+   */
+  function adopt(spec: CardSpec): OpenResult {
+    if (spec.kind !== "automatic" || spec.capability !== "automatic") return "contract";
+    if (closing()) return "contract";
+    const a = spec.adopt as RecoveryGrant;
+    if (!adoptionOpen || a === null || typeof a !== "object") return "contract";
+    const storeCardId = a.storeCardId;
+    const grant = typeof storeCardId === "string" ? grants.get(storeCardId) : undefined;
+    if (grant === undefined) return "contract";
+    grants.delete(storeCardId);
+    if (grants.size === 0) adoptionOpen = false;
+    if (grant.messageId !== a.messageId) return "contract";
+    if (cards.has(spec.cardId)) return "contract";
+    for (const card of cards.values()) if (card.storeCardId === storeCardId) return "contract";
+    let row;
+    let legacy: boolean | undefined;
+    try {
+      row = store.getMessage(storeCardId);
+      legacy = store.liveAutomaticCards().find((c) => c.record.cardId === storeCardId)?.legacy;
+    } catch { return "contract"; }
+    if (row === null || row === undefined || legacy !== false) return "contract";
+    const b = spec.binding;
+    const p = spec.presentation ?? {};
+    const ok = row.kind === "automatic" && (row.state === "active" || row.state === "answering")
+      && row.terminalAt === null && row.terminalIntent === null && row.messageId === a.messageId
+      && row.clientMsgNo === spec.clientMsgNo && row.seqReserved >= row.seqAcked
+      && row.sessionKey === b.sessionKey && row.channelId === b.channelId && row.channelType === b.channelType
+      && row.topicScope === b.topicScope && row.generation === b.generation && row.resetEpoch === b.resetEpoch
+      && row.templateId === (p.templateId ?? null) && row.templateVersion === (p.templateVersion ?? null)
+      && row.profile === (p.profile ?? null) && p.pinnedLimitsJson === undefined
+      && row.pinnedLimitsJson === null && spec.pinned === undefined;
+    if (!ok) return "contract";
+    cards.set(spec.cardId, {
+      spec: Object.freeze({ ...spec }),
+      route: Object.freeze({ channelId: b.channelId, channelType: b.channelType }),
+      phase: "active", storeCardId, messageId: row.messageId as string,
+      seqReserved: row.seqReserved, seqAcked: row.seqAcked, dirtySince: 0, cancelled: false, inflight: false,
+      running: false, adopted: Object.freeze({ templateId: row.templateId, templateVersion: row.templateVersion }),
+    });
+    return "opened";
+  }
+
   // ── public surface ──
 
   const queue: CardWriteQueue = {
     kind: "write_queue",
 
     open(spec) {
+      if (spec.adopt !== undefined) return adopt(spec);
+      // The first ordinary open admits a turn: adoption is never possible afterwards.
+      if (adoptionOpen) closeAdoption();
       // U1-a: a caller defect, checked before suspension, reservation and transport.
       if (spec.kind !== spec.capability || !CAPABILITIES.includes(spec.capability)) {
         emitFor(spec, "card_send_total", "contract");
@@ -664,6 +780,8 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       if (card === undefined) return "unknown";
       if (closing()) return "closing";
       if (card.phase === "closed" || card.terminal !== undefined) return "absorbed";
+      // An adopted card only accepts its closure.
+      if (card.adopted !== undefined) return "absorbed";
       if (card.cancelled) return "fenced";
       const snapshot = snapshotFrame(frame);
       if (snapshot === undefined) return "invalid";
@@ -742,6 +860,7 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
     },
 
     close(f) {
+      closeAdoption();
       if (fence !== undefined) return;
       fence = f;
       try { f.signal.addEventListener("abort", () => { fencedOut = true; controller.abort(); }, { once: true }); } catch { /* fence still applies */ }
