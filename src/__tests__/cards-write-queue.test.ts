@@ -751,7 +751,7 @@ describe("T19: the ordinary final/typing/apology paths never consult the pacer",
     const importers = sources(src).filter((path) => /from\s+["'][^"']*(?:pacer|write-queue)\.js["']/.test(readFileSync(path, "utf8")))
       .map((path) => relative(src, path).split("\\").join("/")).sort();
     // WP-13A-1: the startup queue factory and the drain registry's timer port, both inside the card subsystem.
-    expect(importers).toEqual(["cards/recovery.ts", "cards/resource-registry.ts", "cards/write-queue.ts"]);
+    expect(importers).toEqual(["cards/recovery.ts", "cards/resource-registry.ts", "cards/runtime.ts", "cards/write-queue.ts"]);
     const ordinary = sources(src).filter((path) => !relative(src, path).startsWith("cards"))
       .filter((path) => /from\s+["'][^"']*cards\/(?:recovery|resource-registry)\.js["']/.test(readFileSync(path, "utf8")));
     expect(ordinary).toEqual([]);
