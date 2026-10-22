@@ -1653,6 +1653,20 @@ export class CardStore {
     return this.read(() => this.activeSessionCount());
   }
 
+  /**
+   * Kinds of cards whose initial send may have been accepted (`sending` or
+   * `ambiguous`): the D-B/N2 suspension input of every write-queue
+   * construction. Read-only; a read failure throws so callers fail closed.
+   */
+  unresolvedSendKinds(): readonly string[] {
+    return this.read(() => {
+      const rows = this.adapter
+        .prepare(`SELECT DISTINCT kind FROM card_messages WHERE state IN ('ambiguous','sending') ORDER BY kind`)
+        .all() as Array<{ kind: string }>;
+      return Object.freeze(rows.map((r) => r.kind));
+    });
+  }
+
   checkInvariants(): InvariantViolation[] {
     return this.read(() => checkCardInvariants(this.adapter));
   }
