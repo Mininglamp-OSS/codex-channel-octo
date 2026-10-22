@@ -62,7 +62,7 @@ import type { Pacer, TimerPort } from "./pacer.js";
 import { systemTimers } from "./pacer.js";
 import type { CardPolicy, PolicyOperation } from "./policy.js";
 import { DEBOUNCE_MS, EDIT_MAX_ATTEMPTS, editRetryWaitMs } from "./retry-schedule.js";
-import type { CardBinding, CardPresentation, CardStore } from "./store.js";
+import type { CardBinding, CardPresentation, CardStore, CardTerminalReason } from "./store.js";
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -118,7 +118,7 @@ export interface CardStatus {
 }
 
 type QueueStore = Pick<CardStore, "reserveMessage" | "ackMessage" | "markSendAmbiguous" | "markSendFailed"
-  | "reserveSequence" | "ackSequence" | "unresolvedSendKinds">;
+  | "reserveSequence" | "ackSequence" | "unresolvedSendKinds" | "markTerminal">;
 type QueueApi = Pick<CardApi, "origin" | "sendRegistry" | "sendAuthored" | "editRegistry" | "editAuthored">;
 
 /** Structural subset of the WP-14 `TelemetrySink` used for write outcomes. */
@@ -148,8 +148,13 @@ export interface CardWriteQueue extends CardResourceOwner {
   open(spec: CardSpec): OpenResult;
   /** Mark newer progress dirty; the worker sends the newest frame after the debounce. */
   enqueue(cardId: string, frame: CardFrame): EnqueueResult;
-  /** Terminal intent; idempotent and absorbing. Never rejects. */
-  finalize(cardId: string, frame: CardFrame): Promise<TerminalResult>;
+  /**
+   * Terminal intent; idempotent and absorbing. Never rejects. With a
+   * `reason`, the row is recorded terminal only after the terminal edit was
+   * acknowledged and that acknowledgement persisted; a failure to record it
+   * resolves `store_failed`, never `acked`.
+   */
+  finalize(cardId: string, frame: CardFrame, reason?: CardTerminalReason): Promise<TerminalResult>;
   /** Fence non-terminal writes of a superseded generation; returns the number of cards fenced. */
   cancelNonterminal(generation: string): number;
   status(cardId: string): CardStatus | undefined;
@@ -181,6 +186,8 @@ interface CardState {
   dirty?: CardFrame;
   dirtySince: number;
   terminal?: CardFrame;
+  /** Durable terminal reason recorded once the terminal edit is acknowledged. */
+  terminalReason?: CardTerminalReason;
   /** Terminal requested after close(): retained as intent, never sent by this queue. */
   fencedTerminal?: CardFrame;
   terminalResult?: Deferred<TerminalResult>;
@@ -194,7 +201,8 @@ interface CardState {
 }
 
 type EditResult =
-  | { readonly kind: "done"; readonly outcome: WriteOutcome; readonly seq?: number }
+  /** `durable`: an `acked` edit whose acknowledgement was persisted by `ackSequence`. */
+  | { readonly kind: "done"; readonly outcome: WriteOutcome; readonly seq?: number; readonly durable?: boolean }
   | { readonly kind: "interrupted" }
   | { readonly kind: "store_failed" }
   /** Abort-fenced at the drain deadline; `unresolved` when a transport was in flight. */
@@ -534,11 +542,12 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
         card.inflight = false;
         if (fencedOut) return { kind: "fenced", unresolved: true };
         pacer.observeSuccess(origin);
+        let durable = false;
         try {
           const r = store.ackSequence(card.storeCardId as string, ack.seq);
-          if (r.kind === "acked") card.seqAcked = Math.max(card.seqAcked, r.seqAcked);
+          if (r.kind === "acked") { card.seqAcked = Math.max(card.seqAcked, r.seqAcked); durable = true; }
         } catch { /* acknowledged remotely; the durable fence catches up on the next ack */ }
-        return { kind: "done", outcome: "acked", seq };
+        return { kind: "done", outcome: "acked", seq, durable };
       } catch (err) {
         card.inflight = false;
         const receipt = now();
@@ -554,6 +563,23 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       }
     }
     return { kind: "done", outcome: "retry_exhausted", ...(seq !== undefined ? { seq } : {}) };
+  }
+
+  /**
+   * Record the acknowledged terminal of a card that asked for it. Without a
+   * persisted acknowledgement, or when the store refuses, the outcome is
+   * `store_failed`: the edit reached the server but nothing durable is claimed.
+   */
+  function persistTerminal(card: CardState, durable: boolean): CardOutcome {
+    const reason = card.terminalReason;
+    if (reason === undefined) return "acked";
+    if (!durable || fencedOut) return "store_failed";
+    try {
+      const r = store.markTerminal(card.storeCardId as string, reason);
+      return r.kind === "updated" || r.kind === "already_terminal" ? "acked" : "store_failed";
+    } catch {
+      return "store_failed";
+    }
   }
 
   // ── worker ──
@@ -583,7 +609,7 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
         const result = await sendEdit(card, card.terminal, true, now());
         if (result.kind === "done") {
           emitOutcome(card, "card_edit_total", result.outcome);
-          close(card, result.outcome, result.seq);
+          close(card, result.outcome === "acked" ? persistTerminal(card, result.durable === true) : result.outcome, result.seq);
         } else if (result.kind === "store_failed") {
           close(card, "store_failed");
         } else {
@@ -647,7 +673,7 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       return "queued";
     },
 
-    finalize(cardId, frame) {
+    finalize(cardId, frame, reason) {
       const card = cards.get(cardId);
       if (card === undefined) return Promise.resolve(Object.freeze({ outcome: "skipped" as const }));
       if (card.terminalResult !== undefined) return card.terminalResult.promise;
@@ -675,6 +701,7 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
         return card.terminalResult.promise;
       }
       card.terminal = snapshot;
+      if (typeof reason === "string") card.terminalReason = reason;
       card.dirty = undefined;
       kick(card);
       return card.terminalResult.promise;
