@@ -742,8 +742,11 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       if (first === "deadline") {
         // Snapshot before aborting so in-flight transports are reported as unknown outcomes.
         for (const card of active) {
-          if (!card.running) settled++;
-          else if (card.inflight) unresolved++;
+          // A worker already settled by a shared fence abort keeps its unknown outcome.
+          if (!card.running) {
+            if (card.outcome === "unresolved") unresolved++;
+            else settled++;
+          } else if (card.inflight) unresolved++;
           else aborted++;
         }
         fencedOut = true;
