@@ -15,6 +15,10 @@
  * - the full envelope is serialized and checked against
  *   min(policy maxPayloadBytes, 16384) before transport.
  *
+ * Suspension is per queue and monotonic: every construction re-derives it
+ * from the store's unresolved sends (D-B/N2), and nothing in a running queue
+ * lifts it.
+ *
  * Every card request passes the shared origin pacer; terminal writes never
  * bypass it. Nothing here is wired into the runtime: lifecycle, recovery and
  * drain orchestration are later packages. Write outcomes are emitted through
@@ -96,7 +100,8 @@ export interface TerminalResult {
   readonly seq?: number;
 }
 
-export type OpenResult = "opened" | "duplicate" | "suspended" | "closing";
+/** `contract`: `spec.kind` and `spec.capability` differ; nothing was registered, reserved or sent. */
+export type OpenResult = "opened" | "duplicate" | "suspended" | "closing" | "contract";
 /** `invalid`: the frame could not be snapshotted as plain data and was not queued. */
 export type EnqueueResult = "queued" | "unknown" | "absorbed" | "fenced" | "closing" | "invalid";
 
@@ -113,7 +118,7 @@ export interface CardStatus {
 }
 
 type QueueStore = Pick<CardStore, "reserveMessage" | "ackMessage" | "markSendAmbiguous" | "markSendFailed"
-  | "reserveSequence" | "ackSequence">;
+  | "reserveSequence" | "ackSequence" | "unresolvedSendKinds">;
 type QueueApi = Pick<CardApi, "origin" | "sendRegistry" | "sendAuthored" | "editRegistry" | "editAuthored">;
 
 /** Structural subset of the WP-14 `TelemetrySink` used for write outcomes. */
@@ -222,6 +227,25 @@ function isAbort(err: unknown): boolean {
   return err instanceof OctoApiError && err.transport === "abort";
 }
 
+const CAPABILITIES: readonly CardSpec["capability"][] = Object.freeze(["automatic", "display"]);
+
+/**
+ * Total D-B/N2 mapping from unresolved send kinds to suspended capabilities:
+ * automatic and display suspend themselves; interactive, any other value, a
+ * malformed result and a read failure suspend both.
+ */
+function reconstructSuspension(store: QueueStore): readonly string[] {
+  let kinds: unknown;
+  try { kinds = store.unresolvedSendKinds(); } catch { return CAPABILITIES; }
+  if (!Array.isArray(kinds)) return CAPABILITIES;
+  const out = new Set<string>();
+  for (const kind of kinds) {
+    if (kind !== "automatic" && kind !== "display") return CAPABILITIES;
+    out.add(kind);
+  }
+  return [...out];
+}
+
 export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
   const { api, store, policy, pacer, clock } = options;
   const timers = options.timers ?? systemTimers;
@@ -229,7 +253,8 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
   const origin = api.origin;
 
   const cards = new Map<string, CardState>();
-  const suspended = new Set<string>();
+  // Seeded before the factory returns; only ever grows within this instance.
+  const suspended = new Set<string>(reconstructSuspension(store));
   const controller = new AbortController();
   let fence: ShutdownFence | undefined;
   /** Aggregate drain deadline reached: late continuations must not touch the store. */
@@ -249,11 +274,15 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
   // ── telemetry ──
 
   function emitOutcome(card: CardState, name: "card_send_total" | "card_edit_total", outcome: WriteOutcome): void {
+    emitFor(card.spec, name, outcome);
+  }
+
+  function emitFor(spec: CardSpec, name: "card_send_total" | "card_edit_total", outcome: WriteOutcome): void {
     if (telemetry === undefined) return;
     const { sink, botRef, originRef } = telemetry;
     try {
-      sink.emit(name, { bot_ref: botRef, origin_ref: originRef, capability: card.spec.capability, code: outcome }, 1);
-      if (outcome === "stale") sink.emit("stale_sequence_total", { bot_ref: botRef, capability: card.spec.capability }, 1);
+      sink.emit(name, { bot_ref: botRef, origin_ref: originRef, capability: spec.capability, code: outcome }, 1);
+      if (outcome === "stale") sink.emit("stale_sequence_total", { bot_ref: botRef, capability: spec.capability }, 1);
     } catch { /* the WP-14 sink is total; a foreign port must not break the write path */ }
   }
 
@@ -587,6 +616,11 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
     kind: "write_queue",
 
     open(spec) {
+      // U1-a: a caller defect, checked before suspension, reservation and transport.
+      if (spec.kind !== spec.capability || !CAPABILITIES.includes(spec.capability)) {
+        emitFor(spec, "card_send_total", "contract");
+        return "contract";
+      }
       if (closing()) return "closing";
       if (cards.has(spec.cardId)) return "duplicate";
       if (suspended.has(spec.capability)) return "suspended";
