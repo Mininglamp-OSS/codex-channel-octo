@@ -72,7 +72,7 @@ function profileResponse(reply: ProfileReply): Response {
   return json(200, {
     ...p,
     config: { ...p.config, reasoning_template_ref: { id, version } },
-    templating: { ...p.templating, templates: p.templating.templates.map((t) => ({ ...t, id, version })) },
+    templating: { ...p.templating, templates: (p.templating?.templates ?? []).map((t) => ({ ...t, id, version })) },
   });
 }
 
