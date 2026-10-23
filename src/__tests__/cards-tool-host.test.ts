@@ -8,7 +8,7 @@
  * dispatch order with its ledger outcomes, fences, rotation and drain.
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
@@ -237,6 +237,8 @@ function requestRows(adapter: DbAdapter, generation: string) {
 }
 
 const settleIo = () => new Promise((r) => setTimeout(r, 20));
+/** Wait for the host to reach an asserted state instead of a fixed sleep. */
+const until = (assertion: () => void) => vi.waitFor(assertion, { timeout: 2_000, interval: 5 });
 
 // ─── contract constants ─────────────────────────────────────────────────────
 
@@ -357,12 +359,10 @@ describe("redemption lifecycle: four disjoint cases (§5)", () => {
     const { authority } = (await client.redeem(ticket))!;
     const reservedCall = client.call(authority, "display", DISPLAY);
     const chargedCall = client.call(authority, "interactive", { title: "t", buttons: [{ id: "b", label: "B" }] });
-    await settleIo();
-    expect(requestRows(r.adapter, gen.launch.generation).map((x) => x.state).sort()).toEqual(["charged", "reserved"]);
+    await until(() => expect(requestRows(r.adapter, gen.launch.generation).map((x) => x.state).sort()).toEqual(["charged", "reserved"]));
     const replay = await Client.connect(port);
     expect(await replay.redeem(ticket)).toBeNull();
-    await settleIo();
-    expect(r.host.stats()).toMatchObject({ bootstrapReplay: 1, liveListeners: 0, liveRegistrations: 0 });
+    await until(() => expect(r.host.stats()).toMatchObject({ bootstrapReplay: 1, liveListeners: 0, liveRegistrations: 0 }));
     const rows = requestRows(r.adapter, gen.launch.generation);
     expect(rows.map((x) => x.state).sort()).toEqual(["ambiguous", "cancelled"]);
     expect(rows.find((x) => x.state === "ambiguous")?.send_slot).toBe(1);
@@ -521,12 +521,11 @@ describe("dispatch order and ledger outcomes (§7.3/§7.4)", () => {
     const r = await rig({ ops: new Map([["display", sendingOp("display", () => gate)]]) });
     const v = await live(r);
     const pending = v.client.call(v.authority, "display", DISPLAY);
-    await settleIo();
+    await until(() => expect(requestRows(r.adapter, v.gen.launch.generation)).toMatchObject([{ state: "charged" }]));
     v.gen.close();
     release();
     expect(await pending).toBeNull();
-    await settleIo();
-    expect(requestRows(r.adapter, v.gen.launch.generation)).toMatchObject([{ state: "cancelled", send_slot: null }]);
+    await until(() => expect(requestRows(r.adapter, v.gen.launch.generation)).toMatchObject([{ state: "cancelled", send_slot: null }]));
     expect(genRow(r.adapter, v.gen.launch.generation)).toMatchObject({ state: "closed", inv: 1, sends: 0 });
   });
 
@@ -682,8 +681,7 @@ describe("shutdown drain (§2.4 shutdown row)", () => {
     const r = await rig({ transport: { send: () => never } });
     const v = await live(r);
     void v.client.call(v.authority, "display", DISPLAY);
-    await settleIo();
-    expect(requestRows(r.adapter, v.gen.launch.generation)).toMatchObject([{ state: "reserved" }]);
+    await until(() => expect(requestRows(r.adapter, v.gen.launch.generation)).toMatchObject([{ state: "reserved" }]));
     const ac = new AbortController();
     const fence = { reason: "shutdown" as const, deadlineMono: r.time.now() + 100, signal: ac.signal };
     r.host.close(fence);
