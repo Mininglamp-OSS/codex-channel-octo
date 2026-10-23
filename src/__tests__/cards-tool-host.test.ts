@@ -21,7 +21,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
-  chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync,
 } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -893,7 +893,8 @@ describe("gateway-wide discovery gate G-d (§6)", () => {
       for (const [kind, make] of makers) {
         const p = join(home, name);
         make(p);
-        try { expect([name, kind, admitsWith(cwd, exposure(home))]).toEqual([name, kind, false]); } finally { rmSync(p, { recursive: true, force: true }); }
+        // Links are unlinked: Node 24.10's rmSync leaves a dangling symlink in place.
+        try { expect([name, kind, admitsWith(cwd, exposure(home))]).toEqual([name, kind, false]); } finally { if (kind === "directory") rmSync(p, { recursive: true }); else unlinkSync(p); }
       }
     }
     expect(admitsWith(cwd, exposure(home))).toBe(true);
@@ -944,7 +945,7 @@ describe("gateway-wide discovery gate G-d (§6)", () => {
     rmSync(join(cwd, ".codex"), { recursive: true });
     symlinkSync(join(cwd, "missing"), join(cwd, ".codex"));
     expect(gatewayAdmitsInjection(cwd)).toBe(false);
-    rmSync(join(cwd, ".codex"));
+    unlinkSync(join(cwd, ".codex"));
     const notify = featuresOffHome("wp08-home-notify-", 'notify = ["say"]\n');
     release.push(registerGatewayExposure(exposure(notify)));
     expect(gatewayAdmitsInjection(cwd)).toBe(false);
@@ -986,7 +987,7 @@ describe("gateway-wide discovery gate G-d (§6)", () => {
     expect(gatewayAdmitsInjection(cwd)).toBe(true);
     symlinkSync(join(etc, "..", "missing"), etc);
     expect(gatewayAdmitsInjection(cwd)).toBe(false);
-    rmSync(etc);
+    unlinkSync(etc);
     writeFileSync(etc, "");
     expect(gatewayAdmitsInjection(cwd)).toBe(false);
   });
@@ -1089,12 +1090,12 @@ describe("managed-preferences walk (§4.4-1, v3.1 N-f)", () => {
     const target = tempDir("wp08-mdm-target-");
     symlinkSync(target, m.root);
     expect(m.admits()).toBe(false);
-    rmSync(m.root);
+    unlinkSync(m.root);
     mkdirSync(m.root);
     expect(m.admits()).toBe(true);
     symlinkSync(join(target, "x.plist"), join(m.root, "link.plist"));
     expect(m.admits()).toBe(false);
-    rmSync(join(m.root, "link.plist"));
+    unlinkSync(join(m.root, "link.plist"));
     execFileSync("mkfifo", [join(m.root, "fifo")]);
     expect(m.admits()).toBe(false);
     rmSync(join(m.root, "fifo"));
