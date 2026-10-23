@@ -6,6 +6,8 @@ import { AgentFailure, classifyFailure, type ExecutionRisk } from './agent-failu
 import { ExecutionScope, type ManagedExecution } from './execution-scope.js';
 import type { InterruptedTurn } from './turn-context.js';
 import { reduceItem, type ReducedItemFacts } from './cards/redact.js';
+import type { ItemState } from './cards/contracts.js';
+import type { AttemptHandle, CardInjectionLaunch } from './cards/tool-host.js';
 /**
  * Agent Bridge — OpenAI Codex invocation via @openai/codex-sdk.
  * Outputs typed AgentOutputEvents (queryAgentEvents) or, for legacy callers,
@@ -24,7 +26,7 @@ import { reduceItem, type ReducedItemFacts } from './cards/redact.js';
  */
 
 import { Codex } from '@openai/codex-sdk';
-import type { ThreadEvent, ThreadItem, ThreadOptions } from '@openai/codex-sdk';
+import type { CodexOptions, ThreadEvent, ThreadItem, ThreadOptions } from '@openai/codex-sdk';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
 import { OutputCollector, DEFAULT_OUTPUT_SELECTION_MODE, DEFAULT_MAX_RESPONSE_CHARS, type OutputSelectionMode } from './output-selection.js';
@@ -310,12 +312,18 @@ export type MessagePhase = 'commentary' | 'partial_answer' | 'final_answer' | 'u
  * - `attempt_start`/`attempt_end` bracket each Codex run. The current bridge
  *   emits `continues: null` only: it never resumes/replays an uncertain turn.
  *   `terminal` is `completed` only when `turn.completed` was seen.
+ * - `item_state` (only with the `itemStates` opt-in): automatic-progress facts
+ *   for command/file/MCP/search and reasoning/todo items, reduced here by
+ *   `redact.reduceItem`. Work items reuse their first-sight seq; reasoning and
+ *   todo items take no selection position (`seq: -1`). It carries no text and
+ *   is ignored by `OutputCollector`.
  */
 export type AgentOutputEvent =
   | { kind: 'attempt_start'; attempt: number; reason: 'initial' | 'request_retry'; continues: number | null }
   | { kind: 'message'; attempt: number; itemId: string; seq: number; text: string; phase: MessagePhase }
   | { kind: 'work'; attempt: number; itemId: string; seq: number; itemType: string }
-  | { kind: 'attempt_end'; attempt: number; terminal: 'completed' | 'no_terminal' };
+  | { kind: 'attempt_end'; attempt: number; terminal: 'completed' | 'no_terminal' }
+  | ItemState;
 
 /**
  * Session options for a query — the single canonical options contract shared
@@ -337,7 +345,17 @@ export interface QueryAgentOptions {
   onExecutionRisk?: (risk: ExecutionRisk) => void;
   onManagedExecution?: (execution: ManagedExecution) => void;
   interruptedTurn?: InterruptedTurn;
+  /** Opt in to `item_state` events for the automatic progress card; absent → the baseline stream. */
+  itemStates?: boolean;
+  /**
+   * Trusted explicit-card launch for this turn (WP-08). Each attempt gets a
+   * fresh `Codex` with only its authority-free `mcp_servers.<serverId>` entry
+   * merged, and the attempt registration is closed when the attempt ends.
+   */
+  cardInjection?: CardInjectionLaunch;
 }
+
+type CodexConfigValue = NonNullable<CodexOptions['config']>[string];
 
 /** Closed runtime metadata, never a previous user prompt or raw tool/error text. */
 export function interruptionContext(turn?: InterruptedTurn): string {
@@ -357,6 +375,17 @@ export function interruptionContext(turn?: InterruptedTurn): string {
 
 /** Item types that never form a work boundary. */
 const NON_WORK_ITEM_TYPES = new Set(['agent_message', 'reasoning', 'todo_list', 'error']);
+
+/** Item types that carry automatic-progress state. */
+const ITEM_STATE_TYPES: ReadonlySet<string> = new Set<ItemState['itemType']>(
+  ['command_execution', 'file_change', 'mcp_tool_call', 'web_search', 'reasoning', 'todo_list'],
+);
+
+/** Closed status literal, read defensively; anything else is omitted. */
+function readItemStatus(item: ThreadItem): ItemState['status'] {
+  const status = (item as { status?: unknown }).status;
+  return status === 'in_progress' || status === 'completed' || status === 'failed' ? status : undefined;
+}
 
 function readPhase(item: ThreadItem): MessagePhase {
   const phase = (item as { phase?: unknown }).phase;
@@ -534,7 +563,17 @@ export async function* queryAgentEvents(
     if (managedProxy) await scope.prepare();
     // Direct launch has no gateway-owned process handle. Never send it control
     // fields or infer stopped from a file it could write itself.
-    const client = codex ?? new Codex({ ...codexOptions, env: managedProxy ? scope!.environment(baseEnv) : baseEnv });
+    const attemptOptions = codex ? codexOptions : { ...codexOptions, env: managedProxy ? scope!.environment(baseEnv) : baseEnv };
+    // The bridge never holds the authority: only the launch's per-attempt entry is merged.
+    const injection = opts?.cardInjection;
+    let cardAttempt: AttemptHandle | undefined;
+    if (injection) {
+      try { cardAttempt = await injection.prepareAttempt(); } catch { cardAttempt = undefined; }
+      currentCardAttempt = cardAttempt;
+    }
+    const client = cardAttempt && injection
+      ? new Codex({ ...attemptOptions, config: { mcp_servers: { [injection.serverId]: cardAttempt.mcpEntry as CodexConfigValue } } })
+      : codex ?? new Codex(attemptOptions);
     yield { kind: 'attempt_start', attempt, reason: attemptCtx.reason, continues: attemptCtx.continues };
     const thread = resumeId
       ? client.resumeThread(resumeId, threadOpts)
@@ -619,6 +658,22 @@ export async function* queryAgentEvents(
               const event: AgentOutputEvent = { kind: 'work', attempt, itemId: item.id, seq: s.seq, itemType: item.type };
               reply.push(event); yield event;
             }
+          }
+          if (opts?.itemStates === true && ITEM_STATE_TYPES.has(item.type)) {
+            // Reduced here: only closed facts leave the bridge. The phase comes from the single-read event type.
+            const itemType = item.type as ItemState['itemType'];
+            const status = readItemStatus(item);
+            const reduced = reduceItem(item);
+            // Only a trusted match (stable server id + live registration) marks the injected server.
+            const safe = item.type === 'mcp_tool_call' && injection && cardAttempt?.isTrustedServer(item.server)
+              ? { ...reduced, mcpServerId: injection.serverId } : reduced;
+            const event: AgentOutputEvent = {
+              kind: 'item_state', attempt, itemId: item.id,
+              seq: itemType === 'reasoning' || itemType === 'todo_list' ? -1 : sight(item.id).seq,
+              itemType, phase: eventType === 'item.started' ? 'started' : eventType === 'item.updated' ? 'updated' : 'completed',
+              ...(status !== undefined ? { status } : {}), safe,
+            };
+            yield event;
           }
           if (isSideEffectItem(item.type)) {
             sideEffect.seen = true; risk = 'effects_observed'; opts?.onExecutionRisk?.(risk);
@@ -725,6 +780,8 @@ export async function* queryAgentEvents(
   let risk: ExecutionRisk = 'proven_not_started';
   const sideEffect = { seen: false };
   let starts = 0;
+  /** The explicit-card registration of the running attempt; closed when that attempt ends. */
+  let currentCardAttempt: AttemptHandle | undefined;
   async function* attempt(): AsyncIterable<AgentOutputEvent> {
     if (starts++ > 0) attemptCtx = { reason: 'request_retry', continues: null };
     try { yield* runOnce(opts?.resume, promptText, sideEffect); }
@@ -748,6 +805,10 @@ export async function* queryAgentEvents(
         risk = 'proven_not_started'; opts?.onExecutionRisk?.(risk);
       }
       throw error;
+    } finally {
+      // Attempt end, success or failure: the registration's listener and authority close.
+      currentCardAttempt?.close();
+      currentCardAttempt = undefined;
     }
   }
   yield* recover(attempt, { config: config.sdk.recovery as RecoveryConfig | undefined,

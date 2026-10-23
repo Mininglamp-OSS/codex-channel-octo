@@ -11,6 +11,7 @@
   },
   "files": [
     "dist",
+    "dist/cards/mcp-server.js",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
@@ -36,7 +37,7 @@
     "provenance": true
   },
   "scripts": {
-    "build": "tsc && node -e \"const fs=require('node:fs'); fs.copyFileSync('src/codex-jsonl-proxy.mjs', 'dist/codex-jsonl-proxy.mjs'); fs.chmodSync('dist/codex-jsonl-proxy.mjs', 0o755)\" && node -e \"require('node:fs').cpSync('src/cards/data', 'dist/cards/data', {recursive:true})\"",
+    "build": "tsc && node -e \"const fs=require('node:fs'); fs.copyFileSync('src/codex-jsonl-proxy.mjs', 'dist/codex-jsonl-proxy.mjs'); fs.chmodSync('dist/codex-jsonl-proxy.mjs', 0o755)\" && node -e \"require('node:fs').cpSync('src/cards/data', 'dist/cards/data', {recursive:true})\" && node -e \"if(!require('node:fs').statSync('dist/cards/mcp-server.js').isFile()) process.exit(1)\"",
     "dev": "npm run build && tsc --watch",
     "prepack": "npm run build",
     "start": "node dist/index.js",
@@ -52,7 +53,7 @@
     "runtime:update": "npm update @openai/codex-sdk && npm run runtime:check"
   },
   "dependencies": {
-    "@openai/codex-sdk": "latest",
+    "@openai/codex-sdk": "0.163.0",
     "better-sqlite3": "^12.10.0",
     "crypto-js": "^4.2.0",
     "curve25519-js": "^0.0.4",
