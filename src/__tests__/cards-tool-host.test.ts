@@ -9,11 +9,13 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { execFile } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type { CardToolResult, ToolOpcode, TrustedTurnContext } from "../cards/contracts.js";
 import { provisionFirstInstallMarker } from "../cards/migrations.js";
 import { encodeBootstrapFrame, parseBootstrapReply, parseReplyFrame, readFrame } from "../cards/protocol.js";
@@ -23,6 +25,7 @@ import {
   BOOTSTRAP_TTL_MS,
   EXPLICIT_OP_UNAVAILABLE,
   PRODUCTION_EXPLICIT_OPS,
+  REQUIRED_DISABLED_CODEX_FEATURES,
   admitsCodexConfigToml,
   createToolHost,
   gatewayAdmitsInjection,
@@ -698,19 +701,51 @@ describe("shutdown drain (§2.4 shutdown row)", () => {
 
 // ─── gateway-wide G-d ───────────────────────────────────────────────────────
 
+/** The only `[features]` table G-d admits: every required feature explicitly off. */
+const FEATURES_OFF = `[features]\n${REQUIRED_DISABLED_CODEX_FEATURES.map((f) => `${f} = false`).join("\n")}\n`;
+
+function featuresOffHome(prefix: string, extra = ""): string {
+  const home = tempDir(prefix);
+  writeFileSync(join(home, "config.toml"), `${extra}${FEATURES_OFF}`);
+  return home;
+}
+
 describe("gateway-wide discovery gate G-d (§6)", () => {
-  it("the closed allowlist admits only plain model settings", () => {
-    expect(admitsCodexConfigToml("")).toBe(true);
-    expect(admitsCodexConfigToml('# c\nmodel = "gpt"\nmodel_reasoning_effort = "high"\n[model_providers.p]\nbase_url = "https://x"\n')).toBe(true);
+  it("requires the Codex 0.163 default-on plugin, connector and hook features to be explicitly off", () => {
+    expect([...REQUIRED_DISABLED_CODEX_FEATURES].sort()).toEqual(["apps", "hooks", "plugins", "remote_plugin", "skill_mcp_dependency_install"]);
+    // Empty or settings-only config leaves the 0.163 defaults on.
+    expect(admitsCodexConfigToml("")).toBe(false);
+    expect(admitsCodexConfigToml('model = "gpt"\n')).toBe(false);
+    expect(admitsCodexConfigToml(FEATURES_OFF)).toBe(true);
+    expect(admitsCodexConfigToml(`# c\nmodel = "gpt"\nmodel_reasoning_effort = "high"\n${FEATURES_OFF}[model_providers.p]\nbase_url = "https://x"\n`)).toBe(true);
+    for (const missing of REQUIRED_DISABLED_CODEX_FEATURES) {
+      expect(admitsCodexConfigToml(FEATURES_OFF.replace(`${missing} = false\n`, ""))).toBe(false);
+    }
+    for (const bad of [
+      FEATURES_OFF.replace("apps = false", "apps = true"),
+      FEATURES_OFF.replace("hooks = false", 'hooks = "false"'),
+      FEATURES_OFF.replace("plugins = false", "plugins = 0"),
+      `${FEATURES_OFF}web_search = false\n`,
+      `${FEATURES_OFF}apps = false\n`,
+      `${FEATURES_OFF}[features]\n`,
+      `${FEATURES_OFF}[model_providers.p]\nname = "a"\n[model_providers.p]\nname = "b"\n`,
+      `model = "a"\nmodel = "b"\n${FEATURES_OFF}`,
+      `features.apps = false\n${FEATURES_OFF}`,
+      `[features.apps]\nenabled = false\n${FEATURES_OFF}`,
+      "[features]\napps = false\nplugins = false\nremote_plugin = false\nhooks = false\nskill_mcp_dependency_install = false garbage\n",
+    ]) expect(admitsCodexConfigToml(bad)).toBe(false);
+  });
+
+  it("the closed allowlist admits only plain model settings next to the required features", () => {
     for (const bad of [
       'notify = ["say"]', '[mcp_servers.node_repl]\ncommand = "node"', "[hooks]\nx = 1", '[profiles.a]\nmodel = "x"',
       'profile = "a"', '[plugins.x]\nenabled = true', '[apps.codex_apps]\nenabled = true', 'mcp_servers.x.command = "y"',
       'model = """\nx\n"""', 'model = { a = 1 }', 'sandbox_mode = "danger-full-access"', "garbage line",
-    ]) expect(admitsCodexConfigToml(bad)).toBe(false);
+    ]) expect(admitsCodexConfigToml(`${FEATURES_OFF}${bad}\n`)).toBe(false);
   });
 
   it("injection holds only when every Bot is sandboxed and its CODEX_HOME admits nothing else", () => {
-    const clean = tempDir("wp08-home-");
+    const clean = featuresOffHome("wp08-home-");
     // /tmp has no `.codex` ancestor on any CI host; the walk is conservative up to "/".
     const cwd = mkdtempSync("/tmp/wp08-cwd-");
     roots.push(cwd);
@@ -721,9 +756,13 @@ describe("gateway-wide discovery gate G-d (§6)", () => {
     mkdirSync(join(cwd, ".codex"));
     expect(gatewayAdmitsInjection(cwd)).toBe(false);
     rmSync(join(cwd, ".codex"), { recursive: true });
-    const notify = tempDir("wp08-home-notify-");
-    writeFileSync(join(notify, "config.toml"), 'notify = ["say"]\n');
+    const notify = featuresOffHome("wp08-home-notify-", 'notify = ["say"]\n');
     release.push(registerGatewayExposure({ sandboxMode: "workspace-write", codexHome: notify }));
+    expect(gatewayAdmitsInjection(cwd)).toBe(false);
+    release.pop()!();
+    expect(gatewayAdmitsInjection(cwd)).toBe(true);
+    // A CODEX_HOME without config.toml runs with the 0.163 defaults on.
+    release.push(registerGatewayExposure({ sandboxMode: "read-only", codexHome: tempDir("wp08-home-empty-") }));
     expect(gatewayAdmitsInjection(cwd)).toBe(false);
     release.pop()!();
     expect(gatewayAdmitsInjection(cwd)).toBe(true);
@@ -731,10 +770,43 @@ describe("gateway-wide discovery gate G-d (§6)", () => {
     expect(gatewayAdmitsInjection(cwd)).toBe(false);
   });
 
+  it("a new Bot whose CODEX_HOME leaves the default features on revokes every live registration", async () => {
+    const r = await rig();
+    const v = await live(r);
+    cleanups.push(registerGatewayExposure({ sandboxMode: "read-only", codexHome: tempDir("wp08-home-default-") }));
+    expect(r.host.stats().liveListeners).toBe(0);
+    expect(await v.client.call(v.authority, "display", DISPLAY)).toBeNull();
+  });
+
+  it("[PINNED-RUNTIME] codex 0.163.0 enables the required features by default and the admitted config turns each off", async () => {
+    const codexJs = join(new URL("../..", import.meta.url).pathname, "node_modules", "@openai", "codex", "bin", "codex.js");
+    const run = async (home: string): Promise<Map<string, string>> => {
+      const { stdout } = await promisify(execFile)(process.execPath, [codexJs, "features", "list"], {
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, CODEX_HOME: home }, timeout: 60_000, maxBuffer: 1 << 20,
+      });
+      const states = new Map<string, string>();
+      for (const line of stdout.split("\n")) {
+        const m = /^(\S+)\s+.*\s(true|false)\s*$/.exec(line);
+        if (m !== null) states.set(m[1] as string, m[2] as string);
+      }
+      return states;
+    };
+    const { stdout: version } = await promisify(execFile)(process.execPath, [codexJs, "--version"], { timeout: 60_000 });
+    expect(version.trim()).toBe("codex-cli 0.163.0");
+    const defaults = await run(tempDir("wp08-home-default-"));
+    const off = featuresOffHome("wp08-home-off-");
+    const disabled = await run(off);
+    for (const f of REQUIRED_DISABLED_CODEX_FEATURES) {
+      expect([f, defaults.get(f)]).toEqual([f, "true"]);
+      expect([f, disabled.get(f)]).toEqual([f, "false"]);
+    }
+    expect(admitsCodexConfigToml(readFileSync(join(off, "config.toml"), "utf8"))).toBe(true);
+  }, 120_000);
+
   it("a Bot that newly allows danger-full-access revokes every live registration of every host", async () => {
     const r = await rig();
     const v = await live(r);
-    const release = registerGatewayExposure({ sandboxMode: "danger-full-access", codexHome: tempDir("wp08-danger-") });
+    const release = registerGatewayExposure({ sandboxMode: "danger-full-access", codexHome: featuresOffHome("wp08-danger-") });
     cleanups.push(release);
     expect(r.host.stats().liveListeners).toBe(0);
     expect(await v.client.call(v.authority, "display", DISPLAY)).toBeNull();
