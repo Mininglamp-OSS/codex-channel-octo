@@ -36,6 +36,7 @@ import { cardSubsystemPaths } from "../cards/recovery.js";
 import { openCardRuntime, type CardRuntime, type CardTurnInput } from "../cards/runtime.js";
 import {
   EXPLICIT_OP_UNAVAILABLE,
+  REQUIRED_DISABLED_CODEX_FEATURES,
   explicitPlatformCertified,
   registerGatewayExposure,
   type AttemptHandle,
@@ -65,6 +66,7 @@ function tempDir(prefix: string, base = tmpdir()): string {
 const CERTIFIED = explicitPlatformCertified();
 const unavailableOp: ExplicitOpHandler = { op: "display", async handle() { return EXPLICIT_OP_UNAVAILABLE as CardToolResult; } };
 const TEST_OPS = new Map([["display", unavailableOp]] as const);
+const FEATURES_OFF = `[features]\n${REQUIRED_DISABLED_CODEX_FEATURES.map((f) => `${f} = false`).join("\n")}\n`;
 
 // ─── runtime gates G-a…G-g ─────────────────────────────────────────────────
 
@@ -87,7 +89,9 @@ async function runtimeRig(over: { ops?: boolean; prof?: () => unknown; exposure?
     new URL(String(input)).pathname.endsWith("/v1/bot/card/profile") ? json(200, prof()) : net.fetchImpl(input, init)) as typeof fetch;
   const exposure = over.exposure ?? "clean";
   if (exposure !== "none") {
-    cleanups.push(registerGatewayExposure({ sandboxMode: exposure === "danger" ? "danger-full-access" : "read-only", codexHome: tempDir("wp08-home-") }));
+    const codexHome = tempDir("wp08-home-");
+    writeFileSync(join(codexHome, "config.toml"), FEATURES_OFF);
+    cleanups.push(registerGatewayExposure({ sandboxMode: exposure === "danger" ? "danger-full-access" : "read-only", codexHome }));
   }
   const runtime = (await openCardRuntime({ adapter, dataDir, apiUrl: "https://test.invalid", botToken: "token-a",
     clock: time.clock, wall: time.wall, timers: time.timers, fetchImpl, bootstrapExcludedRoots: [],
@@ -148,6 +152,13 @@ describe("injection gate G-a…G-g at beginTurn (AM-08 v4 §7.2; AC-011.3/.11)",
     expect(danger.runtime.beginTurn(danger.input())!.injection).toBeUndefined();
     expect(handlers(r.adapter)).toEqual([]);
     expect(handlers(denied.adapter)).toEqual([]);
+  });
+
+  it.runIf(CERTIFIED)("G-d: a Bot whose CODEX_HOME leaves the 0.163 default features on turns injection off gateway-wide", async () => {
+    const r = await runtimeRig();
+    expect(r.runtime.beginTurn(r.input())!.injection).toBeDefined();
+    cleanups.push(registerGatewayExposure({ sandboxMode: "read-only", codexHome: tempDir("wp08-home-default-") }));
+    expect(r.runtime.beginTurn(r.input())!.injection).toBeUndefined();
   });
 
   it.runIf(CERTIFIED)("settle, dispatch timeout, supersede and shutdown each close the generation's handler", async () => {

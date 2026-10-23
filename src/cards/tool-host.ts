@@ -189,6 +189,15 @@ const CODEX_HOME_DENIED: readonly string[] = Object.freeze([
   "managed_config.toml", "requirements.toml", "hooks.json", "hooks", "plugins",
 ]);
 
+/**
+ * Features Codex 0.163.0 enables by default that add plugin, connector
+ * (`codex_apps`), hook or skill-installed MCP paths. Each must be explicitly
+ * `false` in `[features]`; absence leaves the default on.
+ */
+export const REQUIRED_DISABLED_CODEX_FEATURES: readonly string[] = Object.freeze([
+  "apps", "plugins", "remote_plugin", "hooks", "skill_mcp_dependency_install",
+]);
+
 /** Closed allowlist of top-level `config.toml` keys that add no model-command path. */
 const ADMITTED_TOP_KEYS: ReadonlySet<string> = new Set([
   "model", "model_provider", "model_reasoning_effort", "model_reasoning_summary", "model_verbosity",
@@ -207,42 +216,59 @@ const SCALAR = /^(?:"(?:[^"\\\u0000-\u001f]|\\["\\/bfnrt]|\\u[0-9A-Fa-f]{4})*"|'
 
 /**
  * Closed-allowlist parse of one `config.toml`: only bare top-level keys from
- * the allowlist and `[model_providers.<bare id>]` tables of scalar keys, with
- * basic/literal strings, integers or booleans. Anything else — another
+ * the allowlist, `[model_providers.<bare id>]` tables of scalar keys, with
+ * basic/literal strings, integers or booleans, and one `[features]` table that
+ * sets every {@link REQUIRED_DISABLED_CODEX_FEATURES} entry to `false` and
+ * nothing else. Anything else — a missing or enabled required feature, another
  * `mcp_servers` entry, `notify`, hooks, profiles, plugins, connectors, arrays,
- * inline tables, dotted keys, multi-line strings — is not admitted.
+ * inline tables, dotted keys, multi-line strings, a repeated table or key — is
+ * not admitted.
  */
 export function admitsCodexConfigToml(text: string): boolean {
-  let table: "top" | "provider" = "top";
+  let table: "top" | "provider" | "features" = "top";
+  const tables = new Set<string>();
+  let keys = new Set<string>();
+  const disabled = new Set<string>();
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.replace(/^[ \t]+|[ \t]+$/g, "");
     if (line === "" || line.startsWith("#")) continue;
     const header = /^\[([A-Za-z0-9_.-]+)\]$/.exec(line);
     if (header !== null) {
-      const parts = (header[1] as string).split(".");
-      if (parts.length !== 2 || parts[0] !== "model_providers" || !BARE_KEY.test(parts[1] as string)) return false;
-      table = "provider";
+      const name = header[1] as string;
+      const parts = name.split(".");
+      if (name === "features") table = "features";
+      else if (parts.length === 2 && parts[0] === "model_providers" && BARE_KEY.test(parts[1] as string)) table = "provider";
+      else return false;
+      if (tables.has(name)) return false;
+      tables.add(name);
+      keys = new Set();
       continue;
     }
     const kv = /^([A-Za-z0-9_-]+)[ \t]*=[ \t]*(.+?)(?:[ \t]+#.*)?$/.exec(line);
     if (kv === null) return false;
     const key = kv[1] as string;
     const value = kv[2] as string;
+    if (keys.has(key)) return false;
+    keys.add(key);
+    if (table === "features") {
+      if (!REQUIRED_DISABLED_CODEX_FEATURES.includes(key) || value !== "false") return false;
+      disabled.add(key);
+      continue;
+    }
     if (!SCALAR.test(value)) return false;
     if (table === "top" ? !ADMITTED_TOP_KEYS.has(key) : !ADMITTED_PROVIDER_KEYS.has(key)) return false;
   }
-  return true;
+  return REQUIRED_DISABLED_CODEX_FEATURES.every((f) => disabled.has(f));
 }
 
 function admitsCodexHome(home: string | undefined): boolean {
   if (typeof home !== "string" || !isAbsolute(home)) return false;
   try {
     for (const name of CODEX_HOME_DENIED) if (existsSync(join(home, name))) return false;
-    const configPath = join(home, "config.toml");
-    let st;
-    try { st = lstatSync(configPath); } catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT"; }
+    // No config.toml leaves the 0.163 default-on features enabled.
+    const st = lstatSync(join(home, "config.toml"));
     if (!st.isFile() || st.size > 65_536) return false;
-    return admitsCodexConfigToml(readFileSync(configPath, "utf8"));
+    return admitsCodexConfigToml(readFileSync(join(home, "config.toml"), "utf8"));
   } catch {
     return false;
   }
