@@ -460,6 +460,7 @@ describe('T25: one canonical options contract', () => {
       onManagedExecution?: (execution: import('../execution-scope.js').ManagedExecution) => void;
       interruptedTurn?: import('../turn-context.js').InterruptedTurn;
       itemStates?: boolean;
+      cardInjection?: import('../cards/tool-host.js').CardInjectionLaunch;
     }>();
   });
 
