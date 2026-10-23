@@ -319,7 +319,8 @@ interface ConfigStat {
 }
 
 /**
- * fd-bound read of one `config.toml` (v3.1 N-a): `O_NOFOLLOW` open, `fstat`
+ * fd-bound read of one `config.toml` (v3.1 N-a): `O_NOFOLLOW` open, made
+ * `O_NONBLOCK` so a FIFO cannot stall the gateway before the `fstat`, `fstat`
  * of a regular file of at most 64 KiB, the bytes from that same fd, then a
  * final `lstat` of the path with the same `dev`/`ino`. The digest and the
  * parse use the one buffer read. Null on any error or deviation.
@@ -327,7 +328,7 @@ interface ConfigStat {
 function readBoundConfig(path: string): { readonly sha256: string; readonly stat: ConfigStat; readonly text: string } | null {
   let fd: number | undefined;
   try {
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const st = fstatSync(fd, { bigint: true });
     if (!st.isFile() || st.size > BigInt(MAX_CONFIG_BYTES)) return null;
     const buf = Buffer.alloc(MAX_CONFIG_BYTES + 1);
