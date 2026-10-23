@@ -7,6 +7,7 @@ import { readDeliveryReport } from './cards/delivery-report.js';
 import type { ShutdownReason } from './cards/contracts.js';
 import type { AutomaticTurn } from './cards/lifecycle.js';
 import { classifyCardError, openCardRuntime, type CardRuntime } from './cards/runtime.js';
+import { bootstrapExcludedRoots, registerGatewayExposure, type CardInjectionLaunch } from './cards/tool-host.js';
 import { isAuthenticCronFire } from './cron-fire-marker.js';
 import { performance } from 'node:perf_hooks';
 /**
@@ -202,6 +203,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
   const dbPath = join(config.dataDir, 'cc-octo.db');
   let storeForCleanup: SessionStore | undefined;
   let cardRuntimeForCleanup: CardRuntime | undefined;
+  let releaseExposure: (() => void) | undefined;
 
   // Set right after gateway construction; releaseLock is nonce-guarded so it is
   // a no-op until register() actually acquires the lock, and the catch can call
@@ -226,8 +228,13 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // --- Card subsystem (automatic progress only). Inert unless this Bot was
     // provisioned (WP-18) and its store opens ready; the ordinary path never
     // depends on it. ---
+    // Every Bot's model-command exposure feeds the gateway-wide explicit-tool gate (G-d).
+    const codexHome = config.sdk.codexHome ?? config.sdk.env?.CODEX_HOME ?? process.env.CODEX_HOME;
+    releaseExposure = registerGatewayExposure({ sandboxMode: config.sdk.sandboxMode, codexHome });
     const cardRuntime = config.cards?.disable !== true
-      ? await openCardRuntime({ adapter, dataDir: config.dataDir, apiUrl: config.apiUrl, botToken: config.botToken })
+      ? await openCardRuntime({ adapter, dataDir: config.dataDir, apiUrl: config.apiUrl, botToken: config.botToken,
+        bootstrapExcludedRoots: bootstrapExcludedRoots({ cwdBase: config.cwdBase ?? config.cwd,
+          additionalDirectories: config.sdk.additionalDirectories, codexHome }) })
       : undefined;
     cardRuntimeForCleanup = cardRuntime;
     if (cardRuntime) console.log(`[codex-channel-octo] ${label}Card runtime ready (automatic progress)`);
@@ -314,6 +321,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       await router.stopTurns();
       // Card resources drain after turns stop and before handlers drain and the DB closes.
       if (cardRuntime) await cardRuntime.close(reason);
+      releaseExposure?.();
       await gateway.stop(activeHandlers);
       store.close();
     };
@@ -329,6 +337,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // where register() succeeded (lock held) but a later step threw.
     releaseGatewayLock?.();
     await cardRuntimeForCleanup?.close('shutdown');
+    releaseExposure?.();
     try {
       storeForCleanup?.close();
     } catch {
@@ -382,6 +391,8 @@ export async function handleMessage(
     let modelAttempts = 0;
     // Automatic progress card of this turn; absent → the ordinary path is byte-identical to card-off.
     let cardTurn: AutomaticTurn | undefined;
+    // Explicit-card launch; only present when every gate holds (never at WP-08: the op table is empty).
+    let cardInjection: CardInjectionLaunch | undefined;
 
     try {
       // --- Session ---
@@ -436,10 +447,14 @@ export async function handleMessage(
       // Commands never create cards. The context comes from router-verified fields only.
       if (cardRuntime && config.sdk.toolProgress === true) {
         const barrier = store.getResetBarrier(sessionKey);
-        cardTurn = cardRuntime.beginTurn({
+        const begun = cardRuntime.beginTurn({
           dispatchId: turn.turnId, sessionKey, channelId, channelType, requesterUid: msg.from_uid,
           resetEpoch: typeof barrier === 'number' ? barrier : 0, cron: isAuthenticCronFire(msg.payload),
+          deadlineMono: turn.deadline, sessionCwd: () => resolveSessionCwd(config.cwdBase ?? config.cwd, sessionCtx),
+          currentResetEpoch: () => { const b = store.getResetBarrier(sessionKey); return typeof b === 'number' ? b : 0; },
         });
+        cardTurn = begun?.coordinator;
+        cardInjection = begun?.injection;
       }
 
       // --- Group context: refresh members + compute the unseen delta ---
@@ -783,6 +798,7 @@ export async function handleMessage(
         senderContext: buildSenderContext(msg, router.getOwnerUid(), botId),
         ...(resume ? { resume } : {}),
         ...(cardTurn ? { itemStates: true } : {}),
+        ...(cardInjection ? { cardInjection } : {}),
         onSessionId: (id: string, prompt: string) => {
           turn.assertPublishable();
           turnStore.setSdkSessionId(sessionKey, id);

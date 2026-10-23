@@ -4,7 +4,9 @@
  * One coordinator per turn generation and at most one automatic card:
  * - Lazy: nothing is sent until the first displayable row; reasoning/todo only
  *   raise activity, so thinking-only, empty and explicit-output-only turns get
- *   no card. The card mode is decided once, from a fresh policy snapshot;
+ *   no card. Only an `mcp_tool_call` matched to this generation's trusted
+ *   injected server is excluded from rows (WP-08); any other server id is
+ *   dropped and the item stays a generic Tool row. The card mode is decided once, from a fresh policy snapshot;
  *   otherwise the turn keeps the ordinary sanitized notices.
  * - Active/Answering: newer frames are enqueued (the write queue debounces,
  *   coalesces and re-authorizes before every transport).
@@ -23,6 +25,7 @@
 import type {
   CardObservableEvent,
   DeliveryReport,
+  ItemState,
   MonotonicClock,
   PinnedTemplate,
   PolicySnapshot,
@@ -250,11 +253,21 @@ export function createTurnCoordinator(deps: CoordinatorDeps): AutomaticTurn {
     if (r !== "queued" && queue.status(cardId)?.phase === "closed") gone = true;
   }
 
+  /** Keep `mcpServerId` only for the trusted injected server of this generation. */
+  function trusted(ev: ItemState): ItemState {
+    const id = ev.safe?.mcpServerId;
+    if (id === undefined) return ev;
+    if (ev.itemType === "mcp_tool_call" && ctx.injectedServerId !== undefined && id === ctx.injectedServerId) return ev;
+    const { mcpServerId: _dropped, ...safe } = ev.safe;
+    void _dropped;
+    return { ...ev, safe };
+  }
+
   function observe(ev: CardObservableEvent): void {
     if (ev === null || typeof ev !== "object" || terminal !== undefined) return;
     switch (ev.kind) {
       case "item_state": {
-        const next = reduceProgress(model, ev);
+        const next = reduceProgress(model, trusted(ev));
         if (next === model) return;
         model = next;
         progress();

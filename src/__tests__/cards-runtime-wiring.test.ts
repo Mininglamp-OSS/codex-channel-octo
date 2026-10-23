@@ -198,9 +198,9 @@ describe("beginTurn route matrix (AC-006.1) and trusted context", () => {
 
   it("DM, group and community topic get a coordinator with the trusted route kind; other channel types get none", async () => {
     const { runtime, adapter } = await ready();
-    expect(runtime.beginTurn(input(ChannelType.DM))?.context.routeEligibility).toEqual({ kind: "dm", obo: false, docTask: false, cron: false });
-    expect(runtime.beginTurn(input(ChannelType.Group))?.context.routeEligibility.kind).toBe("group");
-    expect(runtime.beginTurn(input(ChannelType.CommunityTopic))?.context.routeEligibility.kind).toBe("topic");
+    expect(runtime.beginTurn(input(ChannelType.DM))?.coordinator.context.routeEligibility).toEqual({ kind: "dm", obo: false, docTask: false, cron: false });
+    expect(runtime.beginTurn(input(ChannelType.Group))?.coordinator.context.routeEligibility.kind).toBe("group");
+    expect(runtime.beginTurn(input(ChannelType.CommunityTopic))?.coordinator.context.routeEligibility.kind).toBe("topic");
     for (const other of [0, 3, 4, 6, 99]) expect(runtime.beginTurn(input(other))).toBeUndefined();
     await runtime.close("shutdown");
     adapter.close();
@@ -208,7 +208,7 @@ describe("beginTurn route matrix (AC-006.1) and trusted context", () => {
 
   it("the context is deeply frozen and carries no credential", async () => {
     const { runtime, adapter } = await ready();
-    const t = runtime.beginTurn(input(ChannelType.DM, { cron: true }))!;
+    const t = runtime.beginTurn(input(ChannelType.DM, { cron: true }))!.coordinator;
     expect(Object.isFrozen(t.context)).toBe(true);
     expect(Object.isFrozen(t.context.route)).toBe(true);
     expect(Object.isFrozen(t.context.botRef)).toBe(true);
@@ -222,7 +222,7 @@ describe("beginTurn route matrix (AC-006.1) and trusted context", () => {
   it("a turn begun after close, or for an already timed-out dispatch, never opens a card", async () => {
     const { runtime, adapter } = await ready();
     runtime.onTimeout("d-early");
-    const early = runtime.beginTurn(input(ChannelType.DM, { dispatchId: "d-early" }));
+    const early = runtime.beginTurn(input(ChannelType.DM, { dispatchId: "d-early" }))?.coordinator;
     expect(early?.inspect().terminal).toBe("timed_out");
     await runtime.close("shutdown");
     expect(runtime.beginTurn(input(ChannelType.DM, { dispatchId: "d-late" }))).toBeUndefined();
@@ -231,8 +231,8 @@ describe("beginTurn route matrix (AC-006.1) and trusted context", () => {
 
   it("a newer turn of the same session supersedes the older generation", async () => {
     const { runtime, adapter } = await ready();
-    const a = runtime.beginTurn(input(ChannelType.DM, { dispatchId: "d-a", sessionKey: "same" }))!;
-    const b = runtime.beginTurn(input(ChannelType.DM, { dispatchId: "d-b", sessionKey: "same" }))!;
+    const a = runtime.beginTurn(input(ChannelType.DM, { dispatchId: "d-a", sessionKey: "same" }))!.coordinator;
+    const b = runtime.beginTurn(input(ChannelType.DM, { dispatchId: "d-b", sessionKey: "same" }))!.coordinator;
     expect(a.inspect().superseded).toBe(true);
     expect(b.inspect().superseded).toBe(false);
     expect(a.generation).not.toBe(b.generation);
@@ -607,7 +607,7 @@ describe("per-Bot isolation with a shared origin cooldown (AC-002.1, AC-007.6)",
     const a = await bot("a", "https://API.example.com:443/base", "token-a");
     const b = await bot("b", "https://api.example.com", "token-b");
     const c = await bot("c", "https://other.example.com", "token-c");
-    const begin = (x: typeof a, id: string) => x.runtime.beginTurn({ dispatchId: id, sessionKey: id, channelId: "c", channelType: 1, requesterUid: "u", resetEpoch: 0, cron: false })!;
+    const begin = (x: typeof a, id: string) => x.runtime.beginTurn({ dispatchId: id, sessionKey: id, channelId: "c", channelType: 1, requesterUid: "u", resetEpoch: 0, cron: false })!.coordinator;
     const item = { kind: "item_state", attempt: 0, itemId: "x", seq: 0, itemType: "command_execution", phase: "started", safe: { category: "command" } } as const;
 
     const ta = begin(a, "a1");

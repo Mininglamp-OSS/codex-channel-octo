@@ -6,7 +6,10 @@
  * origin pacer is shared across Bots of one process (timing only, §3.5).
  * - `beginTurn` freezes a `TrustedTurnContext` from router-verified fields
  *   and returns the turn's coordinator; a newer generation of the same
- *   session supersedes the older one;
+ *   session supersedes the older one. Only when every explicit-tool gate
+ *   G-a…G-g holds (AM-08 v4 §7.2) does it also register the generation's
+ *   handler and return the authority-free `CardInjectionLaunch`; the
+ *   production op table is empty at WP-08, so no turn gets one;
  * - `onTimeout` is the router's `DispatchObserver`: it addresses the exact
  *   dispatch handle, never the latest turn of a session;
  * - `close(reason)` runs the single aggregate drain, retires the card store
@@ -61,6 +64,18 @@ import {
 } from "./recovery.js";
 import { createResourceRegistry, type CardDrainResult } from "./resource-registry.js";
 import type { CardBinding } from "./store.js";
+import {
+  PRODUCTION_EXPLICIT_OPS,
+  createToolHost,
+  explicitPlatformCertified,
+  gatewayAdmitsInjection,
+  type CardInjectionLaunch,
+  type ExplicitGeneration,
+  type ExplicitOpTable,
+  type ToolHost,
+} from "./tool-host.js";
+import { cardSubsystemPaths, ledgerRecovered } from "./recovery.js";
+import type { CardObservableEvent, ToolOpcode, TurnSignal } from "./contracts.js";
 
 type ReadySubsystem = Extract<CardSubsystem, { state: "ready" }>;
 type WriteTelemetry = NonNullable<Parameters<CardQueueFactory>[0]["telemetry"]>;
@@ -103,12 +118,24 @@ export interface CardTurnInput {
   readonly resetEpoch: number;
   /** Authenticated in-process cron fire. */
   readonly cron: boolean;
+  /** Monotonic dispatch deadline (`TurnContext.deadline`); bounds explicit authority. */
+  readonly deadlineMono?: number;
+  /** Resolves the turn's Codex working directory, checked for project config layers (G-d); read only past G-b/G-c/G-e. */
+  readonly sessionCwd?: () => string;
+  /** Current durable reset epoch; a /reset fences explicit authority. */
+  readonly currentResetEpoch?: () => number;
+}
+
+/** One processed turn: its automatic coordinator and, only when every gate holds, the explicit launch. */
+export interface BegunTurn {
+  readonly coordinator: AutomaticTurn;
+  readonly injection?: CardInjectionLaunch;
 }
 
 export interface CardRuntime extends DispatchObserver {
   readonly closing: boolean;
-  /** Coordinator for one processed turn, or undefined when this turn gets no card. */
-  beginTurn(input: CardTurnInput): AutomaticTurn | undefined;
+  /** Coordinator (and optional explicit launch) for one processed turn, or undefined when this turn gets no card. */
+  beginTurn(input: CardTurnInput): BegunTurn | undefined;
   /** Resolves when tracked policy/terminal work has settled. */
   idle(): Promise<void>;
   /** Automatic restart recovery of this open; resolves once every recovery closure settled. Never rejects. */
@@ -129,6 +156,8 @@ export interface CardRuntimeOptions {
   readonly pacer?: Pacer;
   readonly telemetry?: WriteTelemetry;
   readonly newId?: () => string;
+  /** Test-only explicit op table (G-b); never set by `index.ts`. */
+  readonly explicitOpsForTest?: ExplicitOpTable;
 }
 
 export interface OpenCardRuntimeOptions extends CardRuntimeOptions {
@@ -136,6 +165,8 @@ export interface OpenCardRuntimeOptions extends CardRuntimeOptions {
   readonly adapter: DbAdapter;
   readonly dataDir: string;
   readonly wall?: WallClock;
+  /** Roots the bootstrap directory must stay outside of (G-f); absent ⇒ no explicit injection. */
+  readonly bootstrapExcludedRoots?: readonly string[];
 }
 
 const ROUTE_KINDS: Readonly<Record<CardChannelType, RouteKind>> = Object.freeze({ 1: "dm", 2: "group", 5: "topic" });
@@ -286,6 +317,24 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
   registry.register(queue);
   registry.register(policyOwner);
 
+  // Explicit tools. G-b: with no op there is no host, listener or bootstrap
+  // directory at all; G-g: the host also refuses a store whose ledger was not
+  // recovered first. Only the production entry point supplies the data dir.
+  const explicitOps = options.explicitOpsForTest ?? PRODUCTION_EXPLICIT_OPS;
+  const openOptions = "dataDir" in options ? options as OpenCardRuntimeOptions : undefined;
+  let toolHost: ToolHost | undefined;
+  if (explicitOps.size > 0 && openOptions?.bootstrapExcludedRoots !== undefined && ledgerRecovered(subsystem.store)) {
+    try {
+      toolHost = createToolHost({ store: subsystem.store, installationRef: subsystem.meta.installationRef,
+        cardsDir: cardSubsystemPaths(openOptions.dataDir).cardsDir, ops: explicitOps,
+        excludedRoots: openOptions.bootstrapExcludedRoots, clock, wall: openOptions.wall ?? WALL, timers, policy });
+    } catch {
+      toolHost = undefined;
+    }
+    if (toolHost !== undefined && registry.register(toolHost) === null) { toolHost.close(Object.freeze({ reason: "shutdown" as const,
+      deadlineMono: clock.nowMono(), signal: AbortSignal.abort() })); toolHost = undefined; }
+  }
+
   // Every adoption runs here, before the runtime can admit a turn (the queue's startup window).
   let recovery: Promise<AutomaticRecoveryResult>;
   if (prepared === undefined) {
@@ -305,6 +354,8 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
 
   const byDispatch = new Map<string, AutomaticTurn>();
   const bySession = new Map<string, AutomaticTurn>();
+  const explicitByDispatch = new Map<string, ExplicitGeneration>();
+  const explicitBySession = new Map<string, ExplicitGeneration>();
   /** Dispatches that timed out before their coordinator existed (bounded). */
   const timedOut = new Set<string>();
   const MAX_TIMED_OUT = 256;
@@ -313,6 +364,25 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
 
   // Warm the policy so the first turn's decision usually sees a resolved snapshot.
   track(refresh());
+
+  /** Ops offered to one turn when G-a, G-c, G-d, G-e and G-g hold; empty otherwise. */
+  const explicitOffer = (input: CardTurnInput): { readonly ops: readonly ToolOpcode[]; readonly cwd?: string } => {
+    const none = { ops: [] };
+    if (toolHost === undefined || closing || !ledgerRecovered(subsystem.store)) return none; // G-b, G-g
+    if (!explicitPlatformCertified()) return none; // G-c
+    if (input.cron === true) return none; // G-e: no OBO or document-task target exists on this path
+    if (typeof input.deadlineMono !== "number" || !Number.isFinite(input.deadlineMono) || input.deadlineMono <= clock.nowMono()) return none;
+    if (typeof input.currentResetEpoch !== "function" || typeof input.sessionCwd !== "function") return none;
+    let cwd: string;
+    try { cwd = input.sessionCwd(); } catch { return none; }
+    if (!gatewayAdmitsInjection(cwd)) return none; // G-d
+    const offered: ToolOpcode[] = [];
+    for (const op of explicitOps.keys()) {
+      try { if (policy.authorize(op === "display" ? "display" : "interaction", { botRef }).allowed) offered.push(op); } // G-a
+      catch { /* not offered */ }
+    }
+    return { ops: offered, cwd };
+  };
 
   const runtime: CardRuntime = {
     get closing() { return closing; },
@@ -341,18 +411,62 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
         const binding: CardBinding = Object.freeze({ sessionKey: input.sessionKey, channelId: input.channelId,
           channelType: input.channelType, topicScope: kind === "topic" ? input.channelId : null, generation: turnGeneration, resetEpoch });
         const dispatchId = input.dispatchId;
+
+        // Explicit injection: the server id is minted once here and frozen into the context.
+        let turnCtx = ctx;
+        let explicit: ExplicitGeneration | undefined;
+        const offer = explicitOffer(input);
+        if (toolHost !== undefined && offer.ops.length > 0) {
+          const injected: TrustedTurnContext = Object.freeze({ ...ctx, injectedServerId: `octo_cards_${randomBytes(16).toString("hex")}` });
+          const readEpoch = input.currentResetEpoch as () => number;
+          explicit = toolHost.openGeneration({
+            ctx: injected, binding, expiresAtMono: input.deadlineMono as number, ops: offer.ops,
+            currentResetEpoch: () => {
+              try { const v = readEpoch(); return Number.isSafeInteger(v) && v >= 0 ? v : -1; } catch { return -1; }
+            },
+            admit: () => !closing && explicitPlatformCertified() && gatewayAdmitsInjection(offer.cwd),
+          });
+          if (explicit !== undefined) turnCtx = injected;
+        }
+        const closeExplicit = (): void => {
+          if (explicit === undefined) return;
+          try { explicit.close(); } catch { /* fenced in memory */ }
+          if (explicitByDispatch.get(dispatchId) === explicit) explicitByDispatch.delete(dispatchId);
+          if (explicitBySession.get(input.sessionKey) === explicit) explicitBySession.delete(input.sessionKey);
+        };
+
         const turn = createTurnCoordinator({
-          ctx, binding, cardId: newId(), clientMsgNo: newId(), queue, policy, closure: grants, refresh, clock, track,
+          ctx: turnCtx, binding, cardId: newId(), clientMsgNo: newId(), queue, policy, closure: grants, refresh, clock, track,
           onFinished: () => {
+            closeExplicit();
             if (byDispatch.get(dispatchId) === turn) byDispatch.delete(dispatchId);
             if (bySession.get(input.sessionKey) === turn) bySession.delete(input.sessionKey);
           },
         });
+        // A newer generation of the session supersedes the older one, explicit authority included.
+        const previous = explicitBySession.get(input.sessionKey);
+        if (previous !== undefined) { try { previous.close(); } catch { /* fenced */ } explicitBySession.delete(input.sessionKey); }
         bySession.get(input.sessionKey)?.supersede();
         bySession.set(input.sessionKey, turn);
         byDispatch.set(dispatchId, turn);
-        if (timedOut.delete(dispatchId)) turn.signal({ t: "dispatch_timeout" });
-        return turn;
+        if (explicit !== undefined) { explicitByDispatch.set(dispatchId, explicit); explicitBySession.set(input.sessionKey, explicit); }
+        if (timedOut.delete(dispatchId)) { closeExplicit(); turn.signal({ t: "dispatch_timeout" }); }
+        if (explicit === undefined) return Object.freeze({ coordinator: turn });
+        // Settle, timeout, shutdown and supersede fence the explicit generation first.
+        const coordinator: AutomaticTurn = Object.freeze({
+          generation: turn.generation,
+          context: turn.context,
+          observe: (ev: CardObservableEvent) => turn.observe(ev),
+          signal: (sig: TurnSignal) => {
+            if (sig !== null && typeof sig === "object" && (sig.t === "settle" || sig.t === "dispatch_timeout" || sig.t === "shutdown")) closeExplicit();
+            turn.signal(sig);
+          },
+          settle: () => { closeExplicit(); turn.settle(); },
+          claimsNotices: () => turn.claimsNotices(),
+          supersede: () => { closeExplicit(); turn.supersede(); },
+          inspect: () => turn.inspect(),
+        });
+        return Object.freeze({ coordinator, injection: explicit.launch });
       } catch {
         return undefined;
       }
@@ -360,6 +474,8 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
 
     onTimeout(dispatchId) {
       try {
+        const explicit = explicitByDispatch.get(dispatchId);
+        if (explicit !== undefined) { explicitByDispatch.delete(dispatchId); try { explicit.close(); } catch { /* fenced */ } }
         const turn = byDispatch.get(dispatchId);
         if (turn !== undefined) { turn.signal({ t: "dispatch_timeout" }); return; }
         if (closing) return;
@@ -381,6 +497,8 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
         else if (options.pacer === undefined) { try { pacer.close(); } catch { /* timers only */ } }
         byDispatch.clear();
         bySession.clear();
+        explicitByDispatch.clear();
+        explicitBySession.clear();
         timedOut.clear();
         return result;
       })();

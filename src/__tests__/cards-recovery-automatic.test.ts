@@ -240,7 +240,7 @@ const TURN = { dispatchId: "d-1", sessionKey: "group:g1", channelId: "g1", chann
 async function turnWithAckedProgress(inc: Incarnation, dispatchId = "d-1") {
   const runtime = inc.runtime as CardRuntime;
   await inc.time.advance(0);
-  const turn = runtime.beginTurn({ ...TURN, dispatchId });
+  const turn = runtime.beginTurn({ ...TURN, dispatchId })?.coordinator;
   if (turn === undefined) throw new Error("no coordinator");
   turn.observe(ATTEMPT);
   turn.observe(cmd(`${dispatchId}-a`));
