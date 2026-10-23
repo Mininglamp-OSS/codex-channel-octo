@@ -17,7 +17,8 @@
  * of earlier runtime incarnations is recovered before the queue factory is
  * handed out, so no queue or tool host can exist before it. Queues built by
  * the factory re-derive D-B/N2 suspension from the store; startup never
- * resends, edits or abandons an unresolved send.
+ * resends, edits or abandons an unresolved send. The explicit tool host
+ * (WP-08) asserts `ledgerRecovered(store)` before it creates any listener.
  *
  * Automatic card restart recovery (WP-13A-2, DTI-2.1 §4) classifies the live
  * automatic rows of earlier incarnations: C0a rows get exactly one minimal
@@ -146,6 +147,17 @@ function readInstallationRef(path: string): RefRead {
   }
 }
 
+/** Stores whose explicit ledger of earlier incarnations was recovered by `openCardSubsystem`. */
+const recoveredLedgers = new WeakSet<object>();
+
+/**
+ * Ordering assertion (WP-08): true only for a store whose
+ * `recoverExplicitLedger` ran and passed its invariants in this process.
+ */
+export function ledgerRecovered(store: object): boolean {
+  return recoveredLedgers.has(store);
+}
+
 function disabled(reason: CardSubsystemDisabledReason, violations?: readonly InvariantViolation[]): CardSubsystem {
   return Object.freeze(violations ? { state: "disabled", reason, violations } : { state: "disabled", reason });
 }
@@ -194,6 +206,7 @@ export async function openCardSubsystem(options: CardSubsystemOptions): Promise<
     store.retire();
     return disabled("invariant_failed", ledger.violations);
   }
+  recoveredLedgers.add(store);
 
   const queueFactory: CardQueueFactory = (queueOptions) => createWriteQueue({ ...queueOptions, store });
   return Object.freeze({
