@@ -18,7 +18,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync,
@@ -1390,6 +1390,65 @@ describe("fence scope across registrations and hosts (v3.1 D1 fixtures 1–4)", 
     armed.deepEqualThrows = true;
     try { await expectLocalClose(s); } finally { armed.deepEqualThrows = false; }
   });
+});
+
+// ─── FIFO config.toml ───────────────────────────────────────────────────────
+
+describe("a FIFO config.toml fails closed without blocking the gateway (B1)", () => {
+  /** Bound on one fail-closed evaluation; far below the watchdog delay. */
+  const PROMPT_MS = 1_500;
+  /** After this delay a watchdog keeps opening the FIFO for writing, releasing any blocking reader so a regression cannot freeze CI. */
+  const WATCHDOG_MS = 4_000;
+
+  /** Replace `home`'s config.toml with a FIFO and arm the watchdog writer. */
+  function fifoConfig(home: string): void {
+    const path = join(home, "config.toml");
+    rmSync(path, { force: true });
+    execFileSync("mkfifo", [path]);
+    const writer = spawn(process.execPath, ["-e",
+      `const fs = require("node:fs"); setTimeout(() => { for (;;) fs.closeSync(fs.openSync(process.argv[1], "w")); }, ${WATCHDOG_MS});`, path],
+      { stdio: "ignore" });
+    cleanups.push(() => { writer.kill("SIGKILL"); });
+  }
+
+  async function timed<T>(fn: () => T | Promise<T>): Promise<{ value: T; ms: number }> {
+    const start = performance.now();
+    const value = await fn();
+    return { value, ms: performance.now() - start };
+  }
+
+  it("admission is false at once, and registering the exposure revokes every live registration at once", async () => {
+    const r = await rig();
+    const v = await live(r);
+    const home = featuresOffHome("wp08-fifo-home-");
+    fifoConfig(home);
+    const registered = await timed(() => expose(exposure(home)));
+    expect(registered.ms).toBeLessThan(PROMPT_MS);
+    expect(r.host.stats()).toMatchObject({ liveRegistrations: 0, liveListeners: 0 });
+    expect(await v.client.call(v.authority, "display", DISPLAY)).toBeNull();
+    const admitted = await timed(() => gatewayAdmitsInjection(r.cwd));
+    expect(admitted).toMatchObject({ value: false });
+    expect(admitted.ms).toBeLessThan(PROMPT_MS);
+    expect((await timed(() => open(r).gen.launch.prepareAttempt())).value).toBeUndefined();
+  }, 20_000);
+
+  it("a config.toml swapped for a FIFO after admit fails the redeem fence at once as a gateway failure", async () => {
+    const r = await rig();
+    const bystander = await live(r);
+    const a = await admittedAttempt(r);
+    const before = r.host.stats();
+    fifoConfig(r.codexHome);
+    const redeemed = await timed(() => redeemOn(a.e));
+    expect(redeemed.value).toBeNull();
+    expect(redeemed.ms).toBeLessThan(PROMPT_MS);
+    expect(r.host.stats()).toMatchObject({
+      bootstrapRedeemed: before.bootstrapRedeemed, bootstrapAdmitDrift: before.bootstrapAdmitDrift + 1,
+      bootstrapAdmitGatewayRevoke: before.bootstrapAdmitGatewayRevoke + 1, bootstrapExpired: before.bootstrapExpired,
+      liveRegistrations: 0,
+    });
+    expect(requestRows(r.adapter, a.gen.launch.generation)).toEqual([]);
+    expect(await bystander.client.call(bystander.authority, "display", DISPLAY)).toBeNull();
+  }, 20_000);
 });
 
 // ─── resolved read-only exposures ───────────────────────────────────────────
