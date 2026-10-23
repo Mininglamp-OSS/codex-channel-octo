@@ -25,6 +25,7 @@ import { createToolHost, type ExplicitOpHandler, type ToolHost } from "../cards/
 import { createAdapter, type DbAdapter } from "../db-adapter.js";
 import { SessionStore } from "../session-store.js";
 import { manualTime, type ManualTime } from "./fixtures/card-write-harness.js";
+import { admissibleGateway } from "./fixtures/gd-admit.js";
 
 const roots: string[] = [];
 const cleanups: (() => void)[] = [];
@@ -50,7 +51,7 @@ const displayOp: ExplicitOpHandler = {
   },
 };
 
-async function hostRig(): Promise<{ host: ToolHost; adapter: DbAdapter; time: ManualTime; incarnation: string }> {
+async function hostRig(): Promise<{ host: ToolHost; adapter: DbAdapter; time: ManualTime; incarnation: string; admit: () => boolean }> {
   const dataDir = join(tempDir("wp08-mcp-"), "data");
   mkdirSync(dataDir);
   const p = cardSubsystemPaths(dataDir);
@@ -70,7 +71,9 @@ async function hostRig(): Promise<{ host: ToolHost; adapter: DbAdapter; time: Ma
     transport: { async send() { return { kind: "acked", messageId: String(seq++) }; } },
     entry: { nodePath: process.execPath, serverPath: new URL(import.meta.url).pathname } })!;
   cleanups.push(() => { host.close({ reason: "shutdown", deadlineMono: time.now(), signal: AbortSignal.abort() }); sub.store.retire(); adapter.close(); });
-  return { host, adapter, time, incarnation };
+  const gateway = admissibleGateway();
+  cleanups.push(gateway.release);
+  return { host, adapter, time, incarnation, admit: gateway.admit };
 }
 
 async function liveArgs(r: Awaited<ReturnType<typeof hostRig>>): Promise<{ argv: string[]; ticket: string; generation: string }> {
@@ -82,7 +85,7 @@ async function liveArgs(r: Awaited<ReturnType<typeof hostRig>>): Promise<{ argv:
   });
   const gen = r.host.openGeneration({ ctx, binding: { sessionKey: "s1", channelId: "chan", channelType: 1, topicScope: null,
     generation: ctx.turnGeneration, resetEpoch: 0 }, expiresAtMono: r.time.now() + 600_000, currentResetEpoch: () => 0,
-  ops: ["display"], admit: () => true })!;
+  ops: ["display"], admit: r.admit })!;
   const h = (await gen.launch.prepareAttempt())!;
   const args = h.mcpEntry.args as string[];
   return { argv: args.slice(1), ticket: readFileSync(args[2] as string, "utf8"), generation: ctx.turnGeneration };

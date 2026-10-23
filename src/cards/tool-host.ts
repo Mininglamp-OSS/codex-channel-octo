@@ -31,13 +31,13 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   closeSync,
   constants,
-  existsSync,
   fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
-  readFileSync,
+  readdirSync,
+  readSync,
   realpathSync,
   rmSync,
   statSync,
@@ -48,6 +48,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, parse as parsePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import type {
   CardResourceOwner,
   CardToolResult,
@@ -165,37 +166,61 @@ const SERVER_ID_PREFIX = "octo_cards_";
 const SERVER_ID = /^octo_cards_[0-9a-f]{32}$/;
 const MCP_STARTUP_TIMEOUT_SEC = 10;
 
-// ─── gateway-wide discovery gate G-d (§6) ───────────────────────────────────
+// ─── gateway-wide discovery gate G-d (§6; WP09-PF v3 §4.4 as amended by v3.1) ─
 
 /** One running Bot's model-command exposure, as resolved from its startup config. */
 export interface GatewayExposureEntry {
-  /** Raw `sdk.sandboxMode`; `danger-full-access` disables injection gateway-wide. */
+  /** Resolved sandbox mode (`resolveSandbox(config.sdk)`); anything but `read-only` disables injection gateway-wide. */
   readonly sandboxMode: string | undefined;
   /** Effective CODEX_HOME of the Bot's Codex runs; undefined fails closed. */
   readonly codexHome: string | undefined;
+  /** `sdk.codexApiKey` is configured (presence only, never the value); anything but `true` fails closed. */
+  readonly apiKeyConfigured: boolean;
+  /** `sdk.env` has a {@link CODEX_AUTH_ENV_MARKERS} key (presence only); anything but `false` fails closed. */
+  readonly sdkEnvAuthMarkers: boolean;
 }
 
 const exposures = new Map<symbol, GatewayExposureEntry>();
 const liveHosts = new Set<{ revokeAll(): void }>();
 
-/** Managed/system configuration layers; any presence disables injection. */
-const SYSTEM_LAYERS: readonly string[] = Object.freeze([
-  "/etc/codex",
-  "/Library/Managed Preferences/com.openai.codex.plist",
-]);
+/** System configuration layers; any presence disables injection. Managed preferences are walked separately. */
+const SYSTEM_LAYERS: readonly string[] = Object.freeze(["/etc/codex"]);
 
-/** CODEX_HOME entries that add hooks, managed layers or plugins; any presence disables injection. */
+/** macOS managed-preferences root, walked without following links (§4.4-1). */
+const MANAGED_PREFERENCES_ROOT = "/Library/Managed Preferences";
+const MANAGED_PREFERENCES_MAX_DEPTH = 3;
+const MANAGED_PREFERENCES_MAX_ENTRIES = 4096;
+const CODEX_MANAGED_PLIST = "com.openai.codex.plist";
+
+/**
+ * CODEX_HOME entries that add hooks, managed layers, plugins, stored auth or a
+ * cloud-requirements bundle; any presence disables injection.
+ */
 const CODEX_HOME_DENIED: readonly string[] = Object.freeze([
   "managed_config.toml", "requirements.toml", "hooks.json", "hooks", "plugins",
+  "auth.json", "cloud-config-bundle-cache.json",
 ]);
+
+/** Environment keys that select PAT or workload-identity auth over the API key; checked by key presence only. */
+export const CODEX_AUTH_ENV_MARKERS: readonly string[] = Object.freeze([
+  "CODEX_ACCESS_TOKEN", "OPENAI_FEDERATION_RULE_ID", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_WORKLOAD_IDENTITY_CONTEXT",
+]);
+
+/** True when `env` has any {@link CODEX_AUTH_ENV_MARKERS} key (or is not an object). Never reads a value. */
+export function hasCodexAuthEnvMarker(env: Readonly<Record<string, unknown>> | undefined): boolean {
+  if (env === undefined) return false;
+  if (env === null || typeof env !== "object") return true;
+  return CODEX_AUTH_ENV_MARKERS.some((key) => Object.hasOwn(env, key));
+}
 
 /**
  * Features Codex 0.163.0 enables by default that add plugin, connector
- * (`codex_apps`), hook or skill-installed MCP paths. Each must be explicitly
- * `false` in `[features]`; absence leaves the default on.
+ * (`codex_apps`), hook or skill-installed MCP paths, or the unsandboxed
+ * code-mode process host. Each must be explicitly `false` in `[features]`;
+ * absence leaves the default on.
  */
 export const REQUIRED_DISABLED_CODEX_FEATURES: readonly string[] = Object.freeze([
-  "apps", "plugins", "remote_plugin", "hooks", "skill_mcp_dependency_install",
+  "apps", "plugins", "remote_plugin", "hooks", "skill_mcp_dependency_install", "code_mode_host",
 ]);
 
 /** Closed allowlist of top-level `config.toml` keys that add no model-command path. */
@@ -204,6 +229,11 @@ const ADMITTED_TOP_KEYS: ReadonlySet<string> = new Set([
   "model_context_window", "model_max_output_tokens", "preferred_auth_method", "forced_login_method",
   "cli_auth_credentials_store", "hide_agent_reasoning", "show_raw_agent_reasoning",
   "disable_response_storage", "project_doc_max_bytes", "file_opener",
+]);
+/** Top-level keys with a fixed value: API-key login is forced and credentials stay in the file store. */
+const FIXED_TOP_VALUES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["forced_login_method", new Set(['"api"', "'api'"])],
+  ["cli_auth_credentials_store", new Set(['"file"', "'file'"])],
 ]);
 /** `[model_providers.<id>]` scalar keys. */
 const ADMITTED_PROVIDER_KEYS: ReadonlySet<string> = new Set([
@@ -216,19 +246,22 @@ const SCALAR = /^(?:"(?:[^"\\\u0000-\u001f]|\\["\\/bfnrt]|\\u[0-9A-Fa-f]{4})*"|'
 
 /**
  * Closed-allowlist parse of one `config.toml`: only bare top-level keys from
- * the allowlist, `[model_providers.<bare id>]` tables of scalar keys, with
- * basic/literal strings, integers or booleans, and one `[features]` table that
- * sets every {@link REQUIRED_DISABLED_CODEX_FEATURES} entry to `false` and
- * nothing else. Anything else — a missing or enabled required feature, another
+ * the allowlist, with `forced_login_method = "api"` required and
+ * `cli_auth_credentials_store`, if present, `"file"`; `[model_providers.<bare
+ * id>]` tables of scalar keys, with basic/literal strings, integers or
+ * booleans; and one `[features]` table that sets every
+ * {@link REQUIRED_DISABLED_CODEX_FEATURES} entry to `false` and nothing else.
+ * Anything else — a missing or enabled required feature, another
  * `mcp_servers` entry, `notify`, hooks, profiles, plugins, connectors, arrays,
- * inline tables, dotted keys, multi-line strings, a repeated table or key — is
- * not admitted.
+ * inline tables, dotted keys, `[features.<name>]` tables, multi-line strings,
+ * a repeated table or key — is not admitted.
  */
 export function admitsCodexConfigToml(text: string): boolean {
   let table: "top" | "provider" | "features" = "top";
   const tables = new Set<string>();
   let keys = new Set<string>();
   const disabled = new Set<string>();
+  let apiLoginForced = false;
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.replace(/^[ \t]+|[ \t]+$/g, "");
     if (line === "" || line.startsWith("#")) continue;
@@ -257,20 +290,130 @@ export function admitsCodexConfigToml(text: string): boolean {
     }
     if (!SCALAR.test(value)) return false;
     if (table === "top" ? !ADMITTED_TOP_KEYS.has(key) : !ADMITTED_PROVIDER_KEYS.has(key)) return false;
+    if (table === "top") {
+      const fixed = FIXED_TOP_VALUES.get(key);
+      if (fixed !== undefined && !fixed.has(value)) return false;
+      if (key === "forced_login_method") apiLoginForced = true;
+    }
   }
-  return REQUIRED_DISABLED_CODEX_FEATURES.every((f) => disabled.has(f));
+  return apiLoginForced && REQUIRED_DISABLED_CODEX_FEATURES.every((f) => disabled.has(f));
 }
 
-function admitsCodexHome(home: string | undefined): boolean {
-  if (typeof home !== "string" || !isAbsolute(home)) return false;
+/** `lstat` presence: only `ENOENT` is absent; any entry (a dangling link included) or any other error is present. */
+function present(path: string): boolean {
   try {
-    for (const name of CODEX_HOME_DENIED) if (existsSync(join(home, name))) return false;
-    // No config.toml leaves the 0.163 default-on features enabled.
-    const st = lstatSync(join(home, "config.toml"));
-    if (!st.isFile() || st.size > 65_536) return false;
-    return admitsCodexConfigToml(readFileSync(join(home, "config.toml"), "utf8"));
+    lstatSync(path);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ENOENT";
+  }
+}
+
+const MAX_CONFIG_BYTES = 65_536;
+
+interface ConfigStat {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly size: bigint;
+  readonly mtimeNs: bigint;
+}
+
+/**
+ * fd-bound read of one `config.toml` (v3.1 N-a): `O_NOFOLLOW` open, `fstat`
+ * of a regular file of at most 64 KiB, the bytes from that same fd, then a
+ * final `lstat` of the path with the same `dev`/`ino`. The digest and the
+ * parse use the one buffer read. Null on any error or deviation.
+ */
+function readBoundConfig(path: string): { readonly sha256: string; readonly stat: ConfigStat; readonly text: string } | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const st = fstatSync(fd, { bigint: true });
+    if (!st.isFile() || st.size > BigInt(MAX_CONFIG_BYTES)) return null;
+    const buf = Buffer.alloc(MAX_CONFIG_BYTES + 1);
+    let len = 0;
+    for (;;) {
+      const n = readSync(fd, buf, len, buf.length - len, null);
+      if (n === 0) break;
+      len += n;
+      if (len > MAX_CONFIG_BYTES) return null;
+    }
+    if (BigInt(len) !== st.size) return null;
+    const bytes = buf.subarray(0, len);
+    closeSync(fd);
+    fd = undefined;
+    const after = lstatSync(path, { bigint: true });
+    if (after.dev !== st.dev || after.ino !== st.ino) return null;
+    return {
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      stat: { dev: st.dev, ino: st.ino, size: st.size, mtimeNs: st.mtimeNs },
+      text: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    };
   } catch {
-    return false;
+    return null;
+  } finally {
+    if (fd !== undefined) { try { closeSync(fd); } catch { /* closed */ } }
+  }
+}
+
+/** Facts of one admitted exposure; every field is part of the redeem-time comparison. */
+interface ExposureFacts {
+  readonly codexHome: string;
+  readonly sandboxMode: string;
+  readonly configSha256: string;
+  readonly configStat: ConfigStat;
+  /** {@link CODEX_HOME_DENIED} presence, in order. */
+  readonly denied: readonly boolean[];
+  readonly apiKeyConfigured: boolean;
+  readonly sdkEnvAuthMarkers: boolean;
+}
+
+/** One exposure's G-d terms: resolved `read-only`, API-key auth only, and a CODEX_HOME that admits nothing else. */
+function exposureFacts(e: GatewayExposureEntry): ExposureFacts | null {
+  if (e.sandboxMode !== "read-only" || e.apiKeyConfigured !== true || e.sdkEnvAuthMarkers !== false) return null;
+  const home = e.codexHome;
+  if (typeof home !== "string" || !isAbsolute(home)) return null;
+  const denied = CODEX_HOME_DENIED.map((name) => present(join(home, name)));
+  if (denied.some(Boolean)) return null;
+  // No config.toml leaves the 0.163 default-on features enabled.
+  const config = readBoundConfig(join(home, "config.toml"));
+  if (config === null || !admitsCodexConfigToml(config.text)) return null;
+  return { codexHome: home, sandboxMode: e.sandboxMode, configSha256: config.sha256, configStat: config.stat, denied,
+    apiKeyConfigured: e.apiKeyConfigured, sdkEnvAuthMarkers: e.sdkEnvAuthMarkers };
+}
+
+/**
+ * Bounded walk of the managed-preferences root (§4.4-1). Only a root `lstat`
+ * of `ENOENT` is `absent`. Links are never followed; a symlink or any
+ * non-regular, non-directory entry, any error (including an entry that
+ * disappears after `readdir`), an entry deeper than 3, more than 4096 visited
+ * entries or a Codex plist in any letter case is `off`.
+ */
+function managedPreferencesState(): "absent" | "clean" | "off" {
+  let root;
+  try {
+    root = lstatSync(MANAGED_PREFERENCES_ROOT);
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "off";
+  }
+  if (!root.isDirectory()) return "off";
+  try {
+    let visited = 0;
+    const queue: { readonly dir: string; readonly depth: number }[] = [{ dir: MANAGED_PREFERENCES_ROOT, depth: 0 }];
+    for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+      for (const name of readdirSync(next.dir)) {
+        const depth = next.depth + 1;
+        if (++visited > MANAGED_PREFERENCES_MAX_ENTRIES || depth > MANAGED_PREFERENCES_MAX_DEPTH) return "off";
+        if (name.toLowerCase() === CODEX_MANAGED_PLIST) return "off";
+        const path = join(next.dir, name);
+        const st = lstatSync(path);
+        if (st.isDirectory()) queue.push({ dir: path, depth });
+        else if (!st.isFile()) return "off";
+      }
+    }
+    return "clean";
+  } catch {
+    return "off";
   }
 }
 
@@ -279,7 +422,7 @@ function projectLayerPresent(cwd: string): boolean {
   try {
     let dir = realpathSync(cwd);
     for (;;) {
-      if (existsSync(join(dir, ".codex"))) return true;
+      if (present(join(dir, ".codex"))) return true;
       const parent = dirname(dir);
       if (parent === dir) return false;
       dir = parent;
@@ -289,35 +432,147 @@ function projectLayerPresent(cwd: string): boolean {
   }
 }
 
-/**
- * G-d, evaluated against every running Bot's exposure at every attempt:
- * injection only when no Bot is danger-full-access, every Bot's CODEX_HOME
- * admits nothing but the injected server, no managed/system layer exists and
- * the session cwd has no project `.codex` layer. Unknown ⇒ off.
- */
-export function gatewayAdmitsInjection(sessionCwd: string | undefined): boolean {
-  try {
-    if (exposures.size === 0 || typeof sessionCwd !== "string" || !isAbsolute(sessionCwd)) return false;
-    for (const e of exposures.values()) {
-      if (e.sandboxMode === "danger-full-access" || !admitsCodexHome(e.codexHome)) return false;
-    }
-    for (const layer of SYSTEM_LAYERS) if (existsSync(layer)) return false;
-    return !projectLayerPresent(sessionCwd);
-  } catch {
-    return false;
-  }
+/** Gateway-scoped G-d facts (v3.1 D1); exposures sorted by (codexHome, sandboxMode, apiKeyConfigured, sdkEnvAuthMarkers). */
+interface GatewaySnapshot {
+  readonly exposures: readonly ExposureFacts[];
+  readonly processEnvAuthMarkers: boolean;
+  readonly systemLayers: readonly boolean[];
+  readonly mdm: "absent" | "clean";
+}
+
+/** Session-scoped G-d facts: the admitted cwd and its absent project layer. */
+interface SessionSnapshot {
+  readonly cwd: string;
+  readonly projectLayer: false;
+}
+
+/** Deep-frozen facts captured at admit and recomputed at redeem. Holds no secret value. */
+interface AdmitSnapshot {
+  readonly gateway: GatewaySnapshot;
+  readonly session: SessionSnapshot;
+}
+
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Exposure order (v3.1 N-b); identical tuples are interchangeable. */
+function compareExposures(a: ExposureFacts, b: ExposureFacts): number {
+  return compareText(a.codexHome, b.codexHome) || compareText(a.sandboxMode, b.sandboxMode)
+    || Number(a.apiKeyConfigured) - Number(b.apiKeyConfigured) || Number(a.sdkEnvAuthMarkers) - Number(b.sdkEnvAuthMarkers);
 }
 
 /**
- * Record one running Bot's exposure. A registration that newly fails G-d
- * closes every live attempt registration of every host (case-3 close).
+ * Gateway terms: at least one running Bot (none at all is off), every
+ * exposure admissible, no auth marker in the live `process.env`, no system
+ * layer and a managed-preferences walk of `absent` or `clean`. Null when any
+ * fails.
+ */
+function gatewaySnapshot(): GatewaySnapshot | null {
+  if (exposures.size === 0) return null;
+  const facts: ExposureFacts[] = [];
+  for (const e of exposures.values()) {
+    const f = exposureFacts(e);
+    if (f === null) return null;
+    facts.push(f);
+  }
+  const processEnvAuthMarkers = hasCodexAuthEnvMarker(process.env);
+  if (processEnvAuthMarkers) return null;
+  const systemLayers = SYSTEM_LAYERS.map(present);
+  if (systemLayers.some(Boolean)) return null;
+  const mdm = managedPreferencesState();
+  if (mdm === "off") return null;
+  return { exposures: facts.sort(compareExposures), processEnvAuthMarkers, systemLayers, mdm };
+}
+
+/** Session terms: an absolute cwd with no project `.codex` layer. */
+function sessionSnapshot(cwd: unknown): SessionSnapshot | null {
+  if (typeof cwd !== "string" || !isAbsolute(cwd) || projectLayerPresent(cwd)) return null;
+  return { cwd, projectLayer: false };
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const v of Object.values(value)) deepFreeze(v);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+/**
+ * Single-use admit slot (v3.1 N-c). {@link gatewayAdmitsInjection} fills it as
+ * its last action; `prepareAttempt` clears it, calls `admit()` and takes it in
+ * one synchronous step, so no other admit can interleave.
+ */
+let admitSlot: AdmitSnapshot | undefined;
+
+/** Empty the admit slot and return what it held. */
+function takeAdmitSlot(): AdmitSnapshot | undefined {
+  const taken = admitSlot;
+  admitSlot = undefined;
+  return taken;
+}
+
+/**
+ * G-d, evaluated against every running Bot's exposure at every attempt:
+ * injection only when every Bot resolves to `read-only` with API-key auth
+ * only, every Bot's CODEX_HOME admits nothing but the injected server, no
+ * auth marker is in the live environment, no managed/system layer exists and
+ * the session cwd has no project `.codex` layer. Unknown ⇒ off.
+ */
+export function gatewayAdmitsInjection(sessionCwd: string | undefined): boolean {
+  let snapshot: AdmitSnapshot | undefined;
+  try {
+    const gateway = gatewaySnapshot();
+    const session = gateway === null ? null : sessionSnapshot(sessionCwd);
+    if (gateway !== null && session !== null) snapshot = deepFreeze({ gateway, session });
+  } catch {
+    snapshot = undefined;
+  }
+  admitSlot = snapshot;
+  return snapshot !== undefined;
+}
+
+/**
+ * Redeem-time fence (v3.1 D1): `gateway` when the gateway terms fail or
+ * throw; `local` when the session terms fail or throw, or the recomputed
+ * snapshot differs from the admitted one; `admitted` otherwise.
+ */
+function redeemFence(admitted: AdmitSnapshot): "admitted" | "local" | "gateway" {
+  let gateway: GatewaySnapshot | null;
+  try {
+    gateway = gatewaySnapshot();
+  } catch {
+    gateway = null;
+  }
+  if (gateway === null) return "gateway";
+  try {
+    const session = sessionSnapshot(admitted.session.cwd);
+    if (session === null) return "local";
+    return isDeepStrictEqual(deepFreeze({ gateway, session }), admitted) ? "admitted" : "local";
+  } catch {
+    return "local";
+  }
+}
+
+/** Case 2 on every live attempt registration of every host. */
+function revokeEveryHost(): void {
+  for (const host of [...liveHosts]) { try { host.revokeAll(); } catch { /* fenced per registration */ } }
+}
+
+/**
+ * Record one running Bot's exposure. A registration that fails the
+ * per-exposure G-d terms revokes every live attempt registration of every
+ * host (case 2).
  */
 export function registerGatewayExposure(entry: GatewayExposureEntry): () => void {
   const key = Symbol("bot");
-  exposures.set(key, Object.freeze({ sandboxMode: entry.sandboxMode, codexHome: entry.codexHome }));
-  let unsafe = entry.sandboxMode === "danger-full-access";
-  if (!unsafe) { try { unsafe = !admitsCodexHome(entry.codexHome); } catch { unsafe = true; } }
-  if (unsafe) for (const host of [...liveHosts]) { try { host.revokeAll(); } catch { /* fenced per registration */ } }
+  const recorded: GatewayExposureEntry = Object.freeze({ sandboxMode: entry.sandboxMode, codexHome: entry.codexHome,
+    apiKeyConfigured: entry.apiKeyConfigured, sdkEnvAuthMarkers: entry.sdkEnvAuthMarkers });
+  exposures.set(key, recorded);
+  let unsafe: boolean;
+  try { unsafe = exposureFacts(recorded) === null; } catch { unsafe = true; }
+  if (unsafe) revokeEveryHost();
   return () => { exposures.delete(key); };
 }
 
@@ -410,7 +665,11 @@ export interface GenerationInput {
   readonly currentResetEpoch: () => number;
   /** Ops offered to this generation (policy/route narrowed, table-backed). */
   readonly ops: readonly ToolOpcode[];
-  /** Per-attempt gates (G-d and runtime liveness); false ⇒ no injection for the attempt. */
+  /**
+   * Per-attempt gates (G-d and runtime liveness); false ⇒ no injection for the
+   * attempt. Its last term must be {@link gatewayAdmitsInjection}, whose
+   * admit snapshot it captures; true without one opens no registration.
+   */
   readonly admit: () => boolean;
 }
 
@@ -426,6 +685,10 @@ export interface ToolHostStats {
   readonly bootstrapReplay: number;
   readonly bootstrapExpired: number;
   readonly bootstrapUnknown: number;
+  /** Redeem-time G-d fence closed the redeeming registration (v3.1 D1 steps 1–3). */
+  readonly bootstrapAdmitDrift: number;
+  /** The fence found the gateway terms failing and revoked every live registration (step 1 only). */
+  readonly bootstrapAdmitGatewayRevoke: number;
   readonly authRejected: number;
   readonly frameRejected: number;
   readonly liveRegistrations: number;
@@ -459,6 +722,8 @@ interface Registration {
   readonly ticketPath: string;
   readonly dir: string;
   readonly ticketDeadlineMono: number;
+  /** G-d facts captured synchronously with this attempt's admit. */
+  readonly admitSnapshot: AdmitSnapshot;
   ttlTimer: unknown;
   expiryTimer: unknown;
   port: number;
@@ -520,7 +785,8 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
     return undefined;
   }
 
-  const counters = { bootstrapRedeemed: 0, bootstrapReplay: 0, bootstrapExpired: 0, bootstrapUnknown: 0, authRejected: 0, frameRejected: 0 };
+  const counters = { bootstrapRedeemed: 0, bootstrapReplay: 0, bootstrapExpired: 0, bootstrapUnknown: 0,
+    bootstrapAdmitDrift: 0, bootstrapAdmitGatewayRevoke: 0, authRejected: 0, frameRejected: 0 };
   const generations = new Set<Generation>();
   const registrations = new Set<Registration>();
   /** Every unfinished charged request of this host, for the shutdown drain. */
@@ -636,6 +902,18 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
       // Case 3 reached before the TTL timer fired.
       counters.bootstrapExpired++;
       closeRegistration(reg);
+      return;
+    }
+    // Redeem-time G-d fence: before any authority, request or ledger state exists.
+    const fenced = redeemFence(reg.admitSnapshot);
+    if (fenced !== "admitted") {
+      counters.bootstrapAdmitDrift++;
+      closeRegistration(reg);
+      if (fenced === "gateway") {
+        // Some Bot's exposure is no longer admissible: every live authority goes (case 2).
+        counters.bootstrapAdmitGatewayRevoke++;
+        revokeEveryHost();
+      }
       return;
     }
     // Case 1: first valid redemption.
@@ -830,7 +1108,7 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
     socket.on("close", () => { reg.sockets.delete(socket); });
   }
 
-  async function openRegistration(gen: Generation): Promise<Registration | undefined> {
+  async function openRegistration(gen: Generation, admitSnapshot: AdmitSnapshot): Promise<Registration | undefined> {
     let dir: string | undefined;
     let fd: number | undefined;
     let server: Server | undefined;
@@ -859,7 +1137,7 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
       const now = clock.nowMono();
       const reg: Registration = {
         gen, state: "pending", server: srv, sockets: new Set(), authority, ticket, ticketPath, dir,
-        ticketDeadlineMono: now + BOOTSTRAP_TTL_MS, ttlTimer: undefined, expiryTimer: undefined, port: address.port,
+        ticketDeadlineMono: now + BOOTSTRAP_TTL_MS, admitSnapshot, ttlTimer: undefined, expiryTimer: undefined, port: address.port,
       };
       srv.on("connection", (socket) => attachSocket(reg, socket));
       srv.on("error", () => closeRegistration(reg));
@@ -883,8 +1161,19 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
         // Rotation: the previous registration closes; the generation ledger is kept.
         if (gen.attempt !== undefined) closeRegistration(gen.attempt);
         if (!gen.live || closing || clock.nowMono() >= gen.input.expiresAtMono || gen.input.ops.length === 0) return undefined;
-        if (!gen.input.admit() || !entryUsable(entry)) return undefined;
-        const reg = await openRegistration(gen);
+        // Single-use admit slot: clear, admit, take and clear again, with no await in between.
+        let admitted = false;
+        let snapshot: AdmitSnapshot | undefined;
+        takeAdmitSlot();
+        try {
+          admitted = gen.input.admit();
+          snapshot = takeAdmitSlot();
+        } finally {
+          takeAdmitSlot();
+        }
+        // An admit that did not run G-d (an empty slot) opens nothing.
+        if (admitted !== true || snapshot === undefined || !isAbsolute(snapshot.session.cwd) || !entryUsable(entry)) return undefined;
+        const reg = await openRegistration(gen, snapshot);
         if (reg === undefined) return undefined;
         if (!gen.live || closing) { closeRegistration(reg); return undefined; }
         registrations.add(reg);

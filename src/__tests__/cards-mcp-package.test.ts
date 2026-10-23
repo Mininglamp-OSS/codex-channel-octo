@@ -25,6 +25,7 @@ import { createToolHost, type ExplicitOpHandler } from "../cards/tool-host.js";
 import { createAdapter } from "../db-adapter.js";
 import { SessionStore } from "../session-store.js";
 import { manualTime } from "./fixtures/card-write-harness.js";
+import { admissibleGateway } from "./fixtures/gd-admit.js";
 
 const repo = process.cwd();
 // Inside the repository so emitted modules resolve the installed dependencies.
@@ -117,14 +118,15 @@ async function liveHost() {
     transport: { async send() { return { kind: "acked", messageId: String(seq++) }; } },
     entry: { nodePath: process.execPath, serverPath: join(out, "cards", "mcp-server.js") } })!;
   const generation = randomUUID();
+  const gateway = admissibleGateway();
   const gen = host.openGeneration({ ctx: Object.freeze({ botRef: { originKey: "https://test.invalid", credentialRef: "c".repeat(43) },
     route: { channelId: "c", channelType: 1 }, requesterUid: "u", sessionKey: "s", turnGeneration: generation, resetEpoch: 0,
     policyIdentity: "c".repeat(43), runtimeIncarnation: incarnation, injectedServerId: `octo_cards_${randomBytes(16).toString("hex")}`,
     routeEligibility: { kind: "dm" as const, obo: false, docTask: false, cron: false }, origin: { kind: "user" as const } }),
   binding: { sessionKey: "s", channelId: "c", channelType: 1, topicScope: null, generation, resetEpoch: 0 },
-  expiresAtMono: time.now() + 60_000, currentResetEpoch: () => 0, ops: ["display"], admit: () => true })!;
+  expiresAtMono: time.now() + 60_000, currentResetEpoch: () => 0, ops: ["display"], admit: gateway.admit })!;
   const h = (await gen.launch.prepareAttempt())!;
-  const close = () => { host.close({ reason: "shutdown", deadlineMono: 0, signal: AbortSignal.abort() }); sub.store.retire(); adapter.close(); };
+  const close = () => { host.close({ reason: "shutdown", deadlineMono: 0, signal: AbortSignal.abort() }); sub.store.retire(); adapter.close(); gateway.release(); };
   return { h, host, adapter, generation, close, root };
 }
 

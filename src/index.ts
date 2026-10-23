@@ -7,7 +7,7 @@ import { readDeliveryReport } from './cards/delivery-report.js';
 import type { ShutdownReason } from './cards/contracts.js';
 import type { AutomaticTurn } from './cards/lifecycle.js';
 import { classifyCardError, openCardRuntime, type CardRuntime } from './cards/runtime.js';
-import { bootstrapExcludedRoots, registerGatewayExposure, type CardInjectionLaunch } from './cards/tool-host.js';
+import { bootstrapExcludedRoots, hasCodexAuthEnvMarker, registerGatewayExposure, type CardInjectionLaunch } from './cards/tool-host.js';
 import { isAuthenticCronFire } from './cron-fire-marker.js';
 import { performance } from 'node:perf_hooks';
 /**
@@ -26,7 +26,7 @@ import { SessionStore } from './session-store.js';
 import { OctoGateway } from './gateway.js';
 import { SessionRouter } from './session-router.js';
 import { GroupContext } from './group-context.js';
-import { queryAgentEvents } from './agent-bridge.js';
+import { queryAgentEvents, resolveSandbox } from './agent-bridge.js';
 import type { QueryAgentOptions } from './agent-bridge.js';
 import {
   OutputCollector,
@@ -230,7 +230,8 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // depends on it. ---
     // Every Bot's model-command exposure feeds the gateway-wide explicit-tool gate (G-d).
     const codexHome = config.sdk.codexHome ?? config.sdk.env?.CODEX_HOME ?? process.env.CODEX_HOME;
-    releaseExposure = registerGatewayExposure({ sandboxMode: config.sdk.sandboxMode, codexHome });
+    releaseExposure = registerGatewayExposure({ sandboxMode: resolveSandbox(config.sdk), codexHome,
+      apiKeyConfigured: Boolean(config.sdk.codexApiKey), sdkEnvAuthMarkers: hasCodexAuthEnvMarker(config.sdk.env) });
     const cardRuntime = config.cards?.disable !== true
       ? await openCardRuntime({ adapter, dataDir: config.dataDir, apiUrl: config.apiUrl, botToken: config.botToken,
         bootstrapExcludedRoots: bootstrapExcludedRoots({ cwdBase: config.cwdBase ?? config.cwd,
