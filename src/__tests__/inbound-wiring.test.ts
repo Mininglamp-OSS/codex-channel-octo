@@ -35,7 +35,7 @@ vi.mock('../agent-bridge.js', () => {
     }
     yield { kind: 'attempt_end', attempt: 0, terminal: 'completed' };
   }
-  return { queryAgent, queryAgentEvents };
+  return { queryAgent, queryAgentEvents, resolveSandbox: () => 'read-only' };
 });
 
 import { startBot, type BotStack } from '../index.js';
