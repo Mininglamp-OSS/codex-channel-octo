@@ -24,6 +24,7 @@ import { createToolHost, type ExplicitOpHandler, type ExplicitTransport, type Ex
 import { createAdapter, type DbAdapter } from "../db-adapter.js";
 import { SessionStore } from "../session-store.js";
 import { manualTime, type ManualTime } from "./fixtures/card-write-harness.js";
+import { admissibleGateway } from "./fixtures/gd-admit.js";
 
 const roots: string[] = [];
 const cleanups: (() => void)[] = [];
@@ -199,8 +200,10 @@ function counts(adapter: DbAdapter, generation: string) {
 }
 
 function open(inc: Incarnation, ctx = context(inc)) {
+  const gateway = admissibleGateway();
+  cleanups.push(gateway.release);
   const gen = inc.host.openGeneration({ ctx, binding: bindingOf(ctx), expiresAtMono: inc.time.now() + 600_000, currentResetEpoch: () => 0,
-    ops: ["display", "interactive"], admit: () => true });
+    ops: ["display", "interactive"], admit: gateway.admit });
   if (gen === undefined) throw new Error("no generation");
   return gen;
 }

@@ -5,17 +5,71 @@
  * listeners and a synthetic test op with a fake transport double; no
  * production op, no Octo send, no model. Covers the authority-free entry,
  * the four redemption cases, endpoint-bound authentication, the D0–D6
- * dispatch order with its ledger outcomes, fences, rotation and drain.
+ * dispatch order with its ledger outcomes, fences, rotation and drain, and
+ * the G-d hardening of WP09-PF v3 §4.4 as amended by v3.1 (auth, code-mode
+ * and MDM terms, the admit slot and the redeem-time fence).
+ *
+ * Host-only roots (`/etc/codex`, `/Library/Managed Preferences`) are never
+ * touched: `node:fs` is wrapped in this file only, to redirect those two
+ * paths to temp directories and to inject one `lstat` race. `node:path` and
+ * `node:util` are wrapped only to make the session check or the comparator
+ * throw for the throw-mapping fixture. Every wrapper passes through unless a
+ * test arms it, and none of this exists in the emitted package.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync,
+} from "node:fs";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+
+const armed = vi.hoisted(() => ({
+  /** Logical host path → temp path. */
+  redirect: new Map<string, string>(),
+  /** Logical path whose `lstat` fails with ENOENT (an entry gone after `readdir`). */
+  vanished: new Set<string>(),
+  /** Absolute path for which `isAbsolute` throws. */
+  isAbsoluteThrows: undefined as string | undefined,
+  deepEqualThrows: false,
+}));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const to = (p: unknown): unknown => {
+    if (typeof p !== "string") return p;
+    for (const [from, target] of armed.redirect) if (p === from || p.startsWith(`${from}/`)) return target + p.slice(from.length);
+    return p;
+  };
+  const lstatSync = ((p: string, o?: never) => {
+    if (armed.vanished.has(p)) throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+    return actual.lstatSync(to(p) as string, o);
+  }) as typeof actual.lstatSync;
+  const readdirSync = ((p: string, o?: never) => actual.readdirSync(to(p) as string, o)) as typeof actual.readdirSync;
+  return { ...actual, default: { ...actual, lstatSync, readdirSync }, lstatSync, readdirSync };
+});
+vi.mock("node:path", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:path")>();
+  const isAbsolute = (p: string): boolean => {
+    if (armed.isAbsoluteThrows !== undefined && p === armed.isAbsoluteThrows) throw new Error("isAbsolute");
+    return actual.isAbsolute(p);
+  };
+  return { ...actual, default: { ...actual, isAbsolute }, isAbsolute };
+});
+vi.mock("node:util", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:util")>();
+  const isDeepStrictEqual = (a: unknown, b: unknown): boolean => {
+    if (armed.deepEqualThrows) throw new Error("isDeepStrictEqual");
+    return actual.isDeepStrictEqual(a, b);
+  };
+  return { ...actual, default: { ...actual, isDeepStrictEqual }, isDeepStrictEqual };
+});
+
+import { buildThreadOptions, resolveSandbox } from "../agent-bridge.js";
+import type { Config } from "../config.js";
 import type { CardToolResult, ToolOpcode, TrustedTurnContext } from "../cards/contracts.js";
 import { provisionFirstInstallMarker } from "../cards/migrations.js";
 import { encodeBootstrapFrame, parseBootstrapReply, parseReplyFrame, readFrame } from "../cards/protocol.js";
@@ -23,26 +77,34 @@ import { cardSubsystemPaths, openCardSubsystem } from "../cards/recovery.js";
 import type { CardBinding, CardStore, ExplicitCard } from "../cards/store.js";
 import {
   BOOTSTRAP_TTL_MS,
+  CODEX_AUTH_ENV_MARKERS,
   EXPLICIT_OP_UNAVAILABLE,
   PRODUCTION_EXPLICIT_OPS,
   REQUIRED_DISABLED_CODEX_FEATURES,
   admitsCodexConfigToml,
   createToolHost,
   gatewayAdmitsInjection,
+  hasCodexAuthEnvMarker,
   registerGatewayExposure,
   type AttemptHandle,
   type ExplicitOpHandler,
   type ExplicitTransport,
   type ExplicitTransportOutcome,
+  type GatewayExposureEntry,
   type ToolHost,
 } from "../cards/tool-host.js";
 import { createAdapter, type DbAdapter } from "../db-adapter.js";
 import { SessionStore } from "../session-store.js";
 import { manualTime, type ManualTime } from "./fixtures/card-write-harness.js";
+import { ADMITTED_CONFIG_TOML, admissibleGateway } from "./fixtures/gd-admit.js";
 
 const roots: string[] = [];
 const cleanups: (() => void)[] = [];
 afterEach(() => {
+  armed.redirect.clear();
+  armed.vanished.clear();
+  armed.isAbsoluteThrows = undefined;
+  armed.deepEqualThrows = false;
   for (const c of cleanups.splice(0).reverse()) { try { c(); } catch { /* best effort */ } }
   for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
 });
@@ -63,6 +125,10 @@ interface Rig {
   readonly cardsDir: string;
   readonly incarnation: string;
   readonly installationRef: string;
+  /** The real G-d admit over this rig's admissible exposure and session cwd. */
+  readonly admit: () => boolean;
+  readonly cwd: string;
+  readonly codexHome: string;
 }
 
 async function rig(opts: { ops?: ReadonlyMap<ToolOpcode, ExplicitOpHandler>; transport?: ExplicitTransport; excludedRoots?: readonly string[];
@@ -90,7 +156,10 @@ async function rig(opts: { ops?: ReadonlyMap<ToolOpcode, ExplicitOpHandler>; tra
   });
   if (host === undefined) throw new Error("no host");
   cleanups.push(() => { host.close({ reason: "shutdown", deadlineMono: time.now(), signal: AbortSignal.abort() }); sub.store.retire(); adapter.close(); });
-  return { store: sub.store, adapter, host, time, cardsDir: p.cardsDir, incarnation, installationRef: sub.meta.installationRef };
+  const gateway = admissibleGateway();
+  cleanups.push(gateway.release);
+  return { store: sub.store, adapter, host, time, cardsDir: p.cardsDir, incarnation, installationRef: sub.meta.installationRef,
+    admit: gateway.admit, cwd: gateway.cwd, codexHome: gateway.codexHome };
 }
 
 let messageSeq = 7_000_000_000;
@@ -135,7 +204,7 @@ function context(r: Rig, over: Partial<TrustedTurnContext> = {}): TrustedTurnCon
 function open(r: Rig, over: { ctx?: TrustedTurnContext; ops?: readonly ToolOpcode[]; epoch?: () => number; ttl?: number; admit?: () => boolean } = {}) {
   const ctx = over.ctx ?? context(r);
   const gen = r.host.openGeneration({ ctx, binding: bindingOf(ctx), expiresAtMono: r.time.now() + (over.ttl ?? 600_000),
-    currentResetEpoch: over.epoch ?? (() => 0), ops: over.ops ?? ["display"], admit: over.admit ?? (() => true) });
+    currentResetEpoch: over.epoch ?? (() => 0), ops: over.ops ?? ["display"], admit: over.admit ?? r.admit });
   if (gen === undefined) throw new Error("no generation");
   return { gen, ctx };
 }
@@ -701,38 +770,76 @@ describe("shutdown drain (§2.4 shutdown row)", () => {
 
 // ─── gateway-wide G-d ───────────────────────────────────────────────────────
 
-/** The only `[features]` table G-d admits: every required feature explicitly off. */
-const FEATURES_OFF = `[features]\n${REQUIRED_DISABLED_CODEX_FEATURES.map((f) => `${f} = false`).join("\n")}\n`;
+/** The only `config.toml` G-d admits: API-key login forced and every required feature explicitly off. */
+const ADMITTED = ADMITTED_CONFIG_TOML;
 
 function featuresOffHome(prefix: string, extra = ""): string {
   const home = tempDir(prefix);
-  writeFileSync(join(home, "config.toml"), `${extra}${FEATURES_OFF}`);
+  writeFileSync(join(home, "config.toml"), `${extra}${ADMITTED}`);
   return home;
 }
 
+function homeWith(prefix: string, configToml: string): string {
+  const home = tempDir(prefix);
+  writeFileSync(join(home, "config.toml"), configToml);
+  return home;
+}
+
+/** /tmp has no `.codex` ancestor on any CI host; the walk is conservative up to "/". */
+function sessionCwd(): string {
+  const cwd = mkdtempSync("/tmp/wp08-cwd-");
+  roots.push(cwd);
+  return cwd;
+}
+
+/** An admissible exposure of `codexHome`, with any field overridden (also with a wrong type). */
+function exposure(codexHome: string | undefined, over: { readonly [K in keyof GatewayExposureEntry]?: unknown } = {}): GatewayExposureEntry {
+  return { sandboxMode: "read-only", codexHome, apiKeyConfigured: true, sdkEnvAuthMarkers: false, ...over } as GatewayExposureEntry;
+}
+
+function expose(entry: GatewayExposureEntry): () => void {
+  const release = registerGatewayExposure(entry);
+  cleanups.push(release);
+  return release;
+}
+
+/** G-d for `cwd` with `entry` as the only extra exposure, then unregistered. */
+function admitsWith(cwd: string, entry: GatewayExposureEntry): boolean {
+  const release = registerGatewayExposure(entry);
+  try { return gatewayAdmitsInjection(cwd); } finally { release(); }
+}
+
+/** Run `fn` with `key` present in the live process.env, restoring the prior state. */
+function withEnv<T>(key: string, fn: () => T): T {
+  const had = Object.hasOwn(process.env, key);
+  const prior = process.env[key];
+  process.env[key] = "";
+  try { return fn(); } finally { if (had) process.env[key] = prior; else delete process.env[key]; }
+}
+
 describe("gateway-wide discovery gate G-d (§6)", () => {
-  it("requires the Codex 0.163 default-on plugin, connector and hook features to be explicitly off", () => {
-    expect([...REQUIRED_DISABLED_CODEX_FEATURES].sort()).toEqual(["apps", "hooks", "plugins", "remote_plugin", "skill_mcp_dependency_install"]);
+  it("requires the Codex 0.163 default-on plugin, connector, hook and code-mode host features to be explicitly off", () => {
+    expect([...REQUIRED_DISABLED_CODEX_FEATURES].sort()).toEqual(["apps", "code_mode_host", "hooks", "plugins", "remote_plugin", "skill_mcp_dependency_install"]);
     // Empty or settings-only config leaves the 0.163 defaults on.
     expect(admitsCodexConfigToml("")).toBe(false);
     expect(admitsCodexConfigToml('model = "gpt"\n')).toBe(false);
-    expect(admitsCodexConfigToml(FEATURES_OFF)).toBe(true);
-    expect(admitsCodexConfigToml(`# c\nmodel = "gpt"\nmodel_reasoning_effort = "high"\n${FEATURES_OFF}[model_providers.p]\nbase_url = "https://x"\n`)).toBe(true);
+    expect(admitsCodexConfigToml(ADMITTED)).toBe(true);
+    expect(admitsCodexConfigToml(`# c\nmodel = "gpt"\nmodel_reasoning_effort = "high"\n${ADMITTED}[model_providers.p]\nbase_url = "https://x"\n`)).toBe(true);
     for (const missing of REQUIRED_DISABLED_CODEX_FEATURES) {
-      expect(admitsCodexConfigToml(FEATURES_OFF.replace(`${missing} = false\n`, ""))).toBe(false);
+      expect(admitsCodexConfigToml(ADMITTED.replace(`${missing} = false\n`, ""))).toBe(false);
     }
     for (const bad of [
-      FEATURES_OFF.replace("apps = false", "apps = true"),
-      FEATURES_OFF.replace("hooks = false", 'hooks = "false"'),
-      FEATURES_OFF.replace("plugins = false", "plugins = 0"),
-      `${FEATURES_OFF}web_search = false\n`,
-      `${FEATURES_OFF}apps = false\n`,
-      `${FEATURES_OFF}[features]\n`,
-      `${FEATURES_OFF}[model_providers.p]\nname = "a"\n[model_providers.p]\nname = "b"\n`,
-      `model = "a"\nmodel = "b"\n${FEATURES_OFF}`,
-      `features.apps = false\n${FEATURES_OFF}`,
-      `[features.apps]\nenabled = false\n${FEATURES_OFF}`,
-      "[features]\napps = false\nplugins = false\nremote_plugin = false\nhooks = false\nskill_mcp_dependency_install = false garbage\n",
+      ADMITTED.replace("apps = false", "apps = true"),
+      ADMITTED.replace("hooks = false", 'hooks = "false"'),
+      ADMITTED.replace("plugins = false", "plugins = 0"),
+      `${ADMITTED}web_search = false\n`,
+      `${ADMITTED}apps = false\n`,
+      `${ADMITTED}[features]\n`,
+      `${ADMITTED}[model_providers.p]\nname = "a"\n[model_providers.p]\nname = "b"\n`,
+      `model = "a"\nmodel = "b"\n${ADMITTED}`,
+      `features.apps = false\n${ADMITTED}`,
+      `[features.apps]\nenabled = false\n${ADMITTED}`,
+      `${ADMITTED.replace(/\n$/, "")} garbage\n`,
     ]) expect(admitsCodexConfigToml(bad)).toBe(false);
   });
 
@@ -741,64 +848,187 @@ describe("gateway-wide discovery gate G-d (§6)", () => {
       'notify = ["say"]', '[mcp_servers.node_repl]\ncommand = "node"', "[hooks]\nx = 1", '[profiles.a]\nmodel = "x"',
       'profile = "a"', '[plugins.x]\nenabled = true', '[apps.codex_apps]\nenabled = true', 'mcp_servers.x.command = "y"',
       'model = """\nx\n"""', 'model = { a = 1 }', 'sandbox_mode = "danger-full-access"', "garbage line",
-    ]) expect(admitsCodexConfigToml(`${FEATURES_OFF}${bad}\n`)).toBe(false);
+    ]) expect(admitsCodexConfigToml(`${ADMITTED}${bad}\n`)).toBe(false);
   });
 
-  it("injection holds only when every Bot is sandboxed and its CODEX_HOME admits nothing else", () => {
+  it("code mode: an absent or enabled code_mode_host and every fallback or code_mode shape turn injection off (C2)", () => {
+    const cwd = sessionCwd();
+    const noHost = ADMITTED.replace("code_mode_host = false\n", "");
+    const shapes = [
+      noHost,
+      ADMITTED.replace("code_mode_host = false", "code_mode_host = true"),
+      `${noHost}[features.code_mode_host]\ndisable_in_process_fallback = true\n`,
+      `${ADMITTED}[features.code_mode_host]\ndisable_in_process_fallback = true\n`,
+      noHost.replace("[features]\n", "[features]\ncode_mode_host = { enabled = false, disable_in_process_fallback = true }\n"),
+      `${ADMITTED}[features.code_mode]\nenabled = true\n`,
+      `features.code_mode_host.disable_in_process_fallback = true\n${ADMITTED}`,
+      ADMITTED.replace("[features]\n", "[features]\ncode_mode = true\n"),
+      ADMITTED.replace("[features]\n", "[features]\ncode_mode_only = true\n"),
+    ];
+    for (const text of shapes) {
+      expect([text, admitsCodexConfigToml(text)]).toEqual([text, false]);
+      expect([text, admitsWith(cwd, exposure(homeWith("wp08-cm-", text)))]).toEqual([text, false]);
+    }
+    expect(admitsWith(cwd, exposure(homeWith("wp08-cm-", ADMITTED)))).toBe(true);
+  });
+
+  it("auth: only presence-checked API-key auth, forced api login and the file store admit (§4.4-2/3)", () => {
+    const cwd = sessionCwd();
+    const home = featuresOffHome("wp08-auth-");
+    expect(admitsWith(cwd, exposure(home))).toBe(true);
+    // Exposure fields: no API key, an sdk.env marker, or any non-boolean value.
+    for (const over of [
+      { apiKeyConfigured: false }, { sdkEnvAuthMarkers: true },
+      { apiKeyConfigured: "true" }, { apiKeyConfigured: 1 }, { apiKeyConfigured: undefined }, { apiKeyConfigured: null },
+      { sdkEnvAuthMarkers: "false" }, { sdkEnvAuthMarkers: 0 }, { sdkEnvAuthMarkers: undefined }, { sdkEnvAuthMarkers: null },
+    ]) expect([over, admitsWith(cwd, exposure(home, over))]).toEqual([over, false]);
+    // Each marker in the live process.env, by key presence alone (an empty value counts).
+    for (const key of CODEX_AUTH_ENV_MARKERS) expect([key, withEnv(key, () => admitsWith(cwd, exposure(home)))]).toEqual([key, false]);
+    expect(admitsWith(cwd, exposure(home))).toBe(true);
+    // Stored or cloud auth in CODEX_HOME, as any entry type, a dangling symlink included.
+    const makers: [string, (p: string) => void][] = [
+      ["file", (p) => writeFileSync(p, "{}")], ["directory", (p) => mkdirSync(p)], ["dangling symlink", (p) => symlinkSync(join(home, "missing-target"), p)],
+    ];
+    for (const name of ["auth.json", "cloud-config-bundle-cache.json"]) {
+      for (const [kind, make] of makers) {
+        const p = join(home, name);
+        make(p);
+        try { expect([name, kind, admitsWith(cwd, exposure(home))]).toEqual([name, kind, false]); } finally { rmSync(p, { recursive: true, force: true }); }
+      }
+    }
+    expect(admitsWith(cwd, exposure(home))).toBe(true);
+    // Login method and credential store.
+    const cases: [string, boolean][] = [
+      [ADMITTED, true],
+      [ADMITTED.replace('"api"', "'api'"), true],
+      [`cli_auth_credentials_store = "file"\n${ADMITTED}`, true],
+      [`cli_auth_credentials_store = 'file'\n${ADMITTED}`, true],
+      [ADMITTED.replace('forced_login_method = "api"\n', ""), false],
+      [ADMITTED.replace('"api"', '"chatgpt"'), false],
+      [ADMITTED.replace('"api"', '"API"'), false],
+      [ADMITTED.replace('"api"', '"\\u0061pi"'), false],
+      [ADMITTED.replace('"api"', "true"), false],
+      ...["keyring", "auto", "ephemeral", "File"].map((m): [string, boolean] => [`cli_auth_credentials_store = "${m}"\n${ADMITTED}`, false]),
+    ];
+    for (const [text, ok] of cases) {
+      expect([text, admitsCodexConfigToml(text)]).toEqual([text, ok]);
+      expect([text, admitsWith(cwd, exposure(homeWith("wp08-auth-cfg-", text)))]).toEqual([text, ok]);
+    }
+  });
+
+  it("the sdk.env marker flag registered by index.ts is key presence only", () => {
+    expect([...CODEX_AUTH_ENV_MARKERS].sort()).toEqual(["CODEX_ACCESS_TOKEN", "OPENAI_FEDERATION_RULE_ID", "OPENAI_IDENTITY_TOKEN_FILE", "OPENAI_WORKLOAD_IDENTITY_CONTEXT"]);
+    expect(hasCodexAuthEnvMarker(undefined)).toBe(false);
+    expect(hasCodexAuthEnvMarker({})).toBe(false);
+    expect(hasCodexAuthEnvMarker({ OPENAI_API_KEY: "x", CODEX_API_KEY: "x", CODEX_HOME: "/h" })).toBe(false);
+    for (const key of CODEX_AUTH_ENV_MARKERS) expect(hasCodexAuthEnvMarker({ [key]: "" })).toBe(true);
+  });
+
+  it("index.ts registers the resolved sandbox mode and both auth presence flags at its only call site", () => {
+    const src = readFileSync(join(new URL("../..", import.meta.url).pathname, "src", "index.ts"), "utf8");
+    expect(src.match(/registerGatewayExposure\(/g)).toHaveLength(1);
+    expect(src).toContain("registerGatewayExposure({ sandboxMode: resolveSandbox(config.sdk), codexHome,\n"
+      + "      apiKeyConfigured: Boolean(config.sdk.codexApiKey), sdkEnvAuthMarkers: hasCodexAuthEnvMarker(config.sdk.env) });");
+  });
+
+  it("injection holds only when every Bot is admissible and its CODEX_HOME admits nothing else", () => {
     const clean = featuresOffHome("wp08-home-");
-    // /tmp has no `.codex` ancestor on any CI host; the walk is conservative up to "/".
-    const cwd = mkdtempSync("/tmp/wp08-cwd-");
-    roots.push(cwd);
-    const release = [registerGatewayExposure({ sandboxMode: "read-only", codexHome: clean })];
+    const cwd = sessionCwd();
+    const release = [registerGatewayExposure(exposure(clean))];
     cleanups.push(() => { for (const r of release) r(); });
     expect(gatewayAdmitsInjection(cwd)).toBe(true);
     expect(gatewayAdmitsInjection(undefined)).toBe(false);
+    expect(gatewayAdmitsInjection("relative/cwd")).toBe(false);
     mkdirSync(join(cwd, ".codex"));
     expect(gatewayAdmitsInjection(cwd)).toBe(false);
     rmSync(join(cwd, ".codex"), { recursive: true });
+    symlinkSync(join(cwd, "missing"), join(cwd, ".codex"));
+    expect(gatewayAdmitsInjection(cwd)).toBe(false);
+    rmSync(join(cwd, ".codex"));
     const notify = featuresOffHome("wp08-home-notify-", 'notify = ["say"]\n');
-    release.push(registerGatewayExposure({ sandboxMode: "workspace-write", codexHome: notify }));
+    release.push(registerGatewayExposure(exposure(notify)));
     expect(gatewayAdmitsInjection(cwd)).toBe(false);
     release.pop()!();
     expect(gatewayAdmitsInjection(cwd)).toBe(true);
     // A CODEX_HOME without config.toml runs with the 0.163 defaults on.
-    release.push(registerGatewayExposure({ sandboxMode: "read-only", codexHome: tempDir("wp08-home-empty-") }));
+    release.push(registerGatewayExposure(exposure(tempDir("wp08-home-empty-"))));
     expect(gatewayAdmitsInjection(cwd)).toBe(false);
     release.pop()!();
     expect(gatewayAdmitsInjection(cwd)).toBe(true);
-    release.push(registerGatewayExposure({ sandboxMode: "read-only", codexHome: undefined }));
+    release.push(registerGatewayExposure(exposure(undefined)));
+    expect(gatewayAdmitsInjection(cwd)).toBe(false);
+    release.pop()!();
+    // Unadmitted CODEX_HOME layers, as any entry type.
+    for (const name of ["managed_config.toml", "requirements.toml", "hooks.json", "hooks", "plugins"]) {
+      const home = featuresOffHome("wp08-home-layer-");
+      mkdirSync(join(home, name));
+      expect([name, admitsWith(cwd, exposure(home))]).toEqual([name, false]);
+    }
+    // A config.toml that is a symlink, a directory or over 64 KiB is not read.
+    const linked = tempDir("wp08-home-link-");
+    symlinkSync(join(clean, "config.toml"), join(linked, "config.toml"));
+    expect(admitsWith(cwd, exposure(linked))).toBe(false);
+    const dir = tempDir("wp08-home-dir-");
+    mkdirSync(join(dir, "config.toml"));
+    expect(admitsWith(cwd, exposure(dir))).toBe(false);
+    expect(admitsWith(cwd, exposure(featuresOffHome("wp08-home-big-", `# ${"x".repeat(65_536)}\n`)))).toBe(false);
+    expect(gatewayAdmitsInjection(cwd)).toBe(true);
+    release.pop()!();
+    // No running Bot at all is unknown exposure.
+    expect(gatewayAdmitsInjection(cwd)).toBe(false);
+  });
+
+  it("a dangling /etc/codex symlink turns injection off", () => {
+    const cwd = sessionCwd();
+    expose(exposure(featuresOffHome("wp08-etc-home-")));
+    const etc = join(tempDir("wp08-etc-"), "codex");
+    armed.redirect.set("/etc/codex", etc);
+    expect(gatewayAdmitsInjection(cwd)).toBe(true);
+    symlinkSync(join(etc, "..", "missing"), etc);
+    expect(gatewayAdmitsInjection(cwd)).toBe(false);
+    rmSync(etc);
+    writeFileSync(etc, "");
     expect(gatewayAdmitsInjection(cwd)).toBe(false);
   });
 
   it("a new Bot whose CODEX_HOME leaves the default features on revokes every live registration", async () => {
     const r = await rig();
     const v = await live(r);
-    cleanups.push(registerGatewayExposure({ sandboxMode: "read-only", codexHome: tempDir("wp08-home-default-") }));
+    cleanups.push(registerGatewayExposure(exposure(tempDir("wp08-home-default-"))));
     expect(r.host.stats().liveListeners).toBe(0);
     expect(await v.client.call(v.authority, "display", DISPLAY)).toBeNull();
   });
 
-  it("[PINNED-RUNTIME] codex 0.163.0 enables the required features by default and the admitted config turns each off", async () => {
+  it("[PINNED-RUNTIME] codex 0.163.0 default-on features equal the reviewed 59-entry table, and the admitted config turns each required one off", async () => {
+    // Precondition: no system or managed layer on this host, or `features list` would report host state.
+    let etc: NodeJS.ErrnoException | undefined;
+    try { statSync("/etc/codex"); } catch (err) { etc = err as NodeJS.ErrnoException; }
+    if (etc?.code !== "ENOENT") throw new Error("environment: /etc/codex is present; the snapshot needs a host with no system layer");
+    const probe = admissibleGateway();
+    cleanups.push(probe.release);
+    if (!probe.admit()) throw new Error("environment: G-d does not admit on this host (system layer, managed preferences or an auth marker)");
     const codexJs = join(new URL("../..", import.meta.url).pathname, "node_modules", "@openai", "codex", "bin", "codex.js");
-    const run = async (home: string): Promise<Map<string, string>> => {
+    const run = async (home: string): Promise<Map<string, { stage: string; enabled: string }>> => {
       const { stdout } = await promisify(execFile)(process.execPath, [codexJs, "features", "list"], {
         env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, CODEX_HOME: home }, timeout: 60_000, maxBuffer: 1 << 20,
       });
-      const states = new Map<string, string>();
+      const rows = new Map<string, { stage: string; enabled: string }>();
       for (const line of stdout.split("\n")) {
-        const m = /^(\S+)\s+.*\s(true|false)\s*$/.exec(line);
-        if (m !== null) states.set(m[1] as string, m[2] as string);
+        const m = /^(\S+)\s+(stable|experimental|under development|deprecated|removed)\s+(true|false)\s*$/.exec(line);
+        if (m !== null) rows.set(m[1] as string, { stage: m[2] as string, enabled: m[3] as string });
       }
-      return states;
+      return rows;
     };
     const { stdout: version } = await promisify(execFile)(process.execPath, [codexJs, "--version"], { timeout: 60_000 });
     expect(version.trim()).toBe("codex-cli 0.163.0");
     const defaults = await run(tempDir("wp08-home-default-"));
+    const enabledByDefault = [...defaults].filter(([, row]) => row.enabled === "true").map(([name, row]) => `${name} ${row.stage}`).sort();
+    expect(enabledByDefault).toEqual([...REVIEWED_DEFAULT_ON_FEATURES].sort());
     const off = featuresOffHome("wp08-home-off-");
     const disabled = await run(off);
     for (const f of REQUIRED_DISABLED_CODEX_FEATURES) {
-      expect([f, defaults.get(f)]).toEqual([f, "true"]);
-      expect([f, disabled.get(f)]).toEqual([f, "false"]);
+      expect([f, defaults.get(f)?.enabled]).toEqual([f, "true"]);
+      expect([f, disabled.get(f)?.enabled]).toEqual([f, "false"]);
     }
     expect(admitsCodexConfigToml(readFileSync(join(off, "config.toml"), "utf8"))).toBe(true);
   }, 120_000);
@@ -806,9 +1036,418 @@ describe("gateway-wide discovery gate G-d (§6)", () => {
   it("a Bot that newly allows danger-full-access revokes every live registration of every host", async () => {
     const r = await rig();
     const v = await live(r);
-    const release = registerGatewayExposure({ sandboxMode: "danger-full-access", codexHome: featuresOffHome("wp08-danger-") });
+    const release = registerGatewayExposure(exposure(featuresOffHome("wp08-danger-"), { sandboxMode: "danger-full-access" }));
     cleanups.push(release);
     expect(r.host.stats().liveListeners).toBe(0);
     expect(await v.client.call(v.authority, "display", DISPLAY)).toBeNull();
+  });
+});
+
+/** WP09-PF v3 §4.3: every default-enabled feature of codex 0.163.0 with its stage, as reviewed. Never generated from host output. */
+const REVIEWED_DEFAULT_ON_FEATURES: readonly string[] = Object.freeze([
+  "daemon_auto_start stable", "shell_tool stable", "view_image stable", "sleep_tool stable", "unified_exec stable",
+  "unified_exec_tty stable", "shell_snapshot stable", "content_item_kinds stable", "code_mode_host stable",
+  "code_mode_interrupt stable", "instant_interrupt under development", "terminal_resize_reflow removed", "sqlite removed",
+  "write_stdin_approval stable", "hooks stable", "api_key_model_discovery stable", "cli_daybreak stable",
+  "api_key_cyber_access_programs stable", "enable_request_compression stable", "unbounded_connection_retries stable",
+  "worktrees stable", "system_proxy_fallback stable", "multi_agent stable", "apps stable",
+  "tool_search_always_defer_mcp_tools removed", "tool_suggest stable", "plugins stable", "in_app_browser stable",
+  "browser_annotation_api stable", "in_app_chat stable", "in_app_dictation stable", "in_app_voice stable",
+  "in_app_local_automation stable", "in_app_updates stable", "browser_use stable", "browser_use_full_cdp_access stable",
+  "browser_use_external stable", "computer_use stable", "remote_plugin stable", "plugin_sharing stable",
+  "image_generation stable", "resize_all_images removed", "item_ids removed", "skill_mcp_dependency_install stable",
+  "skill_search stable", "mentions_v2 stable", "steer removed", "guardian_approval stable",
+  "guardian_reuse_parent_compaction stable", "goals stable", "collaboration_modes removed", "tool_call_mcp_elicitation stable",
+  "auth_elicitation stable", "fast_mode stable", "ultrafast_mode stable", "realtime_conversation stable",
+  "tui_app_server removed", "compaction_image_budget stable", "workspace_dependencies stable",
+]);
+
+// ─── managed-preferences walk ───────────────────────────────────────────────
+
+describe("managed-preferences walk (§4.4-1, v3.1 N-f)", () => {
+  const MDM = "/Library/Managed Preferences";
+
+  function mdmRig(): { readonly root: string; readonly admits: () => boolean } {
+    const cwd = sessionCwd();
+    expose(exposure(featuresOffHome("wp08-mdm-home-")));
+    const root = join(tempDir("wp08-mdm-"), "Managed Preferences");
+    armed.redirect.set(MDM, root);
+    return { root, admits: () => gatewayAdmitsInjection(cwd) };
+  }
+
+  it("an absent root passes; a root of non-Codex plists and directories passes (clean)", () => {
+    const m = mdmRig();
+    expect(m.admits()).toBe(true);
+    mkdirSync(join(m.root, "alice", "nested"), { recursive: true });
+    writeFileSync(join(m.root, "com.apple.dock.plist"), "");
+    writeFileSync(join(m.root, "alice", "com.example.app.plist"), "");
+    expect(m.admits()).toBe(true);
+  });
+
+  it("a symlink root, a symlink entry, a FIFO entry or an entry gone after readdir turns injection off", () => {
+    const m = mdmRig();
+    const target = tempDir("wp08-mdm-target-");
+    symlinkSync(target, m.root);
+    expect(m.admits()).toBe(false);
+    rmSync(m.root);
+    mkdirSync(m.root);
+    expect(m.admits()).toBe(true);
+    symlinkSync(join(target, "x.plist"), join(m.root, "link.plist"));
+    expect(m.admits()).toBe(false);
+    rmSync(join(m.root, "link.plist"));
+    execFileSync("mkfifo", [join(m.root, "fifo")]);
+    expect(m.admits()).toBe(false);
+    rmSync(join(m.root, "fifo"));
+    expect(m.admits()).toBe(true);
+    writeFileSync(join(m.root, "gone.plist"), "");
+    armed.vanished.add(`${MDM}/gone.plist`);
+    expect(m.admits()).toBe(false);
+    armed.vanished.clear();
+    expect(m.admits()).toBe(true);
+    // A root that is a regular file.
+    rmSync(m.root, { recursive: true });
+    writeFileSync(m.root, "");
+    expect(m.admits()).toBe(false);
+  });
+
+  it.skipIf(process.getuid?.() === 0)("an unreadable subdirectory (EACCES) turns injection off", () => {
+    const m = mdmRig();
+    const locked = join(m.root, "locked");
+    mkdirSync(locked, { recursive: true });
+    chmodSync(locked, 0o000);
+    cleanups.push(() => chmodSync(locked, 0o700));
+    expect(m.admits()).toBe(false);
+    chmodSync(locked, 0o700);
+    expect(m.admits()).toBe(true);
+  });
+
+  it("a real depth-3 directory is walked; an entry at depth 4 turns injection off", () => {
+    const m = mdmRig();
+    const depth3 = join(m.root, "d1", "d2", "d3");
+    mkdirSync(depth3, { recursive: true });
+    writeFileSync(join(m.root, "d1", "d2", "at-depth-3.plist"), "");
+    expect(m.admits()).toBe(true);
+    writeFileSync(join(depth3, "at-depth-4.plist"), "");
+    expect(m.admits()).toBe(false);
+  });
+
+  it("4096 visited entries (directories included) pass; the 4097th, spread over depths 1–2, turns injection off", () => {
+    const m = mdmRig();
+    const sub = join(m.root, "sub");
+    mkdirSync(sub, { recursive: true });
+    // 1 directory + 2047 files at depth 1, 2048 files at depth 2 = 4096 entries.
+    for (let i = 0; i < 2047; i++) writeFileSync(join(m.root, `f${i}`), "");
+    for (let i = 0; i < 2048; i++) writeFileSync(join(sub, `g${i}`), "");
+    expect(m.admits()).toBe(true);
+    writeFileSync(join(sub, "one-more"), "");
+    expect(m.admits()).toBe(false);
+  });
+
+  it("a Codex plist at depth 1, at depth 2 or in another letter case turns injection off", () => {
+    const m = mdmRig();
+    mkdirSync(join(m.root, "alice"), { recursive: true });
+    for (const rel of ["com.openai.codex.plist", join("alice", "com.openai.codex.plist"), "COM.OpenAI.Codex.PLIST"]) {
+      writeFileSync(join(m.root, rel), "");
+      expect([rel, m.admits()]).toEqual([rel, false]);
+      rmSync(join(m.root, rel));
+      expect([rel, m.admits()]).toEqual([rel, true]);
+    }
+  });
+});
+
+// ─── admit slot ─────────────────────────────────────────────────────────────
+
+describe("single-use admit slot (v3.1 N-c)", () => {
+  it("admit() true without a G-d evaluation opens no registration, ticket or listener", async () => {
+    const r = await rig();
+    const { gen } = open(r, { admit: () => true });
+    expect(await gen.launch.prepareAttempt()).toBeUndefined();
+    expect(r.host.stats()).toMatchObject({ liveRegistrations: 0, liveListeners: 0 });
+    expect(readdirSync(join(r.cardsDir, "bootstrap"))).toEqual([]);
+  });
+
+  it("an offer-time snapshot is cleared before admit, and the slot is empty after a take, a false admit and a throw", async () => {
+    const r = await rig();
+    // Offer-time evaluation (runtime.ts:378) fills the slot; the attempt clears it before its own admit.
+    expect(gatewayAdmitsInjection(r.cwd)).toBe(true);
+    expect(await open(r, { admit: () => true }).gen.launch.prepareAttempt()).toBeUndefined();
+    expect(await open(r).gen.launch.prepareAttempt()).toBeDefined();
+    expect(await open(r, { admit: () => true }).gen.launch.prepareAttempt()).toBeUndefined();
+    expect(await open(r, { admit: () => { r.admit(); return false; } }).gen.launch.prepareAttempt()).toBeUndefined();
+    expect(await open(r, { admit: () => true }).gen.launch.prepareAttempt()).toBeUndefined();
+    expect(await open(r, { admit: () => { r.admit(); throw new Error("admit"); } }).gen.launch.prepareAttempt()).toBeUndefined();
+    expect(await open(r, { admit: () => true }).gen.launch.prepareAttempt()).toBeUndefined();
+    expect(r.host.stats().liveRegistrations).toBe(1);
+  });
+
+  it("the registration keeps the admitted session cwd: only that cwd's project layer fences it", async () => {
+    const r = await rig();
+    const other = sessionCwd();
+    const first = await admittedAttempt(r);
+    mkdirSync(join(other, ".codex"));
+    expect(await redeemOn(first.e)).not.toBeNull();
+    const second = await admittedAttempt(r, { admit: () => gatewayAdmitsInjection(other) === false && r.admit() });
+    mkdirSync(join(r.cwd, ".codex"));
+    expect(await redeemOn(second.e)).toBeNull();
+    expect(r.host.stats()).toMatchObject({ bootstrapRedeemed: 1, bootstrapAdmitDrift: 1, bootstrapAdmitGatewayRevoke: 0 });
+  });
+});
+
+async function admittedAttempt(r: Rig, over: Parameters<typeof open>[1] = {}) {
+  const { gen, ctx } = open(r, over);
+  const h = (await gen.launch.prepareAttempt())!;
+  expect(h).toBeDefined();
+  return { gen, ctx, h, e: entryOf(h) };
+}
+
+async function redeemOn(e: { ticketPath: string; port: number }) {
+  const c = await Client.connect(e.port);
+  cleanups.push(() => c.close());
+  return c.redeem(ticketOf(e.ticketPath));
+}
+
+// ─── redeem-time fence ──────────────────────────────────────────────────────
+
+describe("redeem-time G-d fence (v3 §4.4-7 as split by v3.1 D1)", () => {
+  interface Change {
+    readonly name: string;
+    readonly scope: "local" | "gateway";
+    readonly before?: (r: Rig) => void;
+    readonly change: (r: Rig) => void;
+  }
+  const config = (r: Rig) => join(r.codexHome, "config.toml");
+  let removable: (() => void) | undefined;
+  const changes: Change[] = [
+    { name: "a still-admitted byte change to config.toml", scope: "local", change: (r) => writeFileSync(config(r), `# touched\n${readFileSync(config(r), "utf8")}`) },
+    { name: "an inode swap with identical bytes", scope: "local", change: (r) => {
+      const next = `${config(r)}.next`;
+      writeFileSync(next, readFileSync(config(r)));
+      renameSync(next, config(r));
+    } },
+    { name: "an mtimeNs change", scope: "local", change: (r) => utimesSync(config(r), new Date(Date.UTC(2001, 0, 1)), new Date(Date.UTC(2001, 0, 1))) },
+    { name: "an admissible exposure added", scope: "local", change: () => { expose(exposure(featuresOffHome("wp08-fence-add-"))); } },
+    { name: "an admissible exposure removed", scope: "local",
+      before: () => { removable = registerGatewayExposure(exposure(featuresOffHome("wp08-fence-rm-"))); cleanups.push(removable); },
+      change: () => removable!() },
+    { name: "a new project .codex layer", scope: "local", change: (r) => mkdirSync(join(r.cwd, ".codex")) },
+    { name: "managed preferences absent → clean", scope: "local",
+      before: () => armed.redirect.set("/Library/Managed Preferences", join(tempDir("wp08-fence-mdm-"), "mp")),
+      change: () => {
+        const root = armed.redirect.get("/Library/Managed Preferences")!;
+        mkdirSync(root);
+        writeFileSync(join(root, "com.apple.dock.plist"), "");
+      } },
+    { name: "a config.toml that no longer admits", scope: "gateway", change: (r) => writeFileSync(config(r), `notify = ["say"]\n${ADMITTED}`) },
+    { name: "a new denied file (auth.json)", scope: "gateway", change: (r) => writeFileSync(join(r.codexHome, "auth.json"), "{}") },
+    { name: "a new process.env marker", scope: "gateway", change: () => {
+      const had = Object.hasOwn(process.env, "CODEX_ACCESS_TOKEN");
+      process.env.CODEX_ACCESS_TOKEN = "";
+      if (!had) cleanups.push(() => { delete process.env.CODEX_ACCESS_TOKEN; });
+    } },
+  ];
+
+  it("an unchanged snapshot redeems as case 1", async () => {
+    const r = await rig();
+    const a = await admittedAttempt(r);
+    expect(await redeemOn(a.e)).not.toBeNull();
+    expect(r.host.stats()).toMatchObject({ bootstrapRedeemed: 1, bootstrapAdmitDrift: 0, bootstrapAdmitGatewayRevoke: 0 });
+  });
+
+  for (const c of changes) {
+    it(`${c.name} closes the redeeming registration as case 3 (${c.scope}): no reply, ledger Δ0, bootstrapExpired unchanged`, async () => {
+      const r = await rig();
+      const bystander = await live(r);
+      c.before?.(r);
+      const a = await admittedAttempt(r);
+      const before = r.host.stats();
+      c.change(r);
+      expect(await redeemOn(a.e)).toBeNull();
+      expect(r.host.stats()).toMatchObject({
+        bootstrapRedeemed: before.bootstrapRedeemed, bootstrapAdmitDrift: before.bootstrapAdmitDrift + 1,
+        bootstrapAdmitGatewayRevoke: before.bootstrapAdmitGatewayRevoke + (c.scope === "gateway" ? 1 : 0),
+        bootstrapExpired: before.bootstrapExpired, bootstrapReplay: before.bootstrapReplay,
+      });
+      expect(requestRows(r.adapter, a.gen.launch.generation)).toEqual([]);
+      expect(genRow(r.adapter, a.gen.launch.generation)).toMatchObject({ state: "live", inv: 0, sends: 0 });
+      expect(existsSync(a.e.ticketPath)).toBe(false);
+      await expect(Client.connect(a.e.port)).rejects.toThrow();
+      // A gateway failure revokes every live authority; a local one leaves the bystander alone.
+      if (c.scope === "gateway") {
+        expect(r.host.stats().liveRegistrations).toBe(0);
+        expect(await bystander.client.call(bystander.authority, "display", DISPLAY)).toBeNull();
+      } else {
+        expect(r.host.stats().liveRegistrations).toBe(1);
+        expect((await bystander.client.call(bystander.authority, "display", DISPLAY))?.status).toBe("sent");
+      }
+    });
+  }
+});
+
+describe("fence scope across registrations and hosts (v3.1 D1 fixtures 1–4)", () => {
+  /** H1 holds R0 (admitted, not redeemed, session cwd C0); H2 holds redeemed Rp (no request), Rc (one charged) and Rr (one reserved). */
+  async function scene() {
+    let releaseCharge!: () => void;
+    const chargeGate = new Promise<void>((resolve) => { releaseCharge = resolve; });
+    let releaseSend!: () => void;
+    const sendGate = new Promise<void>((resolve) => { releaseSend = resolve; });
+    let holdNextSend = true;
+    const transport: ExplicitTransport = { async send() {
+      if (holdNextSend) { holdNextSend = false; await sendGate; }
+      return { kind: "acked", messageId: String(messageSeq++) };
+    } };
+    const h1 = await rig();
+    const h2 = await rig({ ref: "install-b", transport, ops: new Map<ToolOpcode, ExplicitOpHandler>([
+      ["display", sendingOp("display")],
+      ["interactive", { op: "interactive", async handle() { await chargeGate; return EXPLICIT_OP_UNAVAILABLE; } }],
+    ]) });
+    cleanups.push(() => { releaseCharge(); releaseSend(); });
+    const onOwnCwd = async (ops: readonly ToolOpcode[]) => {
+      const cwd = sessionCwd();
+      return live(h2, { ops, admit: () => gatewayAdmitsInjection(cwd) });
+    };
+    const rp = await onOwnCwd(["display"]);
+    const rc = await onOwnCwd(["interactive"]);
+    const rr = await onOwnCwd(["display"]);
+    const charged = rc.client.call(rc.authority, "interactive", { title: "t", buttons: [{ id: "b", label: "B" }] });
+    await until(() => expect(requestRows(h2.adapter, rc.gen.launch.generation)).toMatchObject([{ state: "charged" }]));
+    const reserved = rr.client.call(rr.authority, "display", DISPLAY);
+    await until(() => expect(requestRows(h2.adapter, rr.gen.launch.generation)).toMatchObject([{ state: "reserved" }]));
+    const r0 = await admittedAttempt(h1);
+    return { h1, h2, rp, rc, rr, r0, charged, reserved };
+  }
+
+  type Scene = Awaited<ReturnType<typeof scene>>;
+
+  async function expectLocalClose(s: Scene): Promise<void> {
+    const h2Before = snapshot(s.h2.adapter);
+    expect(await redeemOn(s.r0.e)).toBeNull();
+    expect(s.h1.host.stats()).toMatchObject({ bootstrapRedeemed: 0, bootstrapAdmitDrift: 1, bootstrapAdmitGatewayRevoke: 0, bootstrapExpired: 0 });
+    expect(requestRows(s.h1.adapter, s.r0.gen.launch.generation)).toEqual([]);
+    // H2 is untouched: Rc stays charged, Rr stays reserved, nothing is revoked.
+    expect(s.h2.host.stats()).toMatchObject({ liveRegistrations: 3, bootstrapReplay: 0, bootstrapAdmitDrift: 0 });
+    expect(snapshot(s.h2.adapter)).toEqual(h2Before);
+    expect(requestRows(s.h2.adapter, s.rc.gen.launch.generation)).toMatchObject([{ state: "charged" }]);
+    expect(requestRows(s.h2.adapter, s.rr.gen.launch.generation)).toMatchObject([{ state: "reserved", send_slot: 1 }]);
+    // A later valid call on Rp is authorized.
+    expect((await s.rp.client.call(s.rp.authority, "display", DISPLAY))?.status).toBe("sent");
+  }
+
+  async function expectGatewayCascade(s: Scene): Promise<void> {
+    expect(await redeemOn(s.r0.e)).toBeNull();
+    expect(s.h1.host.stats()).toMatchObject({ bootstrapRedeemed: 0, bootstrapAdmitDrift: 1, bootstrapAdmitGatewayRevoke: 1, bootstrapExpired: 0 });
+    expect(requestRows(s.h1.adapter, s.r0.gen.launch.generation)).toEqual([]);
+    expect(s.h2.host.stats()).toMatchObject({ liveRegistrations: 0, liveListeners: 0 });
+    expect(requestRows(s.h2.adapter, s.rp.gen.launch.generation)).toEqual([]);
+    expect(requestRows(s.h2.adapter, s.rc.gen.launch.generation)).toMatchObject([{ state: "cancelled", send_slot: null }]);
+    expect(requestRows(s.h2.adapter, s.rr.gen.launch.generation)).toMatchObject([{ state: "ambiguous", send_slot: 1 }]);
+    expect(await s.charged).toBeNull();
+    expect(await s.reserved).toBeNull();
+    expect(await s.rp.client.call(s.rp.authority, "display", DISPLAY)).toBeNull();
+  }
+
+  it("1. a project layer under C0 closes only R0; Rp, Rc and Rr keep their state and Rp still works", async () => {
+    const s = await scene();
+    mkdirSync(join(s.h1.cwd, ".codex"));
+    await expectLocalClose(s);
+  });
+
+  it("2. a gateway snapshot that drifted but still admits (new mtimeNs, or an inode swap) closes only R0", async () => {
+    const s = await scene();
+    utimesSync(join(s.h1.codexHome, "config.toml"), new Date(Date.UTC(2001, 0, 1)), new Date(Date.UTC(2001, 0, 1)));
+    await expectLocalClose(s);
+    const t = await scene();
+    const path = join(t.h1.codexHome, "config.toml");
+    writeFileSync(`${path}.next`, readFileSync(path));
+    renameSync(`${path}.next`, path);
+    await expectLocalClose(t);
+  });
+
+  it("3. auth.json appearing in one CODEX_HOME closes R0 and revokes Rp (Δ0), Rc (cancelled) and Rr (ambiguous, retained)", async () => {
+    const s = await scene();
+    writeFileSync(join(s.h1.codexHome, "auth.json"), "{}");
+    await expectGatewayCascade(s);
+  });
+
+  it("4a. the gateway check throwing behaves as fixture 3", async () => {
+    const s = await scene();
+    const env = process.env;
+    process.env = new Proxy(env, { getOwnPropertyDescriptor(target, key) {
+      if (typeof key === "string" && CODEX_AUTH_ENV_MARKERS.includes(key)) throw new Error("env");
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    } });
+    try { await expectGatewayCascade(s); } finally { process.env = env; }
+  });
+
+  it("4b. the session check throwing behaves as fixture 1", async () => {
+    const s = await scene();
+    armed.isAbsoluteThrows = s.h1.cwd;
+    await expectLocalClose(s);
+  });
+
+  it("4c. the comparator throwing behaves as fixture 1", async () => {
+    const s = await scene();
+    armed.deepEqualThrows = true;
+    try { await expectLocalClose(s); } finally { armed.deepEqualThrows = false; }
+  });
+});
+
+// ─── resolved read-only exposures ───────────────────────────────────────────
+
+describe("only resolved read-only exposures admit (v3.1 D2)", () => {
+  const sdk = (over: Record<string, unknown>) => over as Config["sdk"];
+  const quiet = () => vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+  it("1. a resolved workspace-write exposure makes admit() false: no registration, ticket, fence or revoke", async () => {
+    quiet();
+    const r = await rig();
+    const mode = resolveSandbox(sdk({ sandboxMode: "workspace-write", allowWorkspaceWrite: true }));
+    expect(mode).toBe("workspace-write");
+    expose(exposure(featuresOffHome("wp08-ww-"), { sandboxMode: mode }));
+    const { gen } = open(r);
+    expect(await gen.launch.prepareAttempt()).toBeUndefined();
+    expect(r.host.stats()).toMatchObject({ liveRegistrations: 0, liveListeners: 0, bootstrapAdmitDrift: 0, bootstrapAdmitGatewayRevoke: 0 });
+    expect(readdirSync(join(r.cardsDir, "bootstrap"))).toEqual([]);
+  });
+
+  it("2. registering that exposure while another Bot has a live registration revokes it (case 2)", async () => {
+    quiet();
+    const r = await rig();
+    const v = await live(r);
+    expose(exposure(featuresOffHome("wp08-ww-"), { sandboxMode: resolveSandbox(sdk({ sandboxMode: "workspace-write", allowWorkspaceWrite: true })) }));
+    expect(r.host.stats()).toMatchObject({ liveRegistrations: 0, liveListeners: 0 });
+    expect(await v.client.call(v.authority, "display", DISPLAY)).toBeNull();
+  });
+
+  it("3. workspace-write without allowWorkspaceWrite registers as read-only and is admitted", async () => {
+    quiet();
+    const r = await rig();
+    const mode = resolveSandbox(sdk({ sandboxMode: "workspace-write", allowWorkspaceWrite: false }));
+    expect(mode).toBe("read-only");
+    expose(exposure(featuresOffHome("wp08-ww-ro-"), { sandboxMode: mode }));
+    const v = await live(r);
+    expect((await v.client.call(v.authority, "display", DISPLAY))?.status).toBe("sent");
+  });
+
+  it("4. danger-full-access, or a missing or non-string mode, makes admit() false", async () => {
+    const cwd = sessionCwd();
+    const home = featuresOffHome("wp08-modes-");
+    expect(resolveSandbox(sdk({ sandboxMode: "danger-full-access" }))).toBe("danger-full-access");
+    for (const sandboxMode of ["danger-full-access", "workspace-write", undefined, 42, null, "READ-ONLY", ""]) {
+      expect([sandboxMode, admitsWith(cwd, exposure(home, { sandboxMode }))]).toEqual([sandboxMode, false]);
+    }
+    expect(admitsWith(cwd, exposure(home))).toBe(true);
+  });
+
+  it("5. ordinary turns are unchanged: buildThreadOptions is byte-identical for all three modes", () => {
+    quiet();
+    const config = (s: Record<string, unknown>) => ({ sdk: s }) as unknown as Config;
+    const base = { workingDirectory: "/tmp/x", skipGitRepoCheck: true };
+    const tail = { approvalPolicy: "never", modelReasoningEffort: "medium" };
+    expect(JSON.stringify(buildThreadOptions(config({}), "/tmp/x"))).toBe(JSON.stringify({ ...base, sandboxMode: "read-only", ...tail,
+      networkAccessEnabled: false, webSearchEnabled: false, webSearchMode: "disabled" }));
+    expect(JSON.stringify(buildThreadOptions(config({ sandboxMode: "workspace-write", allowWorkspaceWrite: true }), "/tmp/x")))
+      .toBe(JSON.stringify({ ...base, sandboxMode: "workspace-write", ...tail, networkAccessEnabled: false, webSearchEnabled: false, webSearchMode: "disabled" }));
+    expect(JSON.stringify(buildThreadOptions(config({ sandboxMode: "danger-full-access" }), "/tmp/x")))
+      .toBe(JSON.stringify({ ...base, sandboxMode: "danger-full-access", ...tail, networkAccessEnabled: true, webSearchEnabled: false, webSearchMode: "disabled" }));
   });
 });

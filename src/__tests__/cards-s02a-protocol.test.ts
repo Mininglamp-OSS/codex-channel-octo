@@ -36,7 +36,6 @@ import { cardSubsystemPaths } from "../cards/recovery.js";
 import { openCardRuntime, type CardRuntime, type CardTurnInput } from "../cards/runtime.js";
 import {
   EXPLICIT_OP_UNAVAILABLE,
-  REQUIRED_DISABLED_CODEX_FEATURES,
   explicitPlatformCertified,
   registerGatewayExposure,
   type AttemptHandle,
@@ -47,6 +46,7 @@ import { createAdapter, type DbAdapter } from "../db-adapter.js";
 import { SessionStore } from "../session-store.js";
 import { profile } from "./fixtures/card-profile.js";
 import { json, manualTime, scriptedFetch, type ManualTime } from "./fixtures/card-write-harness.js";
+import { ADMITTED_CONFIG_TOML, admissibleGateway } from "./fixtures/gd-admit.js";
 
 const roots: string[] = [];
 const cleanups: (() => void | Promise<void>)[] = [];
@@ -66,7 +66,6 @@ function tempDir(prefix: string, base = tmpdir()): string {
 const CERTIFIED = explicitPlatformCertified();
 const unavailableOp: ExplicitOpHandler = { op: "display", async handle() { return EXPLICIT_OP_UNAVAILABLE as CardToolResult; } };
 const TEST_OPS = new Map([["display", unavailableOp]] as const);
-const FEATURES_OFF = `[features]\n${REQUIRED_DISABLED_CODEX_FEATURES.map((f) => `${f} = false`).join("\n")}\n`;
 
 // ─── runtime gates G-a…G-g ─────────────────────────────────────────────────
 
@@ -90,8 +89,9 @@ async function runtimeRig(over: { ops?: boolean; prof?: () => unknown; exposure?
   const exposure = over.exposure ?? "clean";
   if (exposure !== "none") {
     const codexHome = tempDir("wp08-home-");
-    writeFileSync(join(codexHome, "config.toml"), FEATURES_OFF);
-    cleanups.push(registerGatewayExposure({ sandboxMode: exposure === "danger" ? "danger-full-access" : "read-only", codexHome }));
+    writeFileSync(join(codexHome, "config.toml"), ADMITTED_CONFIG_TOML);
+    cleanups.push(registerGatewayExposure({ sandboxMode: exposure === "danger" ? "danger-full-access" : "read-only", codexHome,
+      apiKeyConfigured: true, sdkEnvAuthMarkers: false }));
   }
   const runtime = (await openCardRuntime({ adapter, dataDir, apiUrl: "https://test.invalid", botToken: "token-a",
     clock: time.clock, wall: time.wall, timers: time.timers, fetchImpl, bootstrapExcludedRoots: [],
@@ -157,7 +157,8 @@ describe("injection gate G-a…G-g at beginTurn (AM-08 v4 §7.2; AC-011.3/.11)",
   it.runIf(CERTIFIED)("G-d: a Bot whose CODEX_HOME leaves the 0.163 default features on turns injection off gateway-wide", async () => {
     const r = await runtimeRig();
     expect(r.runtime.beginTurn(r.input())!.injection).toBeDefined();
-    cleanups.push(registerGatewayExposure({ sandboxMode: "read-only", codexHome: tempDir("wp08-home-default-") }));
+    cleanups.push(registerGatewayExposure({ sandboxMode: "read-only", codexHome: tempDir("wp08-home-default-"),
+      apiKeyConfigured: true, sdkEnvAuthMarkers: false }));
     expect(r.runtime.beginTurn(r.input())!.injection).toBeUndefined();
   });
 
@@ -308,12 +309,14 @@ async function realRegistration() {
   cleanups.push(() => { host.close({ reason: "shutdown", deadlineMono: 0, signal: AbortSignal.abort() }); sub.store.retire(); adapter.close(); });
   const serverId = `octo_cards_${randomBytes(16).toString("hex")}`;
   const generation = randomUUID();
+  const gateway = admissibleGateway();
+  cleanups.push(gateway.release);
   const gen = host.openGeneration({ ctx: Object.freeze({ botRef: { originKey: "https://test.invalid", credentialRef: "c".repeat(43) },
     route: { channelId: "c", channelType: 1 }, requesterUid: "u", sessionKey: "s", turnGeneration: generation, resetEpoch: 0,
     policyIdentity: "c".repeat(43), runtimeIncarnation: incarnation, injectedServerId: serverId,
     routeEligibility: { kind: "dm" as const, obo: false, docTask: false, cron: false }, origin: { kind: "user" as const } }),
   binding: { sessionKey: "s", channelId: "c", channelType: 1, topicScope: null, generation, resetEpoch: 0 },
-  expiresAtMono: time.now() + 60_000, currentResetEpoch: () => 0, ops: ["display"], admit: () => true })!;
+  expiresAtMono: time.now() + 60_000, currentResetEpoch: () => 0, ops: ["display"], admit: gateway.admit })!;
   const h = (await gen.launch.prepareAttempt())!;
   const args = h.mcpEntry.args as string[];
   const ticket = readFileSync(args[2] as string, "utf8");
