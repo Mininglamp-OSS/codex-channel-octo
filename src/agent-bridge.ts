@@ -7,7 +7,7 @@ import { ExecutionScope, type ManagedExecution } from './execution-scope.js';
 import type { InterruptedTurn } from './turn-context.js';
 import { reduceItem, type ReducedItemFacts } from './cards/redact.js';
 import type { ItemState } from './cards/contracts.js';
-import type { AttemptHandle, CardInjectionLaunch } from './cards/tool-host.js';
+import { APP_SERVER_TOOLSET_VERSION, appServerToolset, type AppServerReplyPort, type AttemptHandle, type CardInjectionLaunch } from './cards/tool-host.js';
 import { prepareAppServerLaunch } from './app-server/spawn.js';
 import { startAppServerAttempt } from './app-server/runner.js';
 /**
@@ -337,7 +337,14 @@ export type AgentOutputEvent =
 export interface QueryAgentOptions {
   privateMemoryContext?: SafeText;
   resume?: string;
-  onSessionId?: (id: string, prompt: string) => void;
+  /**
+   * Called with the thread id and the actual prompt for this attempt. On the
+   * app-server runtime a third argument carries the thread's explicit-card
+   * toolset digest (null = none), to be stored next to the id (T0).
+   */
+  onSessionId?: (id: string, prompt: string, toolsetDigest?: string | null) => void;
+  /** App-server runtime: toolset digest stored with the `resume` thread (T0); absent = none. */
+  threadToolsetDigest?: string | null;
   groupInstructions?: string;
   senderContext?: SafeText;
   signal?: AbortSignal;
@@ -358,6 +365,24 @@ export interface QueryAgentOptions {
 }
 
 type CodexConfigValue = NonNullable<CodexOptions['config']>[string];
+
+/**
+ * App-server runtime: the model-visible explicit-card availability line
+ * (T5/R1, §4.2). Undefined when there are no cards and the thread has none,
+ * so a card-off conversation gets no extra instructions. Old threads keep
+ * their history without tools until a reset or a new session.
+ */
+export function cardAvailability(cardsOffered: boolean, resumed: boolean, storedToolset: string | null): string | undefined {
+  const current = appServerToolset().digest;
+  const threadHasTools = resumed ? storedToolset === current : cardsOffered;
+  if (resumed && cardsOffered && !threadHasTools) {
+    console.warn(`[codex-channel-octo] explicit cards unavailable: thread predates toolset v${APP_SERVER_TOOLSET_VERSION}`);
+    return 'Explicit card tools are not available in this conversation because it was started before the current card toolset. Reply in plain text.';
+  }
+  if (!threadHasTools && storedToolset === null) return undefined;
+  if (!cardsOffered) return 'Explicit card tools are disabled for this bot right now. Reply in plain text; any card tool call will be refused.';
+  return 'Explicit card tools (display, interactive) are available in this conversation. The gateway may still refuse a call; never retry a card whose send outcome is unknown.';
+}
 
 /** Closed runtime metadata, never a previous user prompt or raw tool/error text. */
 export function interruptionContext(turn?: InterruptedTurn): string {
@@ -559,6 +584,7 @@ export async function* queryAgentEvents(
     const attempt = attemptCount++;
     diagnosticRun = {mode:resumeId ? 'resume' : 'start', attempt, resumeId};
     let events: AsyncIterable<ThreadEvent>;
+    let attemptToolset: string | null = null;
     // The bridge never holds the authority: only the launch's per-attempt entry is merged.
     const injection = appServer ? undefined : opts?.cardInjection;
     let cardAttempt: AttemptHandle | undefined;
@@ -573,8 +599,15 @@ export async function* queryAgentEvents(
       opts?.signal?.throwIfAborted();
       opts?.assertPublishable?.();
       risk = 'unknown'; opts?.onExecutionRisk?.(risk);
+      const cards = opts?.cardInjection;
+      const storedToolset = resumeId ? (opts?.threadToolsetDigest ?? null) : null;
+      const availability = cardAvailability(cards !== undefined, resumeId !== undefined, storedToolset);
       events = startAppServerAttempt({
         launch, apiKey, resumeId, prompt, signal: opts?.signal,
+        ...(cards ? { cards: (port: AppServerReplyPort) => cards.prepareAppServerAttempt(port) } : {}),
+        threadToolsetDigest: storedToolset,
+        onThreadToolset: (digest) => { attemptToolset = digest; },
+        ...(availability ? { developerInstructions: availability } : {}),
         thread: { cwd, model: threadOpts.model, sandbox: threadOpts.sandboxMode ?? 'read-only', approvalPolicy: threadOpts.approvalPolicy ?? 'never' },
         onExecution: (execution) => opts?.onManagedExecution?.(execution),
         onCardEffect: () => { sideEffect.seen = true; risk = 'effects_observed'; opts?.onExecutionRisk?.(risk); },
@@ -653,7 +686,8 @@ export async function* queryAgentEvents(
           }
           if (!reportedSessionId && opts?.onSessionId && ev.thread_id) {
             reportedSessionId = true;
-            opts.onSessionId(ev.thread_id, prompt);
+            if (appServer) opts.onSessionId(ev.thread_id, prompt, attemptToolset);
+            else opts.onSessionId(ev.thread_id, prompt);
           }
           break;
         }

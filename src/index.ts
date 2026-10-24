@@ -798,11 +798,12 @@ export async function handleMessage(
         onExecutionRisk: risk => { turn.executionRisk = risk; },
         senderContext: buildSenderContext(msg, router.getOwnerUid(), botId),
         ...(resume ? { resume } : {}),
+        ...(resume && config.sdk.runtime === 'app-server' ? { threadToolsetDigest: turnStore.getThreadToolsetDigest(sessionKey) } : {}),
         ...(cardTurn ? { itemStates: true } : {}),
         ...(cardInjection ? { cardInjection } : {}),
-        onSessionId: (id: string, prompt: string) => {
+        onSessionId: (id: string, prompt: string, toolsetDigest?: string | null) => {
           turn.assertPublishable();
-          turnStore.setSdkSessionId(sessionKey, id);
+          turnStore.setSdkSessionId(sessionKey, id, toolsetDigest);
           if (serverMd && ((serverMd.context && prompt.includes(serverMd.context))
             || (serverMd.retryContext && prompt.includes(serverMd.retryContext)))) {
             serverMd.commit(id);
