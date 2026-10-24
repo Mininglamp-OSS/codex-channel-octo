@@ -108,7 +108,11 @@ describe('reference schema', () => {
     expect(referenceSchema().hash).toBe(ref.hash);
     const tables = ref.objects.filter((o) => o.type === 'table').map((o) => o.name).sort();
     expect(tables).toEqual([...CARD_TABLES].sort());
-    expect(ref.objects.filter((o) => o.type === 'trigger')).toHaveLength(8);
+    // Version 3 (SC-1) adds one settlement trigger to the eight of versions 1 and 2.
+    expect(ref.objects.filter((o) => o.type === 'trigger')).toHaveLength(9);
+    expect(referenceSchema(2).objects.filter((o) => o.type === 'trigger')).toHaveLength(8);
+    expect(referenceSchema(1).hash).toBe(referenceSchema(2).hash);
+    expect(referenceSchema(2).hash).not.toBe(ref.hash);
     expect(ref.objects.filter((o) => o.type === 'index' && !o.name.startsWith('sqlite_')).map((o) => o.name).sort()).toEqual([
       'idx_card_messages_open',
       'idx_card_sessions_active',
@@ -355,9 +359,9 @@ describe('schema rejection', () => {
   it('newer schema version is rejected and left untouched', async () => {
     const a = openDb();
     migrateCardSchema(a, { installationRef: INSTALL, lineageId: 'lineage-1', nowMs: T0 });
-    a.prepare(`UPDATE card_meta SET v = '3' WHERE k = 'schema_version'`).run();
+    a.prepare(`UPDATE card_meta SET v = '4' WHERE k = 'schema_version'`).run();
     a.exec('CREATE TABLE card_v2_extra (x TEXT)');
-    expect(inspectCardSchema(a)).toEqual({ state: 'newer', schemaVersion: 3 });
+    expect(inspectCardSchema(a)).toEqual({ state: 'newer', schemaVersion: 4 });
     expect(await init(a)).toEqual({ state: 'disabled', reason: 'newer_schema' });
     expect(cardObjects(a)).toContain('card_v2_extra');
   });

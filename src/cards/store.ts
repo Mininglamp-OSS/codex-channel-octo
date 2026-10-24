@@ -22,6 +22,7 @@ import {
   RETENTION_MS,
   SESSION_TTL_MS,
   UPGRADE_V2_BACKUP_LABEL,
+  UPGRADE_V3_BACKUP_LABEL,
   backupBeforeMigration,
   checkCardInvariants,
   countProtectedRows,
@@ -30,6 +31,7 @@ import {
   migrateCardSchema,
   referenceSchema,
   upgradeCardSchemaV1toV2,
+  upgradeCardSchemaV2toV3,
   type ActivationMarkerPort,
   type BackupReceipt,
   type CardMeta,
@@ -228,6 +230,12 @@ export interface ExplicitRequestRecord {
   readonly clientMsgNo: string | null;
   readonly cardId: string | null;
   readonly safeResultJson: string | null;
+  /** `app_server` when the app-server dispatcher finished the row (SC-1). */
+  readonly settledBy: 'app_server' | null;
+  /** Late transport outcome after an app-server `ambiguous` settlement; audit only. */
+  readonly lateOutcome: 'acked' | 'failed' | null;
+  readonly lateMessageId: string | null;
+  readonly lateAt: number | null;
 }
 
 // ─── Store options ──────────────────────────────────────────────────────────
@@ -286,6 +294,7 @@ interface RequestRow {
   generation: string; request_id: string; body_digest: string; opcode: ExplicitOpcode;
   state: ExplicitRequestState; send_slot: number | null; client_msg_no: string | null;
   card_id: string | null; safe_result_json: string | null;
+  settled_by: 'app_server' | null; late_outcome: 'acked' | 'failed' | null; late_message_id: string | null; late_at: number | null;
 }
 
 function toMessage(r: MessageRow): CardMessageRecord {
@@ -341,7 +350,8 @@ function toRequest(r: RequestRow): ExplicitRequestRecord {
   return {
     generation: r.generation, requestId: r.request_id, bodyDigest: r.body_digest, opcode: r.opcode,
     state: r.state, sendSlot: r.send_slot, clientMsgNo: r.client_msg_no, cardId: r.card_id,
-    safeResultJson: r.safe_result_json,
+    safeResultJson: r.safe_result_json, settledBy: r.settled_by, lateOutcome: r.late_outcome,
+    lateMessageId: r.late_message_id, lateAt: r.late_at,
   };
 }
 
@@ -563,6 +573,12 @@ export interface FinishExplicitInput {
   readonly requestId: string;
   readonly outcome: ExplicitFinish;
   readonly safeResultJson: string;
+  /**
+   * `app_server`: finished by the app-server dispatcher. Recorded on the row;
+   * an `ambiguous` row so marked never accepts a later `acked`/`failed`
+   * (SC-1a) — late outcomes go to {@link CardStore.recordLateExplicitOutcome}.
+   */
+  readonly settledBy?: 'app_server';
   /** Card transition committed in the same transaction (T-bind / failure / ambiguity). */
   readonly message?:
     | { readonly kind: 'ack'; readonly messageId: string; readonly currentResetEpoch: number; readonly policyAllows: boolean }
@@ -577,6 +593,24 @@ export type FinishExplicitResult =
   | { readonly kind: 'invalid_transition'; readonly from: ExplicitRequestState }
   | { readonly kind: 'not_found' }
   | { readonly kind: 'card_transition_failed'; readonly detail: AckMessageResult | SendOutcomeResult };
+
+export interface LateExplicitOutcomeInput {
+  readonly generation: string;
+  readonly requestId: string;
+  readonly outcome: 'acked' | 'failed';
+  /**
+   * For `acked`: the acknowledged identity, bound to the card through the
+   * existing T-bind with the current reset epoch and a fresh policy decision
+   * (SC-1b). The request row, its safe result and the budgets never change.
+   */
+  readonly ack?: { readonly messageId: string; readonly currentResetEpoch: number; readonly policyAllows: boolean };
+}
+
+export type LateExplicitOutcomeResult =
+  | { readonly kind: 'recorded'; readonly ack?: AckMessageResult }
+  | { readonly kind: 'already' }
+  | { readonly kind: 'not_found' }
+  | { readonly kind: 'not_applicable'; readonly state: ExplicitRequestState; readonly settledBy: 'app_server' | null };
 
 export interface LedgerRecovery {
   readonly closedGenerations: number;
@@ -1640,6 +1674,8 @@ export class CardStore {
       if (req.state === input.outcome && (req.state === 'acked' || req.state === 'failed' || req.state === 'cancelled')) {
         return { kind: 'already', state: req.state };
       }
+      // SC-1a: an app-server ambiguous settlement is final for the request row.
+      if (req.settled_by !== null && req.state === 'ambiguous') return { kind: 'invalid_transition', from: req.state };
       const allowed: Record<ExplicitRequestState, readonly ExplicitFinish[]> = {
         charged: ['failed', 'cancelled'],
         reserved: ['acked', 'failed', 'ambiguous', 'cancelled'],
@@ -1670,10 +1706,48 @@ export class CardStore {
         return { kind: 'invalid_transition', from: req.state };
       }
       this.run(
-        `UPDATE card_explicit_requests SET state = ?, safe_result_json = ?, updated_at = ? WHERE generation = ? AND request_id = ?`,
-        input.outcome, resultJson, now, input.generation, input.requestId,
+        `UPDATE card_explicit_requests SET state = ?, safe_result_json = ?, settled_by = COALESCE(settled_by, ?), updated_at = ?
+         WHERE generation = ? AND request_id = ?`,
+        input.outcome, resultJson, input.settledBy === 'app_server' ? 'app_server' : null, now, input.generation, input.requestId,
       );
       return ack ? { kind: 'finished', ack } : { kind: 'finished' };
+    });
+  }
+
+  /**
+   * SC-1: record a late transport outcome for a request the app-server
+   * dispatcher settled `ambiguous`. Written once to the `late_*` audit
+   * columns; the request state, safe result, invocation and send counters are
+   * never touched. A late ack may bind the card through the existing T-bind
+   * (fresh policy, current reset epoch), in the same transaction (SC-1b).
+   */
+  recordLateExplicitOutcome(input: LateExplicitOutcomeInput): LateExplicitOutcomeResult {
+    text(input.generation); text(input.requestId);
+    if (input.outcome !== 'acked' && input.outcome !== 'failed') throw new CardStoreError('invalid_input');
+    if (input.outcome === 'failed' && input.ack !== undefined) throw new CardStoreError('invalid_input');
+    if (input.ack !== undefined) { text(input.ack.messageId); int(input.ack.currentResetEpoch); }
+    return this.tx<LateExplicitOutcomeResult>(() => {
+      const now = this.now();
+      const req = this.get<RequestRow>(
+        'SELECT * FROM card_explicit_requests WHERE generation = ? AND request_id = ?',
+        input.generation, input.requestId,
+      );
+      if (!req) return { kind: 'not_found' };
+      if (req.settled_by === null || req.state !== 'ambiguous') {
+        return { kind: 'not_applicable', state: req.state, settledBy: req.settled_by };
+      }
+      if (req.late_outcome !== null) return { kind: 'already' };
+      let ack: AckMessageResult | undefined;
+      if (input.ack !== undefined && req.card_id !== null) {
+        ack = this.ackInTx({ cardId: req.card_id, messageId: input.ack.messageId,
+          currentResetEpoch: input.ack.currentResetEpoch, policyAllows: input.ack.policyAllows }, now);
+      }
+      this.run(
+        `UPDATE card_explicit_requests SET late_outcome = ?, late_message_id = ?, late_at = ?
+         WHERE generation = ? AND request_id = ?`,
+        input.outcome, input.ack?.messageId ?? null, now, input.generation, input.requestId,
+      );
+      return ack ? { kind: 'recorded', ack } : { kind: 'recorded' };
     });
   }
 
@@ -2098,31 +2172,37 @@ export async function initializeCardStore(options: CardStoreInitOptions): Promis
     return backup ? { state: 'ready', store, meta, provenance, backup } : { state: 'ready', store, meta, provenance };
   };
   /**
-   * Open a complete store, upgrading version 1 to the intent-capable version
-   * 2 first (DTI-2.1 §2.2): backup, re-inspect, one upgrade transaction,
-   * invariants. Any failure leaves version 1 in place and cards disabled.
+   * Open a complete store, upgrading it in place first: version 1 to the
+   * intent-capable version 2 (DTI-2.1 §2.2), then version 2 to version 3
+   * (SC-1). One backup before the first step, then for each step a
+   * re-inspection, one upgrade transaction and the invariants. Any failure
+   * leaves the store at the last committed version and cards disabled.
    */
   const open = async (meta: CardMeta, provenance: 'reopened' | 'activation_reconciled'): Promise<CardStoreInit> => {
-    if (meta.schemaVersion === 2) return ready(meta, provenance);
+    if (meta.schemaVersion === 3) return ready(meta, provenance);
     let backup: BackupReceipt;
     try {
-      backup = await backupBeforeMigration(adapter, options.backupDir, nowMs, UPGRADE_V2_BACKUP_LABEL);
+      backup = await backupBeforeMigration(adapter, options.backupDir, nowMs,
+        meta.schemaVersion === 1 ? UPGRADE_V2_BACKUP_LABEL : UPGRADE_V3_BACKUP_LABEL);
     } catch {
       return disabled('migration_failed');
     }
-    let upgraded: CardMeta;
-    try {
-      // Re-inspect after the await: the store must still be the same version 1 lineage.
-      const again = inspectCardSchema(adapter);
-      if (again.state !== 'complete' || again.meta.schemaVersion !== 1 || again.meta.lineageId !== meta.lineageId) {
-        return disabled('provenance_conflict');
+    let upgraded: CardMeta = meta;
+    while (upgraded.schemaVersion !== 3) {
+      const from = upgraded.schemaVersion;
+      try {
+        // Re-inspect after the await: the store must still be the same lineage at the same version.
+        const again = inspectCardSchema(adapter);
+        if (again.state !== 'complete' || again.meta.schemaVersion !== from || again.meta.lineageId !== meta.lineageId) {
+          return disabled('provenance_conflict');
+        }
+        upgraded = from === 1 ? upgradeCardSchemaV1toV2(adapter, meta.lineageId) : upgradeCardSchemaV2toV3(adapter, meta.lineageId);
+      } catch {
+        return disabled('migration_failed');
       }
-      upgraded = upgradeCardSchemaV1toV2(adapter, meta.lineageId);
-    } catch {
-      return disabled('migration_failed');
+      const violations = validate();
+      if (violations) return disabled(violations.includes('integrity_check') ? 'integrity_failed' : 'invariant_failed', violations);
     }
-    const violations = validate();
-    if (violations) return disabled(violations.includes('integrity_check') ? 'integrity_failed' : 'invariant_failed', violations);
     return ready(upgraded, provenance, backup);
   };
   const activate = (lineageId: string, backupRef: string | null, nowMs: number): boolean => {
