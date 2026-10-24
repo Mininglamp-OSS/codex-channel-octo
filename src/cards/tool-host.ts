@@ -76,7 +76,7 @@ import {
   type ToolRequestFrame,
 } from "./protocol.js";
 import { ledgerRecovered } from "./recovery.js";
-import { EXPLICIT_BUDGET_EXHAUSTED, type CardBinding, type CardStore, type ExplicitCard, type ExplicitFinish, type FinishExplicitInput } from "./store.js";
+import { EXPLICIT_BUDGET_EXHAUSTED, MAX_EXPLICIT_INVOCATIONS, type CardBinding, type CardStore, type ExplicitCard, type ExplicitFinish, type FinishExplicitInput } from "./store.js";
 
 // ─── public contract (AM-08 v4 §7.1) ────────────────────────────────────────
 
@@ -91,6 +91,67 @@ export interface CardInjectionLaunch {
   readonly serverId: string;
   readonly generation: string;
   prepareAttempt(): Promise<AttemptHandle | undefined>;
+  /**
+   * App-server runtime: the per-attempt host dispatcher for `item/tool/call`
+   * on the gateway's own pipe (no listener, ticket or MCP entry). Runs the
+   * per-attempt G-d admit; undefined ⇒ no explicit tools for the attempt.
+   */
+  prepareAppServerAttempt(port: AppServerReplyPort): AppServerAttemptCards | undefined;
+}
+
+// ─── app-server dispatch (XIN-2384 rev2 §5–§6 + addendum A1–A5) ──────────────
+
+/** Reply timer: fires `T_pre + T_send` after the call frame was read (R-2). */
+export const CALL_SETTLE_MS = 16_000;
+/** Call-start admission: remaining turn time ≥ `T_call + R` = 18 s + 60 s. */
+export const CALL_ADMISSION_MS = 78_000;
+/** Early calls held per binding before the turn id is trusted (TB-5). */
+export const HOLD_MAX = 32;
+/** Identical-replay joins answered per ledger row (§5.3). */
+export const JOIN_MAX = 4;
+/** Explicit card toolset version declared on new threads (T2a). */
+export const APP_SERVER_TOOLSET_VERSION = 1;
+
+/** One `thread/start.dynamicTools` entry. */
+export interface DynamicToolSpec {
+  readonly type: "function";
+  readonly name: ToolOpcode;
+  readonly description: string;
+  readonly inputSchema: { readonly type: "object" };
+}
+
+/** The full versioned toolset (T2a) and its digest (T0). Pure and stable. */
+export function appServerToolset(): { readonly tools: readonly DynamicToolSpec[]; readonly digest: string } {
+  const tools: DynamicToolSpec[] = (["display", "interactive"] as const).map((name) => ({
+    type: "function", name, inputSchema: { type: "object" },
+    description: name === "display" ? "Send a display card to the current conversation." : "Send an interactive card to the current requester.",
+  }));
+  const digest = `v${APP_SERVER_TOOLSET_VERSION}:${createHash("sha256").update(canonicalJson(tools as unknown as JsonValue), "utf8").digest("hex")}`;
+  return Object.freeze({ tools: Object.freeze(tools.map((t) => Object.freeze(t))), digest });
+}
+
+/** The client's reply capability; `uncharged` replies count toward its R-9a cap. */
+export interface AppServerReplyPort {
+  respond(id: number | string, result: unknown, opts?: { uncharged?: boolean }): boolean;
+}
+
+/** Per-attempt dispatcher (`AttemptBinding`), driven by the runner. */
+export interface AppServerAttemptCards {
+  /** Declared on `thread/start` of a new thread only (T1: never on resume). */
+  readonly dynamicTools: readonly DynamicToolSpec[];
+  readonly toolsetDigest: string;
+  /** The thread of this child and the toolset it was created with (T0/T5); null = none. */
+  setThread(threadId: string, toolsetDigest: string | null): void;
+  /** Our only `turn/start` was enqueued (TB-0). */
+  turnStartEnqueued(): void;
+  /** The trusted turn id (TB-1/TB-2); releases held calls in order. */
+  bindTurn(turnId: string): void;
+  /** `turn/completed`: later calls are refused uncharged. */
+  turnCompleted(): void;
+  /** Synchronous; every reply goes through the port. */
+  onToolCall(id: number | string, params: unknown): void;
+  /** Binding close (mismatch, child exit, attempt end): held Δ0, in-flight per R-4. */
+  close(): void;
 }
 
 export interface AttemptHandle {
@@ -704,6 +765,14 @@ export interface ToolHostStats {
   readonly frameRejected: number;
   readonly liveRegistrations: number;
   readonly liveListeners: number;
+  /** App-server attempts opened with explicit tools. */
+  readonly appAttempts: number;
+  /** Δ0 refusals on the app-server path (unbound, foreign, admission, caps, unknown tool). */
+  readonly appUnchargedRefusals: number;
+  /** Calls naming another thread or turn (TB-4). */
+  readonly appForeignCalls: number;
+  /** Calls on a thread that predates the current toolset (T5/R1). */
+  readonly appOldThreadCalls: number;
 }
 
 export interface ToolHost extends CardResourceOwner {
@@ -719,6 +788,8 @@ interface Generation {
   readonly serverId: string;
   live: boolean;
   attempt: Registration | undefined;
+  /** The app-server attempt binding, if any; a new attempt closes the previous one. */
+  appAttempt: AppServerAttemptCards | undefined;
   readonly inflight: Map<string, Promise<CardToolResult>>;
   readonly requests: Set<RequestState>;
 }
@@ -741,10 +812,20 @@ interface Registration {
 }
 
 interface RequestState {
-  readonly reg: Registration;
+  readonly gen: Generation;
+  /** The MCP registration that charged it; absent on the app-server path. */
+  readonly reg: Registration | undefined;
   readonly requestId: string;
   readonly abort: AbortController;
+  /** Pre-reserve guard: authority live, generation live, not closing, not expired. */
+  readonly live: () => boolean;
+  /** Post-handler guard: the authority has not been closed. */
+  readonly open: () => boolean;
+  /** Set on rows the app-server dispatcher settles (SC-1). */
+  readonly settledBy?: "app_server";
   reserved: boolean;
+  /** `transport.send` was called (or may have been) for the reservation. */
+  sendCalled: boolean;
   finished: boolean;
   result: CardToolResult | undefined;
   port: Promise<CardToolResult> | undefined;
@@ -797,7 +878,8 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
   }
 
   const counters = { bootstrapRedeemed: 0, bootstrapReplay: 0, bootstrapExpired: 0, bootstrapUnknown: 0,
-    bootstrapAdmitDrift: 0, bootstrapAdmitGatewayRevoke: 0, authRejected: 0, frameRejected: 0 };
+    bootstrapAdmitDrift: 0, bootstrapAdmitGatewayRevoke: 0, authRejected: 0, frameRejected: 0,
+    appAttempts: 0, appUnchargedRefusals: 0, appForeignCalls: 0, appOldThreadCalls: 0 };
   const generations = new Set<Generation>();
   const registrations = new Set<Registration>();
   /** Every unfinished charged request of this host, for the shutdown drain. */
@@ -820,10 +902,11 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
 
   /** Ledger finish; a request already finished elsewhere stays as it is. */
   const finish = (gen: Generation, requestId: string, outcome: ExplicitFinish, result: CardToolResult,
-    message?: FinishExplicitInput["message"]): boolean => {
+    message?: FinishExplicitInput["message"], settledBy?: "app_server"): boolean => {
     try {
       const r = store.finishExplicitRequest({ generation: gen.input.ctx.turnGeneration, requestId, outcome,
-        safeResultJson: JSON.stringify(result), ...(message !== undefined ? { message } : {}) });
+        safeResultJson: JSON.stringify(result), ...(message !== undefined ? { message } : {}),
+        ...(settledBy !== undefined ? { settledBy } : {}) });
       return r.kind === "finished";
     } catch {
       return false;
@@ -876,6 +959,7 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
     gen.live = false;
     try { store.closeHandler(gen.input.ctx.turnGeneration); } catch { /* the in-memory fence still holds */ }
     if (gen.attempt !== undefined) closeRegistration(gen.attempt);
+    gen.appAttempt?.close();
     for (const req of gen.requests) req.abort.abort();
     generations.delete(gen);
   }
@@ -980,7 +1064,10 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
         reply(socket, requestId, AUTHORITY_CLOSED);
         return;
     }
-    const req: RequestState = { reg, requestId, abort: new AbortController(), reserved: false, finished: false, result: undefined, port: undefined };
+    const req: RequestState = {
+      gen, reg, requestId, abort: new AbortController(), live: () => registrationLive(reg), open: () => reg.state === "live",
+      reserved: false, sendCalled: false, finished: false, result: undefined, port: undefined,
+    };
     gen.requests.add(req);
     open.add(req);
     const run = track(runCharged(gen, req, header.op, parsed));
@@ -1004,7 +1091,7 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
 
   async function runCharged(gen: Generation, req: RequestState, op: ToolOpcode, parsed: ReturnType<typeof parseRequestFrame>): Promise<CardToolResult> {
     const settle = (outcome: ExplicitFinish, result: CardToolResult): CardToolResult => {
-      if (!req.finished && finish(gen, req.requestId, outcome, result)) { req.finished = true; req.result = result; }
+      if (!req.finished && finish(gen, req.requestId, outcome, result, undefined, req.settledBy)) { req.finished = true; req.result = result; }
       return req.result ?? result;
     };
     // D3: handler lookup. Absent → charged, failed, no reservation, transport or sequence.
@@ -1035,7 +1122,7 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
       if (req.reserved || req.finished) return req.result ?? sent ?? SEND_UNCONFIRMED;
     }
     // No reservation was made.
-    const closedNow = req.abort.signal.aborted || !gen.live || req.reg.state !== "live";
+    const closedNow = req.abort.signal.aborted || !gen.live || !req.open();
     if (closedNow) return settle("cancelled", AUTHORITY_CLOSED);
     if (threw) return settle("failed", EXPLICIT_OP_UNAVAILABLE);
     const valid = handled !== undefined ? parseCardToolResult(JSON.parse(JSON.stringify(handled)) as JsonValue) : null;
@@ -1045,11 +1132,11 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
 
   async function reserveAndSend(gen: Generation, req: RequestState, op: ToolOpcode, card: ExplicitCard): Promise<CardToolResult> {
     const settled = (outcome: ExplicitFinish, result: CardToolResult, message?: FinishExplicitInput["message"]): CardToolResult => {
-      if (!req.finished && finish(gen, req.requestId, outcome, result, message)) { req.finished = true; req.result = result; }
+      if (!req.finished && finish(gen, req.requestId, outcome, result, message, req.settledBy)) { req.finished = true; req.result = result; }
       return req.result ?? result;
     };
     // Pre-reserve: any failure here leaves the request charged for the D5 outcome.
-    if (req.abort.signal.aborted || !registrationLive(req.reg)) throw new Closed();
+    if (req.abort.signal.aborted || !req.live()) throw new Closed();
     if (options.transport === undefined) throw new Error("explicit transport unavailable");
     if (card === null || typeof card !== "object" || card.opcode !== op || !sameBinding(card.binding, gen.input.binding)) {
       throw new Error("explicit card binding mismatch");
@@ -1070,12 +1157,22 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
       default: throw new Error("explicit reservation unavailable");
     }
     req.reserved = true;
+    // App-server path: a call stopped before the send is provably unsent (R-4 `abandoned`; the slot stays consumed).
+    if (req.settledBy !== undefined && req.abort.signal.aborted) {
+      return settled("cancelled", AUTHORITY_CLOSED, { kind: "abandoned" });
+    }
     // Post-reserve: host-owned classification; any doubt is ambiguous.
     let outcome: ExplicitTransportOutcome;
+    req.sendCalled = true;
     try {
       outcome = await options.transport.send({ ctx: gen.input.ctx, card, cardId: r.cardId, clientMsgNo: r.clientMsgNo, signal: req.abort.signal });
     } catch {
       outcome = { kind: "ambiguous" };
+    }
+    // SC-1: the reply timer already settled this row ambiguous; the late outcome is audit (and card binding) only.
+    if (req.settledBy !== undefined && req.finished) {
+      recordLate(gen, req, op, outcome);
+      return req.result ?? SEND_UNCONFIRMED;
     }
     if (outcome.kind === "acked") {
       const result: CardToolResult = { status: "sent", message_id: outcome.messageId,
@@ -1083,7 +1180,7 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
         ...(r.sessionId !== null ? { session_id: r.sessionId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) } : {}) };
       const valid = parseCardToolResult(result as unknown as JsonValue);
       if (valid !== null && finish(gen, req.requestId, "acked", valid,
-        { kind: "ack", messageId: outcome.messageId, currentResetEpoch: gen.input.currentResetEpoch(), policyAllows: true })) {
+        { kind: "ack", messageId: outcome.messageId, currentResetEpoch: gen.input.currentResetEpoch(), policyAllows: true }, req.settledBy)) {
         req.finished = true; req.result = valid;
         return valid;
       }
@@ -1091,6 +1188,219 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
     }
     if (outcome.kind === "failed") return settled("failed", SEND_FAILED, { kind: "failed" });
     return settled("ambiguous", SEND_UNCONFIRMED, { kind: "ambiguous" });
+  }
+
+  /** SC-1b: a late transport outcome after an app-server `ambiguous` settlement. */
+  function recordLate(gen: Generation, req: RequestState, op: ToolOpcode, outcome: ExplicitTransportOutcome): void {
+    if (outcome.kind === "ambiguous") return;
+    let policyAllows = true;
+    if (options.policy !== undefined) {
+      try { policyAllows = options.policy.authorize(op === "display" ? "display" : "interaction", { botRef: gen.input.ctx.botRef }).allowed; } catch { policyAllows = false; }
+    }
+    try {
+      store.recordLateExplicitOutcome(outcome.kind === "acked"
+        ? { generation: gen.input.ctx.turnGeneration, requestId: req.requestId, outcome: "acked",
+          ack: { messageId: outcome.messageId, currentResetEpoch: gen.input.currentResetEpoch(), policyAllows } }
+        : { generation: gen.input.ctx.turnGeneration, requestId: req.requestId, outcome: "failed" });
+    } catch { /* audit only */ }
+  }
+
+  // ── app-server attempts ──
+
+  const PLACEHOLDER_REQUEST_ID = "0".repeat(32);
+  const PLACEHOLDER_AUTHORITY = "0".repeat(64);
+
+  interface CallParams {
+    readonly threadId: string; readonly turnId: string; readonly callId: string;
+    readonly namespace: string | null; readonly tool: string; readonly arguments: unknown;
+  }
+
+  function callParams(v: unknown): CallParams | null {
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
+    const p = v as Record<string, unknown>;
+    if (typeof p.threadId !== "string" || typeof p.turnId !== "string" || typeof p.callId !== "string" || typeof p.tool !== "string") return null;
+    if (p.namespace !== null && p.namespace !== undefined && typeof p.namespace !== "string") return null;
+    return { threadId: p.threadId, turnId: p.turnId, callId: p.callId, namespace: (p.namespace as string | null | undefined) ?? null, tool: p.tool, arguments: p.arguments };
+  }
+
+  /** D6: the dynamic tool reply carrying the bounded card result. */
+  function toolReply(result: CardToolResult): { contentItems: { type: "inputText"; text: string }[]; success: boolean } {
+    return { contentItems: [{ type: "inputText", text: JSON.stringify(result) }], success: result.status === "sent" };
+  }
+
+  function refusalReply(text: string): { contentItems: { type: "inputText"; text: string }[]; success: false } {
+    return { contentItems: [{ type: "inputText", text }], success: false };
+  }
+
+  function openAppAttempt(gen: Generation, port: AppServerReplyPort): AppServerAttemptCards {
+    const toolset = appServerToolset();
+    let state: "live" | "closed" = "live";
+    let threadId: string | null = null;
+    let threadTools: ReadonlySet<string> = new Set();
+    let turnStart: "none" | "outstanding" | "completed" = "none";
+    let activeTurnId: string | null = null;
+    let chargedTasks = 0;
+    const joins = new Map<string, number>();
+
+    interface Latch { readonly done: boolean; answer(result: unknown, uncharged: boolean): void }
+    interface Call {
+      readonly id: number | string; readonly p: CallParams; latch: Latch; req: RequestState | undefined;
+      /** What the call's own timer does: refuse while held, R-4 once admitted (A5 keeps the timer). */
+      onTimer: () => void;
+    }
+    const held: Call[] = [];
+    const charged = new Set<Call>();
+
+    /** One reply per JSON-RPC id, with its own settle timer from frame read (R-2, R-8). */
+    const latch = (id: number | string, receivedAt: number, onTimer: () => void): Latch => {
+      let done = false;
+      const timer = timers.setTimeout(() => { if (!done) onTimer(); }, Math.max(0, receivedAt + CALL_SETTLE_MS - clock.nowMono()));
+      return {
+        get done() { return done; },
+        answer(result, uncharged) {
+          if (done) return;
+          done = true;
+          timers.clearTimeout(timer);
+          if (uncharged) counters.appUnchargedRefusals++;
+          try { port.respond(id, result, { uncharged }); } catch { /* the client is closed */ }
+        },
+      };
+    };
+    const refuse = (id: number | string, text: string): void => {
+      counters.appUnchargedRefusals++;
+      try { port.respond(id, refusalReply(text), { uncharged: true }); } catch { /* closed */ }
+    };
+
+    /** attemptLive (§5.2): binding, generation, deadline, child and turn. */
+    const attemptLive = (p: CallParams): boolean => state === "live" && gen.live && !closing
+      && clock.nowMono() < gen.input.expiresAtMono && activeTurnId !== null && p.threadId === threadId && p.turnId === activeTurnId;
+
+    /** R-4: stop a charged call by row state; the slot of an abandoned send stays consumed. */
+    const r4 = (call: Call): void => {
+      const req = call.req;
+      if (req === undefined) { call.latch.answer(refusalReply("explicit cards are unavailable"), true); return; }
+      if (!req.finished) {
+        req.abort.abort();
+        let outcome: ExplicitFinish = "cancelled";
+        let result: CardToolResult = AUTHORITY_CLOSED;
+        let message: FinishExplicitInput["message"];
+        if (req.reserved && !req.sendCalled) message = { kind: "abandoned" };
+        else if (req.reserved) { outcome = "ambiguous"; result = SEND_UNCONFIRMED; message = { kind: "ambiguous" }; }
+        if (finish(gen, req.requestId, outcome, result, message, "app_server")) { req.finished = true; req.result = result; }
+      }
+      call.latch.answer(toolReply(req.result ?? EXPLICIT_OP_UNAVAILABLE), false);
+    };
+
+    /** Receipt or release from `held`: D1′ trusted turn, admission, D0/D4 grammar, D2 charge. */
+    const admit = (call: Call): void => {
+      const { p } = call;
+      if (p.turnId !== activeTurnId) { counters.appForeignCalls++; call.latch.answer(refusalReply("not the active turn"), true); return; }
+      if (!attemptLive(p)) { call.latch.answer(refusalReply("explicit cards are unavailable"), true); return; }
+      if (gen.input.expiresAtMono - clock.nowMono() < CALL_ADMISSION_MS) {
+        call.latch.answer(refusalReply("explicit cards are unavailable for the rest of this turn"), true); return;
+      }
+      if (p.namespace !== null || (p.tool !== "display" && p.tool !== "interactive") || !threadTools.has(p.tool)) {
+        if (threadTools.size === 0) counters.appOldThreadCalls++;
+        call.latch.answer(refusalReply("unknown tool"), true); return;
+      }
+      if (chargedTasks >= MAX_EXPLICIT_INVOCATIONS) { call.latch.answer(refusalReply("too many concurrent card calls"), true); return; }
+      const op = p.tool as ToolOpcode;
+      // D0/D4: the closed grammar of the MCP frames, applied to `{op, args}`.
+      let body: Uint8Array;
+      try { body = Buffer.from(JSON.stringify({ v: 1, request_id: PLACEHOLDER_REQUEST_ID, authority: PLACEHOLDER_AUTHORITY, op, args: p.arguments }), "utf8"); }
+      catch { call.latch.answer(refusalReply("invalid arguments"), true); return; }
+      const parsed = parseRequestFrame(body);
+      const canonical = canonicalRequestBody(body);
+      if ((!parsed.ok && parsed.stage === "frame") || canonical === null) { call.latch.answer(refusalReply("invalid arguments"), true); return; }
+      // §5.3: one ledger row per logical call, inside the existing (generation, request_id) key.
+      const requestId = `a1:${digest(canonicalJson([p.threadId, p.turnId, p.callId]))}`;
+      let charge;
+      try { charge = store.chargeExplicitRequest({ ...fence(gen), requestId, bodyDigest: digest(canonical), opcode: op }); }
+      catch { call.latch.answer(toolReply(AUTHORITY_CLOSED), true); return; }
+      switch (charge.kind) {
+        case "rejected":
+          call.latch.answer(toolReply(AUTHORITY_CLOSED), true);
+          if (charge.reason !== "unknown_generation") closeGeneration(gen);
+          return;
+        case "exhausted": call.latch.answer(toolReply(EXPLICIT_BUDGET_EXHAUSTED as CardToolResult), true); return;
+        case "body_mismatch": call.latch.answer(toolReply(REQUEST_ID_REUSED), true); return;
+        case "joined": {
+          const n = (joins.get(requestId) ?? 0) + 1;
+          if (n > JOIN_MAX) { call.latch.answer(refusalReply("duplicate call"), true); return; }
+          joins.set(requestId, n);
+          void joinResult(gen, requestId, charge.request).then((r) => call.latch.answer(toolReply(r), false),
+            () => call.latch.answer(toolReply(EXPLICIT_OP_UNAVAILABLE), false));
+          return;
+        }
+        case "charged": break;
+        default: call.latch.answer(toolReply(AUTHORITY_CLOSED), true); return;
+      }
+      const req: RequestState = {
+        gen, reg: undefined, requestId, abort: new AbortController(), live: () => attemptLive(p), open: () => state === "live",
+        settledBy: "app_server", reserved: false, sendCalled: false, finished: false, result: undefined, port: undefined,
+      };
+      call.req = req;
+      charged.add(call);
+      chargedTasks++;
+      gen.requests.add(req);
+      open.add(req);
+      const run = track(runCharged(gen, req, op, parsed));
+      gen.inflight.set(requestId, run);
+      void run.then((result) => call.latch.answer(toolReply(result), false), () => call.latch.answer(toolReply(EXPLICIT_OP_UNAVAILABLE), false))
+        .finally(() => { gen.inflight.delete(requestId); gen.requests.delete(req); open.delete(req); charged.delete(call); chargedTasks--; });
+    };
+
+    const handle: AppServerAttemptCards = {
+      dynamicTools: toolset.tools,
+      toolsetDigest: toolset.digest,
+      setThread(id, threadDigest) {
+        threadId = id;
+        threadTools = threadDigest === toolset.digest ? new Set(toolset.tools.map((t) => t.name)) : new Set();
+      },
+      turnStartEnqueued() { if (turnStart === "none") turnStart = "outstanding"; },
+      bindTurn(turnId) {
+        if (state !== "live" || activeTurnId !== null || turnStart !== "outstanding") return;
+        activeTurnId = turnId;
+        // A5: released calls keep their original timers, now stopping them by row state.
+        for (const call of held.splice(0)) {
+          if (call.latch.done) continue;
+          call.onTimer = () => r4(call);
+          admit(call);
+        }
+      },
+      turnCompleted() {
+        activeTurnId = null;
+        turnStart = "completed";
+        for (const call of held.splice(0)) call.latch.answer(refusalReply("turn not yet bound"), true);
+      },
+      onToolCall(id, params) {
+        const receivedAt = clock.nowMono();
+        const p = callParams(params);
+        if (p === null || state !== "live") { refuse(id, "explicit cards are unavailable"); return; }
+        if (threadId === null || p.threadId !== threadId) { counters.appForeignCalls++; refuse(id, "unknown thread"); return; }
+        const call: Call = { id, p, latch: undefined as unknown as Latch, req: undefined, onTimer: () => r4(call) };
+        call.latch = latch(id, receivedAt, () => call.onTimer());
+        if (activeTurnId === null) {
+          if (turnStart !== "outstanding" || held.length >= HOLD_MAX) { call.latch.answer(refusalReply("turn not yet bound"), true); return; }
+          call.onTimer = () => {
+            const i = held.indexOf(call);
+            if (i >= 0) held.splice(i, 1);
+            call.latch.answer(refusalReply("turn not yet bound"), true);
+          };
+          held.push(call);
+          return;
+        }
+        admit(call);
+      },
+      close() {
+        if (state === "closed") return;
+        state = "closed";
+        for (const call of held.splice(0)) call.latch.answer(refusalReply("turn not yet bound"), true);
+        for (const call of [...charged]) r4(call);
+        if (gen.appAttempt === handle) gen.appAttempt = undefined;
+      },
+    };
+    return handle;
   }
 
   function attachSocket(reg: Registration, socket: Socket): void {
@@ -1212,7 +1522,26 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
         return undefined;
       }
     };
-    return Object.freeze({ serverId: gen.serverId, generation: gen.input.ctx.turnGeneration, prepareAttempt });
+    const prepareAppServerAttempt = (port: AppServerReplyPort): AppServerAttemptCards | undefined => {
+      try {
+        // A new attempt closes the previous binding and any MCP registration first.
+        gen.appAttempt?.close();
+        if (gen.attempt !== undefined) closeRegistration(gen.attempt);
+        if (!gen.live || closing || clock.nowMono() >= gen.input.expiresAtMono || gen.input.ops.length === 0) return undefined;
+        // Per-attempt G-d, immediately before the spawn (§5.5).
+        let admitted = false;
+        takeAdmitSlot();
+        try { admitted = gen.input.admit(); takeAdmitSlot(); } finally { takeAdmitSlot(); }
+        if (admitted !== true) return undefined;
+        const attempt = openAppAttempt(gen, port);
+        gen.appAttempt = attempt;
+        counters.appAttempts++;
+        return attempt;
+      } catch {
+        return undefined;
+      }
+    };
+    return Object.freeze({ serverId: gen.serverId, generation: gen.input.ctx.turnGeneration, prepareAttempt, prepareAppServerAttempt });
   }
 
   const host: ToolHost & { revokeAll(): void } = {
@@ -1240,7 +1569,7 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
         });
         // A duplicate identity or failed registration disables injection.
         if (registered.kind !== "registered") return undefined;
-        const gen: Generation = { input, serverId, live: true, attempt: undefined, inflight: new Map(), requests: new Set() };
+        const gen: Generation = { input, serverId, live: true, attempt: undefined, appAttempt: undefined, inflight: new Map(), requests: new Set() };
         generations.add(gen);
         const launch = makeLaunch(gen);
         return Object.freeze({
@@ -1261,6 +1590,7 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
 
     revokeAll() {
       for (const reg of [...registrations]) revokeRegistration(reg);
+      for (const gen of [...generations]) gen.appAttempt?.close();
     },
 
     close(): void {
@@ -1290,8 +1620,8 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
         for (const req of open) {
           if (req.finished) continue;
           unresolved++;
-          if (req.reserved) finish(req.reg.gen, req.requestId, "ambiguous", SEND_UNCONFIRMED, { kind: "ambiguous" });
-          else finish(req.reg.gen, req.requestId, "cancelled", AUTHORITY_CLOSED);
+          if (req.reserved) finish(req.gen, req.requestId, "ambiguous", SEND_UNCONFIRMED, { kind: "ambiguous" }, req.settledBy);
+          else finish(req.gen, req.requestId, "cancelled", AUTHORITY_CLOSED, undefined, req.settledBy);
           req.finished = true;
         }
       }
