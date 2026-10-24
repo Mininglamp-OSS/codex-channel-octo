@@ -418,6 +418,16 @@ function managedPreferencesState(): "absent" | "clean" | "off" {
   }
 }
 
+/**
+ * Host-administrative Codex layers (`/etc/codex`, a managed Codex plist) are
+ * absent. A managed `cli_auth_credentials_store` would override the
+ * app-server runtime's ephemeral store, so that runtime refuses to spawn
+ * unless this holds.
+ */
+export function hostAdministrativeLayersAbsent(): boolean {
+  return !SYSTEM_LAYERS.some(present) && managedPreferencesState() !== "off";
+}
+
 /** True when any ancestor of `cwd` (inclusive) carries a project `.codex` layer, or on any doubt. */
 function projectLayerPresent(cwd: string): boolean {
   try {
