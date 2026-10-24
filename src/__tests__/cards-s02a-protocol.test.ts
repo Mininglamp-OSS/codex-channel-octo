@@ -129,7 +129,8 @@ describe("injection gate G-a…G-g at beginTurn (AM-08 v4 §7.2; AC-011.3/.11)",
     expect(begun.injection!.serverId).toMatch(/^octo_cards_[0-9a-f]{32}$/);
     expect(begun.coordinator.context.injectedServerId).toBe(begun.injection!.serverId);
     expect(begun.injection!.generation).toBe(begun.coordinator.generation);
-    expect(Object.keys(begun.injection!).sort()).toEqual(["generation", "prepareAttempt", "serverId"]);
+    // The app-server dispatcher hook is the only addition; neither entry point carries an authority.
+    expect(Object.keys(begun.injection!).sort()).toEqual(["generation", "prepareAppServerAttempt", "prepareAttempt", "serverId"]);
     expect(handlers(r.adapter)).toEqual([{ generation: begun.coordinator.generation, state: "live" }]);
   });
 
