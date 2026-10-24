@@ -8,6 +8,8 @@ import type { InterruptedTurn } from './turn-context.js';
 import { reduceItem, type ReducedItemFacts } from './cards/redact.js';
 import type { ItemState } from './cards/contracts.js';
 import type { AttemptHandle, CardInjectionLaunch } from './cards/tool-host.js';
+import { prepareAppServerLaunch } from './app-server/spawn.js';
+import { startAppServerAttempt } from './app-server/runner.js';
 /**
  * Agent Bridge — OpenAI Codex invocation via @openai/codex-sdk.
  * Outputs typed AgentOutputEvents (queryAgentEvents) or, for legacy callers,
@@ -497,6 +499,8 @@ export async function* queryAgentEvents(
     throw error;
   }
   const threadOpts = buildThreadOptions(config, cwd);
+  // Experimental runtime: managed turns only; the SDK exec path is unchanged otherwise.
+  const appServer = config.sdk.runtime === 'app-server' && opts?.onManagedExecution !== undefined;
   // Do not execute with stale instructions or silently re-enable a sandbox
   // the operator explicitly disabled (which may be unavailable in a container).
   if (!agentsMdOk && threadOpts.sandboxMode === 'danger-full-access') {
@@ -554,35 +558,55 @@ export async function* queryAgentEvents(
   ): AsyncIterable<AgentOutputEvent> {
     const attempt = attemptCount++;
     diagnosticRun = {mode:resumeId ? 'resume' : 'start', attempt, resumeId};
-    const scope = opts?.onManagedExecution ? new ExecutionScope(testExecutable, testExecutable ? 'executable' : 'node') : undefined;
-    attemptScope = scope;
-    if (scope) opts?.onManagedExecution?.(scope);
-    const baseEnv = { ...(env ?? Object.fromEntries(Object.entries(process.env).filter((pair): pair is [string,string] => pair[1] !== undefined))) };
-    delete baseEnv.CODEX_CHANNEL_EXECUTION_DIR; delete baseEnv.CODEX_CHANNEL_EXECUTION_TOKEN;
-    const managedProxy = scope && codexOptions.codexPathOverride && process.platform !== 'win32';
-    if (managedProxy) await scope.prepare();
-    // Direct launch has no gateway-owned process handle. Never send it control
-    // fields or infer stopped from a file it could write itself.
-    const attemptOptions = codex ? codexOptions : { ...codexOptions, env: managedProxy ? scope!.environment(baseEnv) : baseEnv };
+    let events: AsyncIterable<ThreadEvent>;
     // The bridge never holds the authority: only the launch's per-attempt entry is merged.
-    const injection = opts?.cardInjection;
+    const injection = appServer ? undefined : opts?.cardInjection;
     let cardAttempt: AttemptHandle | undefined;
-    if (injection) {
-      try { cardAttempt = await injection.prepareAttempt(); } catch { cardAttempt = undefined; }
-      currentCardAttempt = cardAttempt;
+    if (appServer) {
+      // Pre-spawn: every refusal here is a prepare-stage failure with risk still proven_not_started.
+      const launch = await prepareAppServerLaunch({
+        codexHome: config.sdk.codexHome, sdkEnv: config.sdk.env, baseUrl: config.sdk.codexBaseUrl, threadOpts,
+      });
+      const apiKey = config.sdk.codexApiKey;
+      if (!apiKey) throw new AgentFailure({ stage: 'prepare', category: 'auth', source: 'local', evidence: 'structured' });
+      yield { kind: 'attempt_start', attempt, reason: attemptCtx.reason, continues: attemptCtx.continues };
+      opts?.signal?.throwIfAborted();
+      opts?.assertPublishable?.();
+      risk = 'unknown'; opts?.onExecutionRisk?.(risk);
+      events = startAppServerAttempt({
+        launch, apiKey, resumeId, prompt, signal: opts?.signal,
+        thread: { cwd, model: threadOpts.model, sandbox: threadOpts.sandboxMode ?? 'read-only', approvalPolicy: threadOpts.approvalPolicy ?? 'never' },
+        onExecution: (execution) => opts?.onManagedExecution?.(execution),
+        onCardEffect: () => { sideEffect.seen = true; risk = 'effects_observed'; opts?.onExecutionRisk?.(risk); },
+      });
+    } else {
+      const scope = opts?.onManagedExecution ? new ExecutionScope(testExecutable, testExecutable ? 'executable' : 'node') : undefined;
+      attemptScope = scope;
+      if (scope) opts?.onManagedExecution?.(scope);
+      const baseEnv = { ...(env ?? Object.fromEntries(Object.entries(process.env).filter((pair): pair is [string,string] => pair[1] !== undefined))) };
+      delete baseEnv.CODEX_CHANNEL_EXECUTION_DIR; delete baseEnv.CODEX_CHANNEL_EXECUTION_TOKEN;
+      const managedProxy = scope && codexOptions.codexPathOverride && process.platform !== 'win32';
+      if (managedProxy) await scope.prepare();
+      // Direct launch has no gateway-owned process handle. Never send it control
+      // fields or infer stopped from a file it could write itself.
+      const attemptOptions = codex ? codexOptions : { ...codexOptions, env: managedProxy ? scope!.environment(baseEnv) : baseEnv };
+      if (injection) {
+        try { cardAttempt = await injection.prepareAttempt(); } catch { cardAttempt = undefined; }
+        currentCardAttempt = cardAttempt;
+      }
+      const client = cardAttempt && injection
+        ? new Codex({ ...attemptOptions, config: { mcp_servers: { [injection.serverId]: cardAttempt.mcpEntry as CodexConfigValue } } })
+        : codex ?? new Codex(attemptOptions);
+      yield { kind: 'attempt_start', attempt, reason: attemptCtx.reason, continues: attemptCtx.continues };
+      const thread = resumeId
+        ? client.resumeThread(resumeId, threadOpts)
+        : client.startThread(threadOpts);
+      opts?.signal?.throwIfAborted();
+      opts?.assertPublishable?.();
+      risk = 'unknown'; opts?.onExecutionRisk?.(risk);
+      scope?.expectLaunch();
+      ({ events } = await thread.runStreamed(prompt, { signal: opts?.signal }));
     }
-    const client = cardAttempt && injection
-      ? new Codex({ ...attemptOptions, config: { mcp_servers: { [injection.serverId]: cardAttempt.mcpEntry as CodexConfigValue } } })
-      : codex ?? new Codex(attemptOptions);
-    yield { kind: 'attempt_start', attempt, reason: attemptCtx.reason, continues: attemptCtx.continues };
-    const thread = resumeId
-      ? client.resumeThread(resumeId, threadOpts)
-      : client.startThread(threadOpts);
-    opts?.signal?.throwIfAborted();
-    opts?.assertPublishable?.();
-    risk = 'unknown'; opts?.onExecutionRisk?.(risk);
-    scope?.expectLaunch();
-    const { events } = await thread.runStreamed(prompt, { signal: opts?.signal });
 
     let reportedSessionId = false;
     let completed = false;

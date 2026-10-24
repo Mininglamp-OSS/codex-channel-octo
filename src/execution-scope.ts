@@ -15,6 +15,28 @@ export interface ManagedExecution {
   dispose(): void;
 }
 
+/** True when no live (non-zombie) process remains in group `pgid`; false on any doubt. */
+export async function processGroupStopped(pgid: number): Promise<boolean> {
+  if (process.platform === 'win32') return false;
+  try {
+    const { stdout } = await ps('/bin/ps', ['-axo', 'pgid=,stat='], { encoding: 'utf8', timeout: 1000, maxBuffer: 4 * 1024 * 1024 });
+    return !stdout.split('\n').some(row => {
+      const [group, state] = row.trim().split(/\s+/);
+      return Number(group) === pgid && state && !state.startsWith('Z');
+    });
+  } catch { return false; }
+}
+
+/** SIGTERM, then SIGKILL, the group `pgid` until it is verified stopped or the budgets run out. */
+export async function stopProcessGroup(pgid: number): Promise<void> {
+  for (const [signal, budget] of [['SIGTERM', 1500], ['SIGKILL', 500]] as const) {
+    if (await processGroupStopped(pgid)) return;
+    try { process.kill(-pgid, signal); } catch { /* Verify below. */ }
+    const deadline = performance.now() + budget;
+    while (!(await processGroupStopped(pgid)) && performance.now() < deadline) await sleep(25);
+  }
+}
+
 /** The gateway owns the child handle and PGID. No workload-supplied exit proof
  * (including a correct-nonce file or socket frame) has admission authority. */
 export class ExecutionScope implements ManagedExecution {
@@ -113,26 +135,12 @@ export class ExecutionScope implements ManagedExecution {
   }
   expectLaunch(): void { this.launchExpected = true; }
   confirmNotStarted(): void { this.launchExpected = false; }
-  private async groupStopped(): Promise<boolean> {
-    if (!this.child?.pid || process.platform === 'win32') return false;
-    try {
-      const { stdout } = await ps('/bin/ps', ['-axo', 'pgid=,stat='], { encoding: 'utf8', timeout: 1000, maxBuffer: 4 * 1024 * 1024 });
-      return !stdout.split('\n').some(row => {
-        const [group, state] = row.trim().split(/\s+/);
-        return Number(group) === this.child!.pid && state && !state.startsWith('Z');
-      });
-    } catch { return false; }
+  private groupStopped(): Promise<boolean> {
+    return this.child?.pid ? processGroupStopped(this.child.pid) : Promise.resolve(false);
   }
   private stopGroup(): Promise<void> {
     if (!this.child?.pid) return Promise.resolve();
-    return this.cleanup ??= (async () => {
-      for (const [signal, budget] of [['SIGTERM', 1500], ['SIGKILL', 500]] as const) {
-        if (await this.groupStopped()) return;
-        try { process.kill(-this.child!.pid!, signal); } catch { /* Verify below. */ }
-        const deadline = performance.now() + budget;
-        while (!(await this.groupStopped()) && performance.now() < deadline) await sleep(25);
-      }
-    })();
+    return this.cleanup ??= stopProcessGroup(this.child.pid);
   }
   async waitForStopped(timeoutMs: number): Promise<boolean> {
     if (!this.launchExpected) return true;
