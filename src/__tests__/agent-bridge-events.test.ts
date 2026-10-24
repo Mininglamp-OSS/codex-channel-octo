@@ -448,7 +448,8 @@ describe('T25: one canonical options contract', () => {
     expectTypeOf<Extract<keyof QueryAgentOptions, 'onResumeFailed' | 'fallbackRetryPrompt'>>().toEqualTypeOf<never>();
     expectTypeOf<QueryAgentOptions>().toEqualTypeOf<{
       resume?: string;
-      onSessionId?: (id: string, prompt: string) => void;
+      onSessionId?: (id: string, prompt: string, toolsetDigest?: string | null) => void;
+      threadToolsetDigest?: string | null;
       groupInstructions?: string;
       senderContext?: import('../prompt-safety.js').SafeText;
       signal?: AbortSignal;

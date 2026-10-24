@@ -4,6 +4,8 @@
  * request. The latest user text selects the reply:
  * - contains `SHELL:<cmd>` → one `exec_command` call, then a final message;
  * - contains `SLOW:<ms>` → the final message after a delay;
+ * - contains `TOOL:<name>:<json args>` → one call of that function tool, then
+ *   a final message quoting the tool output;
  * - otherwise → the final message `hello from mock`.
  */
 import { createServer, type Server } from 'node:http';
@@ -56,7 +58,15 @@ export async function startMockResponses(): Promise<MockResponses> {
       const answered = input.some((i) => i.type === 'function_call_output');
       const shell = /SHELL:(.+)$/m.exec(last);
       const slow = /SLOW:(\d+)/.exec(last);
-      if (shell && !answered) {
+      const tool = /TOOL:([a-z_]+):(\{.*\})$/m.exec(last);
+      if (tool && !answered) {
+        ev({ type: 'response.output_item.done', item: { type: 'function_call', id: `fc_${n}`, call_id: `call_${n}`, name: tool[1], arguments: tool[2] } });
+        done();
+      } else if (tool) {
+        const out = input.find((i) => i.type === 'function_call_output') as { output?: unknown } | undefined;
+        message(`tool said ${typeof out?.output === 'string' ? out.output : JSON.stringify(out?.output)}`);
+        done();
+      } else if (shell && !answered) {
         ev({ type: 'response.output_item.done', item: { type: 'function_call', id: `fc_${n}`, call_id: `call_${n}`, name: 'exec_command', arguments: JSON.stringify({ cmd: shell[1], yield_time_ms: 250_000 }) } });
         done();
       } else if (slow) {

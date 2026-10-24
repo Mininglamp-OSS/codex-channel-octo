@@ -28,6 +28,7 @@ import { processGroupStopped, stopProcessGroup, type ManagedExecution } from '..
 import { AppServerClient, RpcError, toolRefusal, type CloseReason } from './client.js';
 import { TurnProjector } from './events.js';
 import type { AppServerLaunch } from './spawn.js';
+import type { AppServerAttemptCards, AppServerReplyPort } from '../cards/tool-host.js';
 
 export const APP_SERVER_READY_MS = 10_000;
 export const INTERRUPT_BOUND_MS = 5_000;
@@ -68,6 +69,18 @@ export interface AppServerAttemptInput {
   readonly clientName?: string;
   /** Test seam for {@link APP_SERVER_READY_MS}. */
   readonly readyMs?: number;
+  /**
+   * Explicit cards for this attempt: called once before spawn (the per-attempt
+   * G-d admit) with a port that answers on this child. Absent or undefined ⇒
+   * every `item/tool/call` gets an uncharged refusal.
+   */
+  readonly cards?: (port: AppServerReplyPort) => AppServerAttemptCards | undefined;
+  /** Toolset digest the resumed thread was created with (T0); null/absent = none. */
+  readonly threadToolsetDigest?: string | null;
+  /** The toolset of the thread this attempt ran on: the new digest, or the resumed one. */
+  readonly onThreadToolset?: (digest: string | null) => void;
+  /** Availability line for the model (`developerInstructions` on start and resume). */
+  readonly developerInstructions?: string;
 }
 
 interface Notice { readonly method: string; readonly params: unknown }
@@ -171,6 +184,9 @@ function spawned(child: ChildProcessWithoutNullStreams): Promise<void> {
  */
 export async function* startAppServerAttempt(input: AppServerAttemptInput): AsyncGenerator<ThreadEvent> {
   const spawnImpl = input.spawnImpl ?? (nodeSpawn as unknown as SpawnImpl);
+  // Per-attempt G-d immediately before spawn; replies go to this child's client once it exists.
+  let respond: AppServerReplyPort['respond'] = () => false;
+  const cards = input.cards?.({ respond: (id, result, opts) => respond(id, result, opts) });
   const child = spawnImpl(input.launch.executable, input.launch.args, {
     cwd: input.thread.cwd, env: { ...input.launch.env }, detached: process.platform !== 'win32', stdio: 'pipe',
   } as SpawnOptionsWithoutStdio);
@@ -192,10 +208,12 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
     },
     onToolCall: (r) => {
       prestart(r.params);
-      client.respond(r.id, toolRefusal('explicit cards are unavailable'), { uncharged: true });
+      if (cards !== undefined) cards.onToolCall(r.id, r.params);
+      else client.respond(r.id, toolRefusal('explicit cards are unavailable'), { uncharged: true });
     },
-    onClose: (reason) => { queue.end(reason); void execution.kill(); },
+    onClose: (reason) => { cards?.close(); queue.end(reason); void execution.kill(); },
   });
+  respond = (id, result, opts) => client.respond(id, result, opts);
   child.stderr.resume();
   child.once('close', () => { client.close('eof'); });
 
@@ -205,6 +223,7 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
   let terminal = false;
   const fail = (cls: AppServerFailureClass, category: FailureCategory = 'process_exit'): never => {
     console.warn(`[codex-channel-octo] app-server attempt failed: ${cls}`);
+    cards?.close();
     client.close('owner');
     throw new AppServerAttemptFailure(cls, category);
   };
@@ -239,17 +258,22 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
       const params = {
         cwd: input.thread.cwd, sandbox: input.thread.sandbox, approvalPolicy: input.thread.approvalPolicy,
         ...(input.thread.model ? { model: input.thread.model } : {}),
+        ...(input.developerInstructions ? { developerInstructions: input.developerInstructions } : {}),
       };
       let opened: unknown;
       try {
+        // T1: tools are declared only when a thread starts, never on resume.
         opened = input.resumeId
           ? await client.request('thread/resume', { threadId: input.resumeId, ...params })
-          : await client.request('thread/start', params);
+          : await client.request('thread/start', { ...params, ...(cards ? { dynamicTools: cards.dynamicTools } : {}) });
       } catch (e) { if (e instanceof RpcError) fail('thread_rejected', 'invalid_config'); throw e; }
       const o = obj(opened);
       threadId = typeof obj(o.thread).id === 'string' ? obj(o.thread).id as string : '';
       if (!threadId || (input.resumeId && threadId !== input.resumeId)) fail('thread_rejected', 'invalid_config');
       if (o.approvalPolicy !== input.thread.approvalPolicy) fail('thread_rejected', 'invalid_config');
+      const toolset = input.resumeId ? (input.threadToolsetDigest ?? null) : (cards?.toolsetDigest ?? null);
+      cards?.setThread(threadId, toolset);
+      input.onThreadToolset?.(toolset);
     })(), input.readyMs ?? APP_SERVER_READY_MS, () => client.close('owner')).catch((e: unknown) => {
       if (e instanceof AgentFailure) throw e;
       return fail(queue.endedBy === 'eof' || execution.exited ? 'child_exit_before_ready' : 'transport_closed');
@@ -259,12 +283,14 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
 
     // ── turn ──
     if (prestartActivity) fail('turn_binding_mismatch');
+    // TB-0: the frame is enqueued synchronously below; nothing runs in between.
+    cards?.turnStartEnqueued();
     const response = client.request('turn/start', { threadId, input: [{ type: 'text', text: input.prompt, text_elements: [] }] })
       .then((r) => {
         const id = obj(obj(r).turn).id;
         responseSeen = true;
         if (typeof id !== 'string') return 'mismatch' as const;
-        if (turnId === null) { turnId = id; return 'ok' as const; }
+        if (turnId === null) { turnId = id; cards?.bindTurn(id); return 'ok' as const; }
         return turnId === id ? 'ok' as const : 'mismatch' as const;
       }, (e: unknown) => (e instanceof RpcError ? 'error' as const : 'closed' as const));
     let responseState: 'ok' | 'mismatch' | 'error' | 'closed' | undefined;
@@ -291,7 +317,7 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
       if (note.method === 'turn/started') {
         const id = obj(p.turn).id;
         if (typeof id !== 'string') continue;
-        if (turnId === null) { turnId = id; startedSeen = true; }
+        if (turnId === null) { turnId = id; startedSeen = true; cards?.bindTurn(id); }
         else if (id !== turnId) {
           if (!(responseSeen && startedSeen)) fail('turn_binding_mismatch'); // TB-3(c)
           continue; // TB-4 foreign
@@ -304,13 +330,14 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
       for (const out of projector.project(note.method, note.params)) {
         if (out.kind === 'card_effect') { input.onCardEffect?.(); continue; }
         if (out.kind === 'retry_notice') { console.warn('[codex-channel-octo] app-server reconnect notice'); continue; }
-        if (out.kind === 'terminal') terminal = true;
+        if (out.kind === 'terminal') { terminal = true; cards?.turnCompleted(); }
         yield out.event;
       }
       if (terminal) break;
     }
   } finally {
     input.signal?.removeEventListener('abort', onAbort);
+    cards?.close();
     void teardown(!terminal);
   }
 }
