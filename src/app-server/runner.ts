@@ -224,13 +224,10 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
     if (prestartThreads.size < PRESTART_THREADS_MAX) prestartThreads.add(t);
     else if (!prestartThreads.has(t)) prestartActivity = true;
   };
-  const turnScoped = (params: unknown): boolean => {
-    const p = obj(params);
-    return typeof p.turnId === 'string' || typeof obj(p.turn).id === 'string';
-  };
   const client: AppServerClient = new AppServerClient(child.stdin, child.stdout, {
     onNotification: (method, params) => {
-      if (turnScoped(params)) prestart(params);
+      // Only a live turn/started counts: a cold resume replays the last turn's token usage.
+      if (method === 'turn/started') prestart(params);
       queue.push({ method, params });
     },
     onToolCall: (r) => {
