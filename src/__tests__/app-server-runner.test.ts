@@ -145,6 +145,13 @@ describe('turn binding (TB-0..TB-3, addendum A1)', () => {
     expect(await stopped(h.executions)).toBe(true);
   });
 
+  it('a resumed thread replaying the last turn\'s token usage is not pre-start activity', async () => {
+    const h = setup('resume-usage-replay', { resumeId: 'thr-1' });
+    const r = await drain(startAppServerAttempt(h.input));
+    expect(r.error).toBeUndefined();
+    expect(r.events.at(-1)?.type).toBe('turn.completed');
+  });
+
   // B2: our turn reaches its terminal before the turn/start response settles.
   it.each([
     ['terminal-error', 'turn_rejected'],

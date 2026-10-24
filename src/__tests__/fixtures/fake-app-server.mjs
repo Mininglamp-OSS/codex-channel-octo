@@ -135,6 +135,14 @@ function onFrame(msg) {
       send({ id, result: { account: scenario === 'account-mismatch' ? { type: 'chatgpt', email: null, planType: 'plus' } : { type: 'apiKey' }, requiresOpenaiAuth: true, workspaceRouting: null } }); return;
     case 'thread/start':
     case 'thread/resume':
+      if (scenario === 'resume-usage-replay') {
+        // 0.163.0 cold resume replays the last turn's token usage; it is not turn activity.
+        coalesced(() => {
+          send({ id, result: { thread: { id: params.threadId ?? THREAD }, approvalPolicy: params.approvalPolicy, sandbox: { type: 'readOnly', networkAccess: false }, model: 'm', modelProvider: 'openai' } });
+          note('thread/tokenUsage/updated', { threadId: THREAD, turnId: 'turn-old', tokenUsage: { last: { inputTokens: 1, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 1, reasoningOutputTokens: 0 } } });
+        });
+        return;
+      }
       if (scenario === 'coalesced-prestart' || scenario === 'coalesced-prestart-call') {
         // The thread response and the old turn's frames in one write: one chunk on the client.
         coalesced(() => {
