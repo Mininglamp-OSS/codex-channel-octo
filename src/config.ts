@@ -197,6 +197,14 @@ export interface Config {
      */
     outputSelection?: string;
     /**
+     * Codex runtime for managed turns:
+     * - `exec` (default): the SDK `codex exec` path, unchanged.
+     * - `app-server` (experimental): a gateway-owned `codex app-server` stdio
+     *   child per attempt, pinned to the packaged 0.163.0 binary. Only managed
+     *   turns use it; card injection and production card ops stay off.
+     */
+    runtime?: string;
+    /**
      * Override the Codex upstream base URL (e.g. self-hosted provider gateway).
      * Forwarded to `new Codex({ baseUrl })`.
      */
@@ -880,6 +888,7 @@ function assertSdkEnums(id: string, sdk: Config['sdk']): void {
   check('modelReasoningEffort', sdk.modelReasoningEffort, ['minimal', 'low', 'medium', 'high', 'xhigh']);
   check('webSearchMode', sdk.webSearchMode, ['disabled', 'cached', 'live']);
   check('outputSelection', sdk.outputSelection, ['final', 'phase', 'heuristic', 'legacy']);
+  check('runtime', sdk.runtime, ['exec', 'app-server']);
   validateRecovery(sdk.recovery);
   if (sdk.privateDiagnosticsDetails !== undefined && typeof sdk.privateDiagnosticsDetails !== 'boolean') {
     throw new Error(`Bot "${id}": sdk.privateDiagnosticsDetails must be a boolean`);

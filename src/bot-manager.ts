@@ -13,6 +13,7 @@
  * freshly-loaded desired set, never precomputed in the watcher callback.
  */
 import type { SessionRouter } from './session-router.js';
+import type { ShutdownReason } from './cards/contracts.js';
 
 /**
  * The subset of a started bot the manager needs to track and tear down. The
@@ -24,7 +25,11 @@ export interface ManagedBot {
   robotUid: string;
   router: SessionRouter;
   connect: () => Promise<void>;
-  shutdown: () => Promise<void>;
+  /**
+   * Content-free card fence label only; both reasons drain identically and
+   * keep card records. Omitted → 'shutdown'.
+   */
+  shutdown: (reason?: ShutdownReason) => Promise<void>;
 }
 
 /**
@@ -139,7 +144,8 @@ export class BotManager {
         // Roll back: undo the cross-registration, tear the bot down, leave the
         // set exactly as it was before this addBot.
         crossUnregisterOnRemove(bot, existing);
-        await bot.shutdown().catch(() => {});
+        // The config still wants this Bot: a rollback, not a removal.
+        await bot.shutdown('shutdown').catch(() => {});
         throw err;
       }
       this.bots.set(configId, bot);
@@ -158,7 +164,8 @@ export class BotManager {
       // in-flight handlers (still draining for up to the gateway drain timeout)
       // could emit replies that siblings — having already dropped its robotUid —
       // would treat as user input, reopening the very loop the guard prevents.
-      await bot.shutdown().catch(() => {});
+      // Covers config deletion and replacement (removeBot then addBot).
+      await bot.shutdown('bot_removed').catch(() => {});
       crossUnregisterOnRemove(bot, remaining);
     });
   }
@@ -204,7 +211,7 @@ export class BotManager {
           this.bots.set(s.configId, s.bot);
         } catch (error) {
           crossUnregisterOnRemove(s.bot, [...existing, ...batch.filter((b) => b !== s.bot)]);
-          await s.bot.shutdown().catch(() => {});
+          await s.bot.shutdown('shutdown').catch(() => {});
           failed.push({ configId: s.configId, error });
         }
       }
@@ -222,7 +229,7 @@ export class BotManager {
     return this.enqueue(async () => {
       const all = [...this.bots.values()];
       this.bots.clear();
-      await Promise.allSettled(all.map((b) => b.shutdown()));
+      await Promise.allSettled(all.map((b) => b.shutdown('shutdown')));
     });
   }
 }
