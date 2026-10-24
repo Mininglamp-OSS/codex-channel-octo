@@ -8,14 +8,31 @@ const log = process.argv[3];
 const THREAD = 'thr-1';
 const TURN = 'turn-1';
 let buffer = '';
-const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+// While batching, frames are joined into one write so the client reads them in one chunk.
+let batch = null;
+const send = (o) => { const line = JSON.stringify(o) + '\n'; if (batch !== null) batch += line; else process.stdout.write(line); };
+const coalesced = (fn) => { batch = ''; try { fn(); } finally { const out = batch; batch = null; process.stdout.write(out); } };
+const later = (fn) => setTimeout(fn, 30);
 const note = (method, params) => send({ method, params });
 const turn = (id, status = 'inProgress', error = null) => ({ id, rootTurnId: id, items: [], itemsView: 'notLoaded', status, error, startedAt: null, completedAt: null, durationMs: null });
 const item = (it) => ({ item: it, threadId: THREAD, turnId: TURN, startedAtMs: 0 });
 
-function finish(status = 'completed', error = null) {
-  note('thread/tokenUsage/updated', { threadId: THREAD, turnId: TURN, tokenUsage: { last: { inputTokens: 3, cachedInputTokens: 1, cacheWriteInputTokens: 0, outputTokens: 2, reasoningOutputTokens: 0 } } });
-  note('turn/completed', { threadId: THREAD, turn: turn(TURN, status, error) });
+function finish(status = 'completed', error = null, turnId = TURN) {
+  note('thread/tokenUsage/updated', { threadId: THREAD, turnId, tokenUsage: { last: { inputTokens: 3, cachedInputTokens: 1, cacheWriteInputTokens: 0, outputTokens: 2, reasoningOutputTokens: 0 } } });
+  note('turn/completed', { threadId: THREAD, turn: turn(turnId, status, error) });
+}
+
+// A previous turn on our thread, still streaming when the thread opens (TB-3(d)).
+function oldTurn() {
+  note('turn/started', { threadId: THREAD, turn: turn('turn-old') });
+  note('item/completed', { item: { type: 'agentMessage', id: 'old1', text: 'OLD TURN OUTPUT', phase: 'final_answer' }, threadId: THREAD, turnId: 'turn-old', completedAtMs: 0 });
+  finish('completed', null, 'turn-old');
+}
+
+// Our turn runs to its terminal before the turn/start response (TB-3(a)/(b)).
+function terminalFirst() {
+  note('turn/started', { threadId: THREAD, turn: turn(TURN) });
+  body(); finish();
 }
 
 function body() {
@@ -26,6 +43,29 @@ function body() {
 
 function onTurnStart(id) {
   switch (scenario) {
+    case 'coalesced-prestart':
+    case 'coalesced-prestart-call':
+      send({ id, result: { turn: turn(TURN) } });
+      note('turn/started', { threadId: THREAD, turn: turn(TURN) });
+      body(); finish(); return;
+    case 'terminal-error':
+      coalesced(() => { terminalFirst(); send({ id, error: { code: -32600, message: 'not submitted' } }); }); return;
+    case 'terminal-error-split':
+      terminalFirst(); later(() => send({ id, error: { code: -32600, message: 'not submitted' } })); return;
+    case 'terminal-mismatch':
+      coalesced(() => { terminalFirst(); send({ id, result: { turn: turn('turn-other') } }); }); return;
+    case 'terminal-mismatch-split':
+      terminalFirst(); later(() => send({ id, result: { turn: turn('turn-other') } })); return;
+    case 'terminal-no-response':
+      terminalFirst(); return;
+    case 'terminal-ok':
+      coalesced(() => { terminalFirst(); send({ id, result: { turn: turn(TURN) } }); }); return;
+    case 'terminal-ok-split':
+      terminalFirst(); later(() => send({ id, result: { turn: turn(TURN) } })); return;
+    case 'held-call-terminal-error':
+      // A call for our turn before any binding is held; the turn then ends before an error response.
+      send({ id: 'srv-held', method: 'item/tool/call', params: { threadId: THREAD, turnId: TURN, callId: 'c1', namespace: null, tool: 'display', arguments: {} } });
+      terminalFirst(); later(() => send({ id, error: { code: -32600, message: 'not submitted' } })); return;
     case 'response-first':
       send({ id, result: { turn: turn(TURN) } });
       note('turn/started', { threadId: THREAD, turn: turn(TURN) });
@@ -95,6 +135,15 @@ function onFrame(msg) {
       send({ id, result: { account: scenario === 'account-mismatch' ? { type: 'chatgpt', email: null, planType: 'plus' } : { type: 'apiKey' }, requiresOpenaiAuth: true, workspaceRouting: null } }); return;
     case 'thread/start':
     case 'thread/resume':
+      if (scenario === 'coalesced-prestart' || scenario === 'coalesced-prestart-call') {
+        // The thread response and the old turn's frames in one write: one chunk on the client.
+        coalesced(() => {
+          send({ id, result: { thread: { id: params.threadId ?? THREAD }, approvalPolicy: params.approvalPolicy, sandbox: { type: 'readOnly', networkAccess: false }, model: 'm', modelProvider: 'openai' } });
+          if (scenario === 'coalesced-prestart-call') send({ id: 'srv-old', method: 'item/tool/call', params: { threadId: THREAD, turnId: 'turn-old', callId: 'c0', namespace: null, tool: 'display', arguments: {} } });
+          else oldTurn();
+        });
+        return;
+      }
       send({ id, result: { thread: { id: params.threadId ?? THREAD }, approvalPolicy: params.approvalPolicy, sandbox: { type: 'readOnly', networkAccess: false }, model: 'm', modelProvider: 'openai' } });
       if (scenario === 'prestart') note('turn/started', { threadId: params.threadId ?? THREAD, turn: turn('turn-steer') });
       return;

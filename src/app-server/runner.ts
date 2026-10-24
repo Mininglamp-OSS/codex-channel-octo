@@ -19,7 +19,9 @@
  * JSON-RPC error response, a response id that differs from a bound id, a
  * different `turn/started` before both were seen, or any turn activity on our
  * thread before `turn/start` was enqueued closes the attempt. After both were
- * seen, other turn ids are foreign and dropped.
+ * seen, other turn ids are foreign and dropped. A terminal that arrives before
+ * the response stays provisional until the response settles, within
+ * {@link TERMINAL_SETTLE_MS}; no response by then also closes the attempt.
  */
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import type { ThreadEvent } from '@openai/codex-sdk';
@@ -33,6 +35,10 @@ import type { AppServerAttemptCards, AppServerReplyPort } from '../cards/tool-ho
 export const APP_SERVER_READY_MS = 10_000;
 export const INTERRUPT_BOUND_MS = 5_000;
 export const CHILD_EXIT_BOUND_MS = 10_000;
+/** Wait for the `turn/start` response after a terminal; within the R-7 interrupt bound. */
+export const TERMINAL_SETTLE_MS = INTERRUPT_BOUND_MS;
+/** Distinct threads with pre-enqueue turn activity remembered before the thread id is known. */
+export const PRESTART_THREADS_MAX = 32;
 
 /** Bounded failure classes after spawn (§10.1); logged by name only. */
 export type AppServerFailureClass =
@@ -69,6 +75,8 @@ export interface AppServerAttemptInput {
   readonly clientName?: string;
   /** Test seam for {@link APP_SERVER_READY_MS}. */
   readonly readyMs?: number;
+  /** Test seam for {@link TERMINAL_SETTLE_MS}. */
+  readonly settleMs?: number;
   /**
    * Explicit cards for this attempt: called once before spawn (the per-attempt
    * G-d admit) with a port that answers on this child. Absent or undefined ⇒
@@ -166,6 +174,12 @@ function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => void): Promi
   ]);
 }
 
+/** Resolves when `p` settles or after `ms`, whichever is first. */
+function settledWithin(p: Promise<unknown>, ms: number): Promise<void> {
+  let t: NodeJS.Timeout | undefined;
+  return Promise.race([p, new Promise<void>((r) => { t = setTimeout(r, ms); })]).then(() => undefined).finally(() => clearTimeout(t));
+}
+
 /** Wait for the OS to report the child started; a spawn error is rethrown untouched. */
 function spawned(child: ChildProcessWithoutNullStreams): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -197,13 +211,26 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
   const queue = new NoticeQueue();
   let threadId = '';
   // TB-3(d): turn activity on our thread before our only turn/start was enqueued.
+  // A chunk is dispatched synchronously, so activity coalesced with the thread
+  // reply arrives before the thread id is known: remember its thread ids and
+  // reconcile them once the id is set. Past the cap this fails closed.
   let prestartActivity = false;
+  const prestartThreads = new Set<string>();
   const prestart = (params: unknown): void => {
-    if (threadId !== '' && !client.turnStartEnqueued && obj(params).threadId === threadId) prestartActivity = true;
+    if (client.turnStartEnqueued) return;
+    const t = obj(params).threadId;
+    if (threadId !== '') { if (t === threadId) prestartActivity = true; return; }
+    if (typeof t !== 'string') return;
+    if (prestartThreads.size < PRESTART_THREADS_MAX) prestartThreads.add(t);
+    else if (!prestartThreads.has(t)) prestartActivity = true;
+  };
+  const turnScoped = (params: unknown): boolean => {
+    const p = obj(params);
+    return typeof p.turnId === 'string' || typeof obj(p.turn).id === 'string';
   };
   const client: AppServerClient = new AppServerClient(child.stdin, child.stdout, {
     onNotification: (method, params) => {
-      if (method === 'turn/started') prestart(params);
+      if (turnScoped(params)) prestart(params);
       queue.push({ method, params });
     },
     onToolCall: (r) => {
@@ -270,6 +297,8 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
       const o = obj(opened);
       threadId = typeof obj(o.thread).id === 'string' ? obj(o.thread).id as string : '';
       if (!threadId || (input.resumeId && threadId !== input.resumeId)) fail('thread_rejected', 'invalid_config');
+      if (prestartThreads.has(threadId)) prestartActivity = true;
+      prestartThreads.clear();
       if (o.approvalPolicy !== input.thread.approvalPolicy) fail('thread_rejected', 'invalid_config');
       const toolset = input.resumeId ? (input.threadToolsetDigest ?? null) : (cards?.toolsetDigest ?? null);
       cards?.setThread(threadId, toolset);
@@ -294,7 +323,12 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
         return turnId === id ? 'ok' as const : 'mismatch' as const;
       }, (e: unknown) => (e instanceof RpcError ? 'error' as const : 'closed' as const));
     let responseState: 'ok' | 'mismatch' | 'error' | 'closed' | undefined;
-    void response.then((s) => { responseState = s; queue.push({ method: '__turn_start_response', params: null }); });
+    const settled = response.then((s) => { responseState = s; queue.push({ method: '__turn_start_response', params: null }); });
+    const checkResponse = (): void => {
+      if (responseState === 'error') fail('turn_rejected');
+      if (responseState === 'mismatch') fail('turn_binding_mismatch');
+      if (responseState === 'closed') fail(execution.exited ? 'child_exit' : 'transport_closed');
+    };
 
     let projector: TurnProjector | undefined;
     for (;;) {
@@ -306,12 +340,7 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
       }
       const note = n as Notice;
       if (prestartActivity) fail('turn_binding_mismatch');
-      if (note.method === '__turn_start_response') {
-        if (responseState === 'error') fail('turn_rejected');
-        if (responseState === 'mismatch') fail('turn_binding_mismatch');
-        if (responseState === 'closed') fail(execution.exited ? 'child_exit' : 'transport_closed');
-        continue;
-      }
+      if (note.method === '__turn_start_response') { checkResponse(); continue; }
       const p = obj(note.params);
       if (p.threadId !== threadId) continue; // other threads never reach this projection
       if (note.method === 'turn/started') {
@@ -330,7 +359,14 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
       for (const out of projector.project(note.method, note.params)) {
         if (out.kind === 'card_effect') { input.onCardEffect?.(); continue; }
         if (out.kind === 'retry_notice') { console.warn('[codex-channel-octo] app-server reconnect notice'); continue; }
-        if (out.kind === 'terminal') { terminal = true; cards?.turnCompleted(); }
+        if (out.kind === 'terminal') {
+          // TB-3(a)/(b): provisional until the response settles; an unconfirmed turn never completes.
+          if (responseState === undefined) await settledWithin(settled, input.settleMs ?? TERMINAL_SETTLE_MS);
+          input.signal?.throwIfAborted();
+          checkResponse();
+          if (responseState === undefined) fail('turn_binding_mismatch');
+          terminal = true; cards?.turnCompleted();
+        }
         yield out.event;
       }
       if (terminal) break;
