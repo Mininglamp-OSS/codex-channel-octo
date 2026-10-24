@@ -96,6 +96,8 @@ export class TurnProjector {
       case 'item/completed': {
         const item = obj(p.item);
         if (item.type === 'dynamicToolCall') return method === 'item/completed' ? [{ kind: 'card_effect' }] : [];
+        // exec carries agent messages only once complete; a started snapshot is empty.
+        if (item.type === 'agentMessage' && method === 'item/started') return [];
         const projected = projectItem(item);
         if (projected === null) return [];
         return [{ kind: 'event', event: { type: method === 'item/started' ? 'item.started' : 'item.completed', item: projected } }];
