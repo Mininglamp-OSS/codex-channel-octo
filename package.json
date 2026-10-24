@@ -22,6 +22,7 @@
     "docs/final-output-policy.md",
     "docs/private-diagnostics.md",
     "docs/session-continuity.md",
+    "docs/app-server-runtime.md",
     "scripts/check-codex-runtime.mjs"
   ],
   "repository": {
