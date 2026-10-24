@@ -20,6 +20,7 @@ import {
   MAX_INTENT_LEGACY_CARDS,
   inspectCardSchema,
   provisionFirstInstallMarker,
+  referenceSchema,
   serializeIntentLegacy,
 } from "../cards/migrations.js";
 import { initializeCardStore, type CardBinding, type CardStore, type CardStoreInit } from "../cards/store.js";
@@ -73,8 +74,17 @@ function liveRow(store: CardStore, kind: "automatic" | "display" = "automatic"):
   return r.cardId;
 }
 
-/** Rewrite card_meta to exactly what a version 1 build writes (8 keys, no intent set). */
+/** Remove the version 3 (SC-1) additions: exactly what a version 2 build writes. */
+function downgradeSchemaToV2(a: DbAdapter): void {
+  a.exec("DROP TRIGGER trg_card_explicit_requests_settled");
+  for (const c of ["late_at", "late_message_id", "late_outcome", "settled_by"]) a.exec(`ALTER TABLE card_explicit_requests DROP COLUMN ${c}`);
+  a.prepare(`UPDATE card_meta SET v = '2' WHERE k = 'schema_version'`).run();
+  a.prepare(`UPDATE card_meta SET v = ? WHERE k = 'schema_hash'`).run(referenceSchema(2).hash);
+}
+
+/** Rewrite the card family to exactly what a version 1 build writes (8 keys, no intent set). */
 function downgradeMetaToV1(a: DbAdapter): void {
+  downgradeSchemaToV2(a);
   a.prepare(`DELETE FROM card_meta WHERE k = 'intent_legacy'`).run();
   a.prepare(`UPDATE card_meta SET v = '1' WHERE k = 'schema_version'`).run();
 }
@@ -104,18 +114,18 @@ function failingOn(a: DbAdapter, fragment: string): DbAdapter {
 // ─── Fresh install ─────────────────────────────────────────────────────────
 
 describe("T14: fresh install", () => {
-  it("writes version 2 with an empty legacy set; the first-install backup name is unchanged", async () => {
+  it("writes the current version 3 with an empty legacy set; the first-install backup name is unchanged", async () => {
     const a = openDb();
     provisionFirstInstallMarker(env.markerPath, INSTALL, T0);
     const r = await init(a);
-    expect(r).toMatchObject({ state: "ready", provenance: "first_install", meta: { schemaVersion: 2 } });
+    expect(r).toMatchObject({ state: "ready", provenance: "first_install", meta: { schemaVersion: 3 } });
     if (r.state !== "ready") return;
     expect([...r.meta.legacyIntentCards]).toEqual([]);
     expect(r.backup?.fileName).toBe(`cc-octo.pre-card_v1.${stamp(T0)}.db`);
-    expect(meta(a)).toMatchObject({ schema_version: "2", intent_legacy: '{"format":1,"cards":[]}' });
+    expect(meta(a)).toMatchObject({ schema_version: "3", intent_legacy: '{"format":1,"cards":[]}' });
     expect(Object.keys(meta(a))).toHaveLength(9);
     const again = await init(a, T0 + 1000);
-    expect(again).toMatchObject({ state: "ready", provenance: "reopened", meta: { schemaVersion: 2 } });
+    expect(again).toMatchObject({ state: "ready", provenance: "reopened", meta: { schemaVersion: 3 } });
     expect(again.state === "ready" && again.backup).toBe(undefined);
   });
 });
@@ -137,12 +147,13 @@ describe("T14: upgrade from a version 1 store", () => {
 
     const at = T0 + 60_000;
     const r = await init(a, at);
-    expect(r).toMatchObject({ state: "ready", provenance: "reopened", meta: { schemaVersion: 2 } });
+    expect(r).toMatchObject({ state: "ready", provenance: "reopened", meta: { schemaVersion: 3 } });
     if (r.state !== "ready") return;
     const legacy = [active, sending.cardId].sort();
     expect([...r.meta.legacyIntentCards].sort()).toEqual(legacy);
     expect(meta(a).intent_legacy).toBe(serializeIntentLegacy(legacy));
-    expect(meta(a).schema_version).toBe("2");
+    // The upgrade continues through version 2 to the current version 3.
+    expect(meta(a).schema_version).toBe("3");
 
     // The upgrade backup is a second file next to the untouched first-install one.
     expect(r.backup?.fileName).toBe(`cc-octo.pre-card_v1-s2.${stamp(at)}.db`);
@@ -176,7 +187,7 @@ describe("T14: upgrade from a version 1 store", () => {
     await freshStore(a);
     downgradeMetaToV1(a);
     const r = await init(a, T0 + 1000);
-    expect(r).toMatchObject({ state: "ready", meta: { schemaVersion: 2 } });
+    expect(r).toMatchObject({ state: "ready", meta: { schemaVersion: 3 } });
     expect(meta(a).intent_legacy).toBe('{"format":1,"cards":[]}');
   });
 
@@ -193,7 +204,7 @@ describe("T14: upgrade from a version 1 store", () => {
     expect(inspectCardSchema(a)).toMatchObject({ state: "complete", meta: { schemaVersion: 1 } });
     // Ordinary operation is untouched, and the next clean start upgrades.
     const retried = await init(a, T0 + 2000);
-    expect(retried).toMatchObject({ state: "ready", meta: { schemaVersion: 2 } });
+    expect(retried).toMatchObject({ state: "ready", meta: { schemaVersion: 3 } });
     expect(meta(a).intent_legacy).toBe(serializeIntentLegacy([active]));
   });
 
@@ -223,7 +234,7 @@ describe("T14: upgrade from a version 1 store", () => {
     insertLiveAutomatic(a, MAX_INTENT_LEGACY_CARDS);
     downgradeMetaToV1(a);
     const r = await init(a, T0 + 1000);
-    expect(r).toMatchObject({ state: "ready", meta: { schemaVersion: 2 } });
+    expect(r).toMatchObject({ state: "ready", meta: { schemaVersion: 3 } });
     expect(r.state === "ready" && r.meta.legacyIntentCards.size).toBe(MAX_INTENT_LEGACY_CARDS);
   });
 
@@ -252,7 +263,7 @@ describe("T14: a version 1 build on a version 2 store", () => {
     mkdirSync(join(dir, "cards"));
     const src = join(here, "..", "cards");
     const migrations = readFileSync(join(src, "migrations.ts"), "utf8");
-    const patched = migrations.replace("export const CARD_SCHEMA_VERSION = 2;", "export const CARD_SCHEMA_VERSION = 1;");
+    const patched = migrations.replace("export const CARD_SCHEMA_VERSION = 3;", "export const CARD_SCHEMA_VERSION = 1;");
     expect(patched).not.toBe(migrations);
     writeFileSync(join(dir, "cards", "migrations.ts"), patched);
     writeFileSync(join(dir, "cards", "store.ts"), readFileSync(join(src, "store.ts"), "utf8"));
@@ -279,11 +290,11 @@ describe("T14: a version 1 build on a version 2 store", () => {
     open.splice(open.indexOf(reopened), 1);
     expect(files.map(digest)).toEqual(before);
 
-    // Re-upgrading (running the current build again) reopens version 2 unchanged.
+    // Re-upgrading (running the current build again) reopens the current version unchanged.
     const current = createAdapter(env.dbPath);
     open.push(current);
     const r = await init(current, T0 + 2000);
-    expect(r).toMatchObject({ state: "ready", provenance: "reopened", meta: { schemaVersion: 2 } });
+    expect(r).toMatchObject({ state: "ready", provenance: "reopened", meta: { schemaVersion: 3 } });
     expect(r.state === "ready" && r.backup).toBe(undefined);
   });
 });
