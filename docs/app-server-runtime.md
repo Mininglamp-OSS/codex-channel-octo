@@ -25,7 +25,8 @@
   - an error response;
   - a response id that does not match the bound id;
   - a different `turn/started` inside the window;
-  - turn activity on our thread before our `turn/start` was enqueued.
+  - turn activity on our thread before our `turn/start` was enqueued, including activity that arrives in the same read as the thread reply (its thread ids are kept until the thread id is known, at most 32, then fail closed);
+  - a terminal that arrives before the response, unless the response then settles to the bound id within 5 s. Until then the terminal is not emitted.
 - **Event projection.** v2 notifications are projected onto the SDK `ThreadEvent` shape, so selection, progress, risk and failure handling are the exec path's. `error.willRetry=true` is a notice only. Agent messages are projected only on completion. A completed `dynamicToolCall` is an effect, never text.
 - **Classification (unchanged from exec).** `risk=unknown` is set immediately before spawn. Only a structured OS spawn error stays retry-eligible: one seen before the OS reported the child started and before any frame was written. Every post-spawn failure is `blocked_uncertain` and carries a bounded class name. The classes are `auth_login_rejected`, `auth_mode_mismatch`, `ready_timeout`, `child_exit_before_ready`, `thread_rejected`, `turn_rejected`, `turn_binding_mismatch`, `child_exit` and `transport_closed`.
 - **Cancel.** `turn/interrupt` (5 s bound), then stdin EOF, then a verified SIGTERM/SIGKILL of the process group (10 s bound).

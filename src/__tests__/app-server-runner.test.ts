@@ -13,6 +13,7 @@ import { startAppServerAttempt, AppServerAttemptFailure, AppServerExecution, typ
 import { classifyFailure } from '../agent-failure.js';
 import { processGroupStopped } from '../execution-scope.js';
 import type { ManagedExecution } from '../execution-scope.js';
+import type { AppServerAttemptCards } from '../cards/tool-host.js';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-app-server.mjs', import.meta.url));
 const dirs: string[] = [];
@@ -127,6 +128,67 @@ describe('turn binding (TB-0..TB-3, addendum A1)', () => {
     const h = setup(scenario, scenario === 'prestart' ? { resumeId: 'thr-1' } : {});
     const r = await drain(startAppServerAttempt(h.input));
     expect((r.error as AppServerAttemptFailure).failureClass).toBe(cls);
+    expect(await stopped(h.executions)).toBe(true);
+  });
+
+  // B1: the thread reply and the old turn's frames arrive in one chunk, before the thread id is known.
+  it.each([
+    ['coalesced-prestart', {}],
+    ['coalesced-prestart', { resumeId: 'thr-1' }],
+    ['coalesced-prestart-call', { resumeId: 'thr-1' }],
+  ] as const)('%s %o: activity coalesced with the thread reply closes as turn_binding_mismatch (TB-3(d))', async (scenario, extra) => {
+    const h = setup(scenario, extra);
+    const r = await drain(startAppServerAttempt(h.input));
+    expect((r.error as AppServerAttemptFailure).failureClass).toBe('turn_binding_mismatch');
+    expect(r.events.map((e) => e.type)).toEqual(['thread.started']);
+    expect(JSON.stringify(r.events)).not.toContain('OLD TURN OUTPUT');
+    expect(await stopped(h.executions)).toBe(true);
+  });
+
+  // B2: our turn reaches its terminal before the turn/start response settles.
+  it.each([
+    ['terminal-error', 'turn_rejected'],
+    ['terminal-error-split', 'turn_rejected'],
+    ['terminal-mismatch', 'turn_binding_mismatch'],
+    ['terminal-mismatch-split', 'turn_binding_mismatch'],
+    ['terminal-no-response', 'turn_binding_mismatch'],
+  ])('%s: the terminal stays provisional and the attempt closes as %s (TB-3(a)/(b))', async (scenario, cls) => {
+    const h = setup(scenario, { settleMs: 300 });
+    const t0 = performance.now();
+    const r = await drain(startAppServerAttempt(h.input));
+    expect((r.error as AppServerAttemptFailure).failureClass).toBe(cls);
+    expect(classifyFailure(r.error).stage).not.toBe('spawn');
+    expect(r.events.some((e) => e.type === 'turn.completed')).toBe(false);
+    expect(performance.now() - t0).toBeLessThan(2_000);
+    expect(await stopped(h.executions)).toBe(true);
+  });
+
+  it.each(['terminal-ok', 'terminal-ok-split'])('%s: the terminal is released once the response matches', async (scenario) => {
+    const h = setup(scenario, { settleMs: 2_000 });
+    const r = await drain(startAppServerAttempt(h.input));
+    expect(r.error).toBeUndefined();
+    expect(r.events.at(-1)?.type).toBe('turn.completed');
+    expect(await stopped(h.executions)).toBe(true);
+  });
+
+  it('a held call does not outlive a terminal whose response errors', async () => {
+    const calls: string[] = [];
+    const cards = (): AppServerAttemptCards => ({
+      dynamicTools: [], toolsetDigest: 'd',
+      setThread: () => calls.push('setThread'),
+      turnStartEnqueued: () => calls.push('turnStartEnqueued'),
+      bindTurn: (id) => calls.push(`bindTurn:${id}`),
+      turnCompleted: () => calls.push('turnCompleted'),
+      onToolCall: (id) => calls.push(`call:${String(id)}`),
+      close: () => calls.push('close'),
+    });
+    const h = setup('held-call-terminal-error', { cards, settleMs: 2_000 });
+    const r = await drain(startAppServerAttempt(h.input));
+    expect((r.error as AppServerAttemptFailure).failureClass).toBe('turn_rejected');
+    expect(r.events.some((e) => e.type === 'turn.completed')).toBe(false);
+    expect(calls).toContain('call:srv-held');
+    expect(calls).not.toContain('turnCompleted');
+    expect(calls).toContain('close');
     expect(await stopped(h.executions)).toBe(true);
   });
 
