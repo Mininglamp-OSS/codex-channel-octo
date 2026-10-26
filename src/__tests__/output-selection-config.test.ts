@@ -108,3 +108,21 @@ describe('sdk.outputSelection validation', () => {
     );
   });
 });
+
+describe('sdk.runtime validation', () => {
+  it('defaults to unset (the exec path)', () => {
+    const [bot] = boot({});
+    expect(bot.sdk.runtime).toBeUndefined();
+  });
+
+  it.each(['exec', 'app-server'])('accepts %s', (runtime) => {
+    const [bot] = boot({ sdk: { runtime } });
+    expect(bot.sdk.runtime).toBe(runtime);
+  });
+
+  it.each(['appserver', 'App-Server', 'mcp'])('rejects %s at boot', (runtime) => {
+    expect(() => boot({ sdk: { runtime } })).toThrow(
+      `Bot "a": invalid sdk.runtime '${runtime}' (allowed: exec, app-server)`,
+    );
+  });
+});
