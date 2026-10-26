@@ -192,6 +192,21 @@ describe.runIf(BIN !== null)('explicit cards over app-server dynamicTools (real 
     expect(toolNames(again.requests[0])).not.toContain('display');
   }, 90_000);
 
+  it('R1/D3: a thread started with an older toolset gets the same notice on resume', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    cleanups.push(() => warn.mockRestore());
+    const r = await rig();
+    const first = await run(r, 'hello', { cards: generation(r, 's5') });
+    expect(toolNames(first.requests[0])).toEqual(expect.arrayContaining(['display', 'interactive']));
+    const out = await run(r, 'again', { cards: generation(r, 's5'), resume: first.session!.id, digest: 'v0:old' });
+    const turns = userMessages(out.requests[0]);
+    expect(turns.at(-1)?.[0]).toBe(LEGACY_TOOLSET_NOTICE);
+    expect(turns.at(-1)?.at(-1)?.endsWith('again')).toBe(true);
+    expect(turns.flat().filter((t) => t.includes('[Card tools notice'))).toHaveLength(1);
+    expect(turns.flat().some((t) => t.endsWith('hello') && !t.includes('[Card tools notice'))).toBe(true);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('explicit cards unavailable'))).toBe(true);
+  }, 90_000);
+
   it('D3: a new thread with cards (T2a) and its resumes never carry the legacy notice', async () => {
     const r = await rig();
     const first = await run(r, 'hello', { cards: generation(r, 's4') });

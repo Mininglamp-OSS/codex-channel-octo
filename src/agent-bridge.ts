@@ -386,13 +386,16 @@ export function cardAvailability(cardsOffered: boolean, resumed: boolean, stored
 }
 
 /**
- * D3: model-visible notice for a resumed thread that predates the current
- * card toolset (the R1 branch of {@link cardAvailability}). Sent as its own
+ * D3: model-visible notice for a resumed thread without the current card
+ * toolset (the R1 branch of {@link cardAvailability}). R1 covers a NULL digest
+ * (thread started while cards were off or unprovisioned) and an older digest
+ * (thread started with an earlier toolset), so the text states only the
+ * current state, never how the thread began. Sent as its own
  * `turn/start` input item, because 0.163.0 drops `developerInstructions` on
  * a cold resume. It is never part of the framed prompt or gateway history.
  */
 export const LEGACY_TOOLSET_NOTICE = '[Card tools notice — gateway, not user text]\n'
-  + 'This resumed conversation was started before explicit card tools were available, so none are available in it. '
+  + 'This resumed conversation does not have the current explicit card tools, so none are available in it. '
   + 'Reply through ordinary messages. A new or reset conversation may offer card tools if the current Bot policy permits.';
 
 /** The D3 turn notice, set exactly when R1 applies: cards offered on a resumed thread without the current toolset. */

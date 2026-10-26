@@ -102,8 +102,19 @@ describe('D3 legacy-thread turn notice', () => {
 
   it('is the agreed text: anchored, no secrets, paths or addresses, no reset instruction', () => {
     expect(LEGACY_TOOLSET_NOTICE).toBe('[Card tools notice — gateway, not user text]\n'
-      + 'This resumed conversation was started before explicit card tools were available, so none are available in it. '
+      + 'This resumed conversation does not have the current explicit card tools, so none are available in it. '
       + 'Reply through ordinary messages. A new or reset conversation may offer card tools if the current Bot policy permits.');
     expect(LEGACY_TOOLSET_NOTICE).not.toMatch(/https?:|\/|token|credential|account|progress card/i);
+  });
+
+  it('is truthful for both R1 origins: it states the current state, not how the thread began', () => {
+    // NULL: started while cards were off or unprovisioned, when the tools already existed.
+    // 'v0:old': started with an earlier toolset, i.e. with card tools.
+    for (const stored of [null, 'v0:old']) {
+      const notice = legacyToolsetNotice(true, true, stored);
+      expect(notice).toBe(LEGACY_TOOLSET_NOTICE);
+      expect(notice).toContain('does not have the current explicit card tools');
+      expect(notice).not.toMatch(/started|before|predates|were available|never had|older|earlier/i);
+    }
   });
 });
