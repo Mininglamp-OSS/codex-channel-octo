@@ -26,9 +26,9 @@ import { reduceItem } from "../cards/redact.js";
 const PINNED: PinnedTemplate = Object.freeze({
   id: "ai.reasoning-process", version: "0.4.0", controlFree: true,
   views: Object.freeze({
-    active: Object.freeze({ view: "active", version: "v2", controlFree: true }),
-    error: Object.freeze({ view: "error", version: "v2", controlFree: true }),
-    result: Object.freeze({ view: "result", version: "v1", controlFree: true }),
+    active: Object.freeze({ view: "active", version: "octo/v2", controlFree: true }),
+    error: Object.freeze({ view: "error", version: "octo/v2", controlFree: true }),
+    result: Object.freeze({ view: "result", version: "octo/v1", controlFree: true }),
   }),
 }) as PinnedTemplate;
 const ROUTE: CardRoute = { channelId: "s1_u1@s1_bot", channelType: 1 };

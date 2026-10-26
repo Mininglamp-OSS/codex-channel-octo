@@ -140,9 +140,9 @@ describe("pinned control-free template", () => {
   it("selects exactly one server-selected id/version with the approved views", () => {
     const p = profile(); const selected = selectTemplate(p);
     expect(selected).toEqual({ id: "ai.reasoning-process", version: "0.4.0", controlFree: true,
-      views: { active: { view: "active", version: "v2", controlFree: true },
-        error: { view: "error", version: "v2", controlFree: true },
-        result: { view: "result", version: "v1", controlFree: true } } });
+      views: { active: { view: "active", version: "octo/v2", controlFree: true },
+        error: { view: "error", version: "octo/v2", controlFree: true },
+        result: { view: "result", version: "octo/v1", controlFree: true } } });
     expect(Object.isFrozen(selected)).toBe(true);
   });
 
@@ -157,7 +157,7 @@ describe("pinned control-free template", () => {
     if (defect === "extra_view") views.push({ ...views[0], name: "extra" });
     if (defect === "extra_state") views[0].states.push("unknown");
     if (defect === "missing_state") views[0].states.pop();
-    if (defect === "view_version") views[0].wire_profile = "v1";
+    if (defect === "view_version") views[0].wire_profile = "octo/v1";
     if (defect === "duplicate_view") views[2] = views[0];
     if (defect === "stop") views[0].submit_actions.push("reasoning_stop");
     if (defect === "retry") views[1].submit_actions.push("reasoning_retry");
