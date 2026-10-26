@@ -105,6 +105,8 @@ export class AppServerClient {
   private inbound: Buffer = Buffer.alloc(0);
   private uncharged = 0;
   private turnStartSent = false;
+  private turnStartId: RpcId | undefined;
+  private turnStartRead = false;
   private closedReason: CloseReason | undefined;
 
   constructor(
@@ -124,6 +126,8 @@ export class AppServerClient {
   get closed(): CloseReason | undefined { return this.closedReason; }
   /** Whether the single `turn/start` frame was enqueued (TB-0). */
   get turnStartEnqueued(): boolean { return this.turnStartSent; }
+  /** Whether the `turn/start` response frame was read; set synchronously in the reader (TB-3(c)). */
+  get turnStartResponded(): boolean { return this.turnStartRead; }
   get unchargedReplies(): number { return this.uncharged; }
 
   request<T = unknown>(method: string, params: unknown): Promise<T> {
@@ -133,7 +137,7 @@ export class AppServerClient {
     const result = new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
     });
-    if (method === 'turn/start') this.turnStartSent = true;
+    if (method === 'turn/start') { this.turnStartSent = true; this.turnStartId = id; }
     this.enqueue({ id, method, params });
     return result;
   }
@@ -259,6 +263,7 @@ export class AppServerClient {
     const waiter = this.pending.get(m.id as RpcId);
     if (waiter === undefined) return; // late or unknown response: ignored
     this.pending.delete(m.id as RpcId);
+    if (m.id === this.turnStartId) this.turnStartRead = true;
     if (m.error !== undefined) {
       const e = m.error as { code?: unknown; message?: unknown };
       waiter.reject(new RpcError(typeof e?.code === 'number' ? e.code : -32603, typeof e?.message === 'string' ? e.message : 'error'));

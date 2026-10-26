@@ -17,11 +17,12 @@
  * Turn binding (TB-0..TB-3, addendum A1): our single `turn/start` binds the
  * first matching `turn/started` or its response, whichever comes first. A
  * JSON-RPC error response, a response id that differs from a bound id, a
- * different `turn/started` before both were seen, or any turn activity on our
- * thread before `turn/start` was enqueued closes the attempt. After both were
- * seen, other turn ids are foreign and dropped. A terminal that arrives before
- * the response stays provisional until the response settles, within
- * {@link TERMINAL_SETTLE_MS}; no response by then also closes the attempt.
+ * different `turn/started` read before both were seen, or any turn activity on
+ * our thread before `turn/start` was enqueued closes the attempt. After both
+ * were seen, other turn ids are foreign and dropped. A terminal that arrives
+ * before the response stays provisional until the response settles, within
+ * {@link TERMINAL_SETTLE_MS}; no response by then, or a different `turn/started`
+ * still queued that was read before the response, also closes the attempt.
  */
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import type { ThreadEvent } from '@openai/codex-sdk';
@@ -91,7 +92,8 @@ export interface AppServerAttemptInput {
   readonly developerInstructions?: string;
 }
 
-interface Notice { readonly method: string; readonly params: unknown }
+/** `afterResponse`: the `turn/start` response frame had been read when this arrived. */
+interface Notice { readonly method: string; readonly params: unknown; readonly afterResponse: boolean }
 
 const obj = (v: unknown): Record<string, unknown> => (v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {});
 
@@ -155,6 +157,8 @@ class NoticeQueue {
   push(n: Notice): void { this.items.push(n); this.wake(); }
   end(reason: CloseReason): void { this.ended ??= reason; this.wake(); }
   get endedBy(): CloseReason | undefined { return this.ended; }
+  /** Notices not yet taken, oldest first. */
+  pending(): readonly Notice[] { return this.items; }
   private wake(): void { const w = this.waiter; this.waiter = undefined; w?.(); }
   async next(): Promise<Notice | undefined> {
     for (;;) {
@@ -228,7 +232,8 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
     onNotification: (method, params) => {
       // Only a live turn/started counts: a cold resume replays the last turn's token usage.
       if (method === 'turn/started') prestart(params);
-      queue.push({ method, params });
+      // TB-3(c) is judged on read order: the response resolves in this reader, observers a microtask later.
+      queue.push({ method, params, afterResponse: client.turnStartResponded });
     },
     onToolCall: (r) => {
       prestart(r.params);
@@ -242,7 +247,6 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
   child.once('close', () => { client.close('eof'); });
 
   let turnId: string | null = null;
-  let responseSeen = false;
   let startedSeen = false;
   let terminal = false;
   const fail = (cls: AppServerFailureClass, category: FailureCategory = 'process_exit'): never => {
@@ -314,17 +318,23 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
     const response = client.request('turn/start', { threadId, input: [{ type: 'text', text: input.prompt, text_elements: [] }] })
       .then((r) => {
         const id = obj(obj(r).turn).id;
-        responseSeen = true;
         if (typeof id !== 'string') return 'mismatch' as const;
         if (turnId === null) { turnId = id; cards?.bindTurn(id); return 'ok' as const; }
         return turnId === id ? 'ok' as const : 'mismatch' as const;
       }, (e: unknown) => (e instanceof RpcError ? 'error' as const : 'closed' as const));
     let responseState: 'ok' | 'mismatch' | 'error' | 'closed' | undefined;
-    const settled = response.then((s) => { responseState = s; queue.push({ method: '__turn_start_response', params: null }); });
+    const settled = response.then((s) => { responseState = s; queue.push({ method: '__turn_start_response', params: null, afterResponse: true }); });
     const checkResponse = (): void => {
       if (responseState === 'error') fail('turn_rejected');
       if (responseState === 'mismatch') fail('turn_binding_mismatch');
       if (responseState === 'closed') fail(execution.exited ? 'child_exit' : 'transport_closed');
+    };
+    /** A different turn starting on our thread. */
+    const otherTurnStarted = (n: Notice): boolean => {
+      if (n.method !== 'turn/started') return false;
+      const p = obj(n.params);
+      const id = obj(p.turn).id;
+      return p.threadId === threadId && typeof id === 'string' && id !== turnId;
     };
 
     let projector: TurnProjector | undefined;
@@ -345,7 +355,7 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
         if (typeof id !== 'string') continue;
         if (turnId === null) { turnId = id; startedSeen = true; cards?.bindTurn(id); }
         else if (id !== turnId) {
-          if (!(responseSeen && startedSeen)) fail('turn_binding_mismatch'); // TB-3(c)
+          if (!(note.afterResponse && startedSeen)) fail('turn_binding_mismatch'); // TB-3(c)
           continue; // TB-4 foreign
         } else startedSeen = true;
       } else {
@@ -362,6 +372,8 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
           input.signal?.throwIfAborted();
           checkResponse();
           if (responseState === undefined) fail('turn_binding_mismatch');
+          // TB-3(c): another turn read before the response, queued while this terminal settled.
+          if (queue.pending().some((q) => !q.afterResponse && otherTurnStarted(q))) fail('turn_binding_mismatch');
           terminal = true; cards?.turnCompleted();
         }
         yield out.event;

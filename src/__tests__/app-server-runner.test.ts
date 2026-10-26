@@ -178,6 +178,78 @@ describe('turn binding (TB-0..TB-3, addendum A1)', () => {
     expect(await stopped(h.executions)).toBe(true);
   });
 
+  // TB-3(c) during terminal settlement: a different turn/started on our thread that
+  // was read before the turn/start response keeps ownership uncertain, wherever it
+  // falls relative to our terminal and however the frames were chunked.
+  const recordingCards = (calls: string[]) => (): AppServerAttemptCards => ({
+    dynamicTools: [], toolsetDigest: 'd',
+    setThread: () => calls.push('setThread'),
+    turnStartEnqueued: () => calls.push('turnStartEnqueued'),
+    bindTurn: (id) => calls.push(`bindTurn:${id}`),
+    turnCompleted: () => calls.push('turnCompleted'),
+    onToolCall: (id) => calls.push(`call:${String(id)}`),
+    close: () => calls.push('close'),
+  });
+  const STREAMED = ['thread.started', 'turn.started', 'item.started', 'item.completed', 'item.completed'];
+
+  it.each([
+    ['terminal-conflict-split', {}, 'turn_binding_mismatch'],
+    ['terminal-conflict-split', { resumeId: 'thr-1' }, 'turn_binding_mismatch'],
+    ['terminal-conflict', {}, 'turn_binding_mismatch'],
+    ['terminal-conflict', { resumeId: 'thr-1' }, 'turn_binding_mismatch'],
+    ['conflict-response', {}, 'turn_binding_mismatch'],
+    ['conflict-response', { resumeId: 'thr-1' }, 'turn_binding_mismatch'],
+    ['terminal-conflict-error-split', {}, 'turn_rejected'],
+    ['terminal-conflict-mismatch-split', {}, 'turn_binding_mismatch'],
+    ['terminal-conflict-no-response', {}, 'turn_binding_mismatch'],
+  ] as const)('%s %o: a conflict read before the response closes as %s, never completed (TB-3(c))', async (scenario, extra, cls) => {
+    const calls: string[] = [];
+    const h = setup(scenario, { ...extra, cards: recordingCards(calls), settleMs: scenario === 'terminal-conflict-no-response' ? 300 : 2_000 });
+    const t0 = performance.now();
+    const r = await drain(startAppServerAttempt(h.input));
+    expect(r.error).toBeInstanceOf(AppServerAttemptFailure);
+    expect((r.error as AppServerAttemptFailure).failureClass).toBe(cls);
+    expect(classifyFailure(r.error).stage).not.toBe('spawn');
+    expect(r.events.some((e) => e.type === 'turn.completed')).toBe(false);
+    if (scenario !== 'terminal-conflict-mismatch-split') expect(r.events.map((e) => e.type)).toEqual(scenario === 'conflict-response' ? ['thread.started', 'turn.started'] : STREAMED);
+    expect(calls).not.toContain('turnCompleted');
+    expect(calls).toContain('close');
+    expect(performance.now() - t0).toBeLessThan(2_000);
+    expect(h.frames().filter((f) => f.method === 'turn/start')).toHaveLength(1);
+    expect(await stopped(h.executions)).toBe(true);
+  });
+
+  it.each([
+    ['terminal-response-conflict', {}],
+    ['terminal-response-conflict', { resumeId: 'thr-1' }],
+    ['terminal-other-thread-split', {}],
+    ['terminal-same-turn-split', {}],
+    ['terminal-same-turn-split', { resumeId: 'thr-1' }],
+  ] as const)('%s %o: activity that is not a conflict before the response still completes', async (scenario, extra) => {
+    const calls: string[] = [];
+    const h = setup(scenario, { ...extra, cards: recordingCards(calls), settleMs: 2_000 });
+    const r = await drain(startAppServerAttempt(h.input));
+    expect(r.error).toBeUndefined();
+    expect(r.events.map((e) => e.type)).toEqual([...STREAMED, 'turn.completed']);
+    expect(calls).toContain('turnCompleted');
+    expect(await stopped(h.executions)).toBe(true);
+  });
+
+  // The abort is observed when the settle wait ends (bounded by settleMs), as before.
+  it('an abort while a conflicted terminal settles fails without completing', async () => {
+    const calls: string[] = [];
+    const ac = new AbortController();
+    const h = setup('terminal-conflict-no-response', { cards: recordingCards(calls), settleMs: 600, signal: ac.signal });
+    setTimeout(() => ac.abort(), 150);
+    const t0 = performance.now();
+    const r = await drain(startAppServerAttempt(h.input));
+    expect(r.error).toBeDefined();
+    expect(r.events.some((e) => e.type === 'turn.completed')).toBe(false);
+    expect(calls).not.toContain('turnCompleted');
+    expect(performance.now() - t0).toBeLessThan(1_500);
+    expect(await stopped(h.executions)).toBe(true);
+  });
+
   it('a held call does not outlive a terminal whose response errors', async () => {
     const calls: string[] = [];
     const cards = (): AppServerAttemptCards => ({

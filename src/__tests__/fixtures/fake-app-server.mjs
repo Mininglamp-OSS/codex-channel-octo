@@ -35,6 +35,9 @@ function terminalFirst() {
   body(); finish();
 }
 
+// Another turn starting on our thread (TB-3(c) conflict while our binding is open).
+const conflict = (threadId = THREAD, id = 'turn-2') => note('turn/started', { threadId, turn: turn(id) });
+
 function body() {
   note('item/started', item({ type: 'commandExecution', id: 'cmd1', command: 'ls', cwd: '/', processId: null, source: 'agent', status: 'inProgress', commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null }));
   note('item/completed', item({ type: 'commandExecution', id: 'cmd1', command: 'ls', cwd: '/', processId: null, source: 'agent', status: 'completed', commandActions: [], aggregatedOutput: 'a', exitCode: 0, durationMs: 1 }));
@@ -56,6 +59,27 @@ function onTurnStart(id) {
       coalesced(() => { terminalFirst(); send({ id, result: { turn: turn('turn-other') } }); }); return;
     case 'terminal-mismatch-split':
       terminalFirst(); later(() => send({ id, result: { turn: turn('turn-other') } })); return;
+    // Our terminal, then a different turn/started on our thread while the terminal settles.
+    case 'terminal-conflict-split':
+      terminalFirst(); later(() => conflict()); setTimeout(() => send({ id, result: { turn: turn(TURN) } }), 120); return;
+    case 'terminal-conflict':
+      coalesced(() => { terminalFirst(); conflict(); send({ id, result: { turn: turn(TURN) } }); }); return;
+    case 'terminal-conflict-error-split':
+      terminalFirst(); later(() => conflict()); setTimeout(() => send({ id, error: { code: -32600, message: 'not submitted' } }), 120); return;
+    case 'terminal-conflict-mismatch-split':
+      terminalFirst(); later(() => conflict()); setTimeout(() => send({ id, result: { turn: turn('turn-other') } }), 120); return;
+    case 'terminal-conflict-no-response':
+      terminalFirst(); later(() => conflict()); return;
+    // The conflict precedes the response, before our terminal, all in one chunk.
+    case 'conflict-response':
+      coalesced(() => { note('turn/started', { threadId: THREAD, turn: turn(TURN) }); conflict(); send({ id, result: { turn: turn(TURN) } }); body(); finish(); }); return;
+    // Controls: the other turn follows the response (TB-4 foreign), runs on another thread, or is our own id again.
+    case 'terminal-response-conflict':
+      coalesced(() => { terminalFirst(); send({ id, result: { turn: turn(TURN) } }); conflict(); }); return;
+    case 'terminal-other-thread-split':
+      terminalFirst(); later(() => conflict('thr-other')); setTimeout(() => send({ id, result: { turn: turn(TURN) } }), 120); return;
+    case 'terminal-same-turn-split':
+      terminalFirst(); later(() => conflict(THREAD, TURN)); setTimeout(() => send({ id, result: { turn: turn(TURN) } }), 120); return;
     case 'terminal-no-response':
       terminalFirst(); return;
     case 'terminal-ok':
