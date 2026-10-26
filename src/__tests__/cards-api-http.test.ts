@@ -52,6 +52,7 @@ const DATA: RegistryData = {
   traceExpanded: true,
   traceCollapsed: false,
   collapsedSummary: "Reasoning in progress",
+  progressText: "1 step so far",
   phases: [{ thought: "—", actions: [{ tool: "Running command", detail: "git", statusGlyph: "…", statusTone: "Accent" }] }],
 };
 

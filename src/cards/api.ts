@@ -633,17 +633,20 @@ export function projectAuthoredCard(authored: AuthoredCard): DisplayAdaptiveCard
   return reject("invalid_card", "profile");
 }
 
-// Template data contract bounds (reference `src/reasoning-process.ts`, E.2):
-// thought nonempty and ≤280 scalars (no 0.4.0 widening), actions nonempty,
-// detail ≤192 and may be empty,
-// timerText ≤128, errorMessage ≤121, reasoningId ≤512; newest 6 phases and
-// 12 actions.
+// Template data contract bounds (reference `src/reasoning-process.ts`, E.2,
+// and the server `ai.reasoning-process@0.4.1` data schema): thought nonempty
+// and ≤280 scalars (no 0.4.0 widening), actions nonempty, tool ≤81, detail
+// nonempty and ≤192, statusGlyph ≤2, title ≤64, statusLabel ≤32,
+// collapsedSummary and progressText ≤160, timerText ≤128, errorTitle ≤64,
+// errorMessage ≤121, reasoningId ≤512; newest 6 phases and 12 actions.
+// `reasoning`/`answering` require progressText, `error` requires errorTitle
+// and errorMessage, and exactly one of traceExpanded/traceCollapsed is true.
 export const REGISTRY_MAX_PHASES = 6;
 export const REGISTRY_MAX_ACTIONS = 12;
 export const REGISTRY_THOUGHT_MAX = 280;
 
-function bounded(value: unknown, field: string, maxRunes: number, nonEmpty = true): string {
-  const s = nonEmpty ? nonEmptyWireString(value, field) : wireString(value, field);
+function bounded(value: unknown, field: string, maxRunes: number): string {
+  const s = nonEmptyWireString(value, field);
   if (runeLength(s) > maxRunes) reject("invalid_card", field);
   return s;
 }
@@ -667,28 +670,31 @@ export function projectRegistryData(state: WireState, data: RegistryData): Regis
     const actions = (rawActions as unknown[]).map((a) => {
       const action = asRecord(a, "data.phases.actions");
       return {
-        tool: nonEmptyWireString(action.tool, "action.tool"),
-        detail: bounded(action.detail, "action.detail", 192, false),
-        statusGlyph: nonEmptyWireString(action.statusGlyph, "action.statusGlyph"),
+        tool: bounded(action.tool, "action.tool", 81),
+        detail: bounded(action.detail, "action.detail", 192),
+        statusGlyph: bounded(action.statusGlyph, "action.statusGlyph", 2),
         statusTone: oneOf(action.statusTone, ["Accent", "Good", "Attention"] as const, "action.statusTone"),
       };
     });
     return { thought: bounded(phase.thought, "phase.thought", REGISTRY_THOUGHT_MAX), actions };
   });
-  if (typeof o.traceExpanded !== "boolean" || typeof o.traceCollapsed !== "boolean") reject("invalid_card", "data.trace");
+  if (typeof o.traceExpanded !== "boolean" || typeof o.traceCollapsed !== "boolean"
+    || o.traceExpanded === o.traceCollapsed) reject("invalid_card", "data.trace");
+  if ((state === "reasoning" || state === "answering") && o.progressText === undefined) reject("invalid_card", "data.progressText");
+  if (state === "error" && (o.errorTitle === undefined || o.errorMessage === undefined)) reject("invalid_card", "data.error");
   return compact({
     reasoningId: bounded(o.reasoningId, "data.reasoningId", 512),
     state,
-    title: nonEmptyWireString(o.title, "data.title"),
-    statusLabel: nonEmptyWireString(o.statusLabel, "data.statusLabel"),
+    title: bounded(o.title, "data.title", 64),
+    statusLabel: bounded(o.statusLabel, "data.statusLabel", 32),
     statusTone: oneOf(o.statusTone, ["Accent", "Good", "Warning", "Attention"] as const, "data.statusTone"),
     timerText: bounded(o.timerText, "data.timerText", 128),
     traceExpanded: o.traceExpanded as boolean,
     traceCollapsed: o.traceCollapsed as boolean,
-    collapsedSummary: nonEmptyWireString(o.collapsedSummary, "data.collapsedSummary"),
-    progressText: o.progressText === undefined ? undefined : nonEmptyWireString(o.progressText, "data.progressText"),
+    collapsedSummary: bounded(o.collapsedSummary, "data.collapsedSummary", 160),
+    progressText: o.progressText === undefined ? undefined : bounded(o.progressText, "data.progressText", 160),
     phases,
-    errorTitle: o.errorTitle === undefined ? undefined : nonEmptyWireString(o.errorTitle, "data.errorTitle"),
+    errorTitle: o.errorTitle === undefined ? undefined : bounded(o.errorTitle, "data.errorTitle", 64),
     errorMessage: o.errorMessage === undefined ? undefined : bounded(o.errorMessage, "data.errorMessage", 121),
   });
 }
