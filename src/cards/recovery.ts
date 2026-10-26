@@ -116,12 +116,15 @@ type RefRead = { readonly kind: "ok"; readonly ref: string } | { readonly kind: 
 /**
  * Read the installation reference without following a symlink: a regular
  * file, not group/other accessible (POSIX), holding one safe reference with
- * at most one trailing newline.
+ * at most one trailing newline. The open is `O_NONBLOCK` so a FIFO with no
+ * writer cannot stall startup; that alone is not the guard — the `fstat` of
+ * the opened fd rejects every FIFO, device and directory, and the bounded read
+ * must match the size of that same regular file.
  */
 function readInstallationRef(path: string): RefRead {
   let fd: number;
   try {
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "missing" } : { kind: "invalid" };
   }
@@ -137,7 +140,8 @@ function readInstallationRef(path: string): RefRead {
       len += n;
       if (len > MAX_REF_FILE_BYTES) return { kind: "invalid" };
     }
-    const text = buf.subarray(0, len).toString("utf8");
+    if (len !== st.size) return { kind: "invalid" };
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(buf.subarray(0, len));
     const ref = text.endsWith("\n") ? text.slice(0, -1) : text;
     return isSafeStoreRef(ref) ? { kind: "ok", ref } : { kind: "invalid" };
   } catch {

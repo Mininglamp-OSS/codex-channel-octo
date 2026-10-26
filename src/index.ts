@@ -226,20 +226,10 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       console.log(`[codex-channel-octo] ${label}Cleaned ${cleaned} expired session(s)`);
     }
 
-    // --- Card subsystem (automatic progress only). Inert unless this Bot was
-    // provisioned (WP-18) and its store opens ready; the ordinary path never
-    // depends on it. ---
     // Every Bot's model-command exposure feeds the gateway-wide explicit-tool gate (G-d).
     const codexHome = config.sdk.codexHome ?? config.sdk.env?.CODEX_HOME ?? process.env.CODEX_HOME;
     releaseExposure = registerGatewayExposure({ sandboxMode: resolveSandbox(config.sdk), codexHome,
       apiKeyConfigured: Boolean(config.sdk.codexApiKey), sdkEnvAuthMarkers: hasCodexAuthEnvMarker(config.sdk.env) });
-    const cardRuntime = config.cards?.disable !== true
-      ? await openCardRuntime({ adapter, dataDir: config.dataDir, apiUrl: config.apiUrl, botToken: config.botToken,
-        bootstrapExcludedRoots: bootstrapExcludedRoots({ cwdBase: config.cwdBase ?? config.cwd,
-          additionalDirectories: config.sdk.additionalDirectories, codexHome }) })
-      : undefined;
-    cardRuntimeForCleanup = cardRuntime;
-    if (cardRuntime) console.log(`[codex-channel-octo] ${label}Card runtime ready (automatic progress)`);
 
     // --- Group context ---
     const groupContext = new GroupContext(adapter, config.context.maxContextChars);
@@ -255,6 +245,20 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // Phase 1: register over REST (gets botId) — does NOT open the socket yet, so
     // no message can arrive before the handler below is installed.
     await gateway.register();
+
+    // --- Card subsystem (automatic progress only). Inert unless this Bot was
+    // provisioned (WP-18) and its store opens ready; the ordinary path never
+    // depends on it. Opened only now that register() holds the per-Bot lock:
+    // migration, backup and ledger/restart recovery are durable effects that a
+    // competing instance must never perform. ---
+    const cardRuntime = config.cards?.disable !== true
+      ? await openCardRuntime({ adapter, dataDir: config.dataDir, apiUrl: config.apiUrl, botToken: config.botToken,
+        bootstrapExcludedRoots: bootstrapExcludedRoots({ cwdBase: config.cwdBase ?? config.cwd,
+          additionalDirectories: config.sdk.additionalDirectories, codexHome }) })
+      : undefined;
+    cardRuntimeForCleanup = cardRuntime;
+    if (cardRuntime) console.log(`[codex-channel-octo] ${label}Card runtime ready (automatic progress)`);
+
     store.recoverInterruptedTurns();
     console.log(`[codex-channel-octo] quarantined sessions=${store.quarantinedTurnCount()}`);
     console.log(`[codex-channel-octo] ${label}Bot registered: id=${gateway.botId}`);
@@ -335,11 +339,17 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // Release the durable resources acquired above so a failed bot doesn't leak
     // them in multi-bot mode (the surviving bots keep the process alive).
     clearInterval(cwdCleanupTimer);
+    // Card resources drain while the lock is still held, as in shutdown(); a
+    // close failure must not keep the lock or mask the startup error.
+    try {
+      await cardRuntimeForCleanup?.close('shutdown');
+    } catch {
+      /* best effort */
+    }
+    releaseExposure?.();
     // register() releases its own lock when IT fails; this covers the window
     // where register() succeeded (lock held) but a later step threw.
     releaseGatewayLock?.();
-    await cardRuntimeForCleanup?.close('shutdown');
-    releaseExposure?.();
     try {
       storeForCleanup?.close();
     } catch {
