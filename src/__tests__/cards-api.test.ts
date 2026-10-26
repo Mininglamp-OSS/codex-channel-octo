@@ -220,13 +220,19 @@ describe("client transport", () => {
     expect(calls[0].init.body).toBe(ack.request.body);
   });
 
-  it("treats 2xx without identity or with a foreign client id as an unconfirmed send", async () => {
-    for (const body of ["", "{}", '{"message_id":"abc"}', "[1]", `{"message_id":1,"client_msg_no":"other"}`, "not json"]) {
+  it("treats 2xx without a valid identity as an unconfirmed send", async () => {
+    for (const body of ["", "{}", '{"message_id":"abc"}', "[1]", '{"message_id":1,"client_msg_no":7}', "not json"]) {
       const { client } = api(() => json(200, body));
       const err = await failure(client.sendRegistry({ route: ROUTE, clientMsgNo: CLIENT, ref: REF, state: "reasoning", data: DATA }));
       expect(err).toBeInstanceOf(OctoApiError);
       expect(classifySendFailure(err)).toBe("ambiguous");
     }
+  });
+
+  it("acknowledges a send whose client_msg_no is server-assigned rather than echoed", async () => {
+    const { client } = api(() => json(200, `{"message_id":${BIG_ID},"client_msg_no":"other","message_seq":5}`));
+    const ack = await client.sendRegistry({ route: ROUTE, clientMsgNo: CLIENT, ref: REF, state: "reasoning", data: DATA });
+    expect(ack).toMatchObject({ messageId: BIG_ID, clientMsgNo: CLIENT, serverClientMsgNo: "other", messageSeq: 5 });
   });
 
   it("classifies send, edit and profile failures per §5.3", async () => {

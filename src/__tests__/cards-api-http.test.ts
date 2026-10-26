@@ -9,6 +9,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CardRequestError, classifySendFailure, createCardApi, OctoApiError, type CardApi } from "../cards/api.js";
 import type { DisplayAdaptiveCard, RegistryData } from "../cards/contracts.js";
+import { SERVER_EDIT_ACK, SERVER_GENERATED_CLIENT_MSG_NO, serverSendAck } from "./fixtures/octo-server-acks.js";
 
 const TOKEN = "loopback_fixture_token_7f3a";
 const CLIENT = "0b6f1d2e-3c4a-4b5c-8d9e-0f1a2b3c4d5e";
@@ -70,20 +71,17 @@ let hanging: ServerResponse[] = [];
 
 beforeAll(async () => {
   foreign = await startServer((_req, _body, res) => send(res, 200, `{"message_id":"1"}`));
-  octo = await startServer((req, body, res) => {
+  octo = await startServer((req, _body, res) => {
     const path = req.url ?? "";
     if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(res, 401, "{}");
     switch (path) {
       case "/base/v1/bot/card/profile":
         return send(res, 200, JSON.stringify({ available: true, enabled: true, profiles: ["octo/v1", "octo/v2"], card_version: "1.5" }));
-      case "/base/v1/bot/sendMessage": {
-        const parsed = JSON.parse(body) as { client_msg_no: string };
-        return send(res, 200, `{"message_id":${BIG_ID},"client_msg_no":"${parsed.client_msg_no}","message_seq":3}`);
-      }
-      case "/base/v1/bot/message/edit": {
-        const parsed = JSON.parse(body) as { message_id: string };
-        return send(res, 200, `{"message_id":${parsed.message_id}}`);
-      }
+      // Real Bot API success bodies: server-assigned client_msg_no, bare edit status.
+      case "/base/v1/bot/sendMessage":
+        return send(res, 200, serverSendAck(BIG_ID, SERVER_GENERATED_CLIENT_MSG_NO, 3));
+      case "/base/v1/bot/message/edit":
+        return send(res, 200, SERVER_EDIT_ACK);
       case "/base/v1/bot/events":
         return send(res, 200, JSON.stringify({ results: [{ event_id: 11, event_type: "card_action", event_data: { action_id: "go" } }] }));
       case "/base/v1/bot/events/11/ack":
@@ -138,6 +136,8 @@ describe("card API over loopback HTTP", () => {
       ref: { id: "ai.reasoning-process", version: "0.4.0" }, state: "reasoning", data: DATA,
     });
     expect(registry.messageId).toBe(BIG_ID);
+    expect(registry.clientMsgNo).toBe(CLIENT);
+    expect(registry.serverClientMsgNo).toBe(SERVER_GENERATED_CLIENT_MSG_NO);
     expect(registry.messageSeq).toBe(3);
     const received = octo.seen.filter((s) => s.url === "/base/v1/bot/sendMessage");
     expect(received.at(-1)?.body).toBe(registry.request.body);

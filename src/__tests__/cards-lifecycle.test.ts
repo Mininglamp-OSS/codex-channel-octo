@@ -652,3 +652,55 @@ describe("every automatic frame on the wire satisfies the server 0.4.1 data sche
     for (const data of frames) expect(reasoningSchemaErrors(data)).toEqual([]);
   });
 });
+
+describe("real Bot API acknowledgements (server-assigned client_msg_no, bare edit status)", () => {
+  const FIRST_ID = "900000000000000001";
+
+  it("persists the exact int64 id, activates the card and completes ordered edits and the terminal", async () => {
+    const r = rig();
+    const t = await activeTurn(r);
+    const status = r.queue.status("card-1")!;
+    expect(status).toMatchObject({ phase: "active", messageId: FIRST_ID });
+    const active = r.store.getMessage(status.storeCardId as string)!;
+    expect(active).toMatchObject({ messageId: FIRST_ID, clientMsgNo: "00000000-0000-4000-8000-000000000001", state: "active" });
+
+    t.signal({ t: "delivery_start" });
+    await r.time.advance(800);
+    await finish(r, t, report(2, 2));
+
+    expect(r.sends()).toHaveLength(1);
+    const edits = r.net.edits().map((e) => ({ ...(JSON.parse(e.body) as { message_id: string; state: string }), seq: seqOf(e) }));
+    expect(edits.map((e) => [e.message_id, e.state, e.seq])).toEqual([[FIRST_ID, "answering", 1], [FIRST_ID, "completed", 2]]);
+    expect(t.inspect().terminal).toBe("completed");
+    expect(r.store.getMessage(status.storeCardId as string)).toMatchObject({
+      messageId: FIRST_ID, seqReserved: 2, seqAcked: 2, state: "done", terminalReason: "completed",
+    });
+    const outcomes = r.metrics.filter((m) => m.name === "card_send_total" || m.name === "card_edit_total").map((m) => [m.name, m.labels.code]);
+    expect(outcomes).toEqual([["card_send_total", "acked"], ["card_edit_total", "acked"], ["card_edit_total", "acked"]]);
+  });
+
+  it("a truly ambiguous 200 (no valid id) is never resent or edited and suspends later automatic cards", async () => {
+    const r = rig();
+    r.net.reply({ status: 200, body: { message_id: "abc", client_msg_no: "server-assigned" } });
+    const t = r.turn();
+    await r.time.advance(0);
+    t.observe(start());
+    t.observe(cmd("c1"));
+    await r.time.advance(800);
+    const storeCardId = r.queue.status("card-1")?.storeCardId as string;
+    t.signal({ t: "delivery_start" });
+    await finish(r, t, report(1, 1));
+    expect(r.sends()).toHaveLength(1);
+    expect(r.edits()).toHaveLength(0);
+    expect(r.store.getMessage(storeCardId)).toMatchObject({ messageId: null, seqAcked: 0, state: "ambiguous" });
+
+    const next = r.turn();
+    await r.time.advance(0);
+    next.observe(start());
+    next.observe(cmd("c2"));
+    await r.time.advance(800);
+    await finish(r, next, report(1, 1));
+    expect(r.sends()).toHaveLength(1);
+    expect(r.edits()).toHaveLength(0);
+  });
+});
