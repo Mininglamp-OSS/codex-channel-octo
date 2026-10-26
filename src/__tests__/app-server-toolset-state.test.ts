@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { createAdapter } from '../db-adapter.js';
 import { SessionStore } from '../session-store.js';
-import { cardAvailability } from '../agent-bridge.js';
+import { cardAvailability, legacyToolsetNotice, LEGACY_TOOLSET_NOTICE } from '../agent-bridge.js';
 import { appServerToolset } from '../cards/tool-host.js';
 
 const dirs: string[] = [];
@@ -76,5 +76,34 @@ describe('R1 availability line', () => {
 
   it('a thread with tools while cards are disabled for the bot says so (T3)', () => {
     expect(cardAvailability(false, true, current)).toMatch(/disabled for this bot/);
+  });
+});
+
+describe('D3 legacy-thread turn notice', () => {
+  const current = appServerToolset().digest;
+  it('is set exactly on the R1 branch: cards offered on a resumed thread without the current toolset', () => {
+    expect(legacyToolsetNotice(true, true, null)).toBe(LEGACY_TOOLSET_NOTICE);
+    expect(legacyToolsetNotice(true, true, 'v0:old')).toBe(LEGACY_TOOLSET_NOTICE);
+  });
+
+  it('is absent for new threads, current threads and card-off, unprovisioned or policy-denied turns', () => {
+    for (const [offered, resumed, stored] of [
+      [true, false, null], [true, true, current], [false, false, null],
+      [false, true, null], [false, true, 'v0:old'], [false, true, current],
+    ] as const) expect(legacyToolsetNotice(offered, resumed, stored)).toBeUndefined();
+  });
+
+  it('leaves the R1 developerInstructions line unchanged and does not log', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    legacyToolsetNotice(true, true, null);
+    expect(warn).not.toHaveBeenCalled();
+    expect(cardAvailability(true, true, null)).toBe('Explicit card tools are not available in this conversation because it was started before the current card toolset. Reply in plain text.');
+  });
+
+  it('is the agreed text: anchored, no secrets, paths or addresses, no reset instruction', () => {
+    expect(LEGACY_TOOLSET_NOTICE).toBe('[Card tools notice — gateway, not user text]\n'
+      + 'This resumed conversation was started before explicit card tools were available, so none are available in it. '
+      + 'Reply through ordinary messages. A new or reset conversation may offer card tools if the current Bot policy permits.');
+    expect(LEGACY_TOOLSET_NOTICE).not.toMatch(/https?:|\/|token|credential|account|progress card/i);
   });
 });

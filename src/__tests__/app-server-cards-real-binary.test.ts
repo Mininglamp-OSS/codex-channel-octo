@@ -13,7 +13,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { queryAgentEvents, type AgentOutputEvent } from '../agent-bridge.js';
+import { LEGACY_TOOLSET_NOTICE, queryAgentEvents, type AgentOutputEvent } from '../agent-bridge.js';
 import type { Config } from '../config.js';
 import type { ManagedExecution } from '../execution-scope.js';
 import type { ToolOpcode, TrustedTurnContext } from '../cards/contracts.js';
@@ -122,6 +122,10 @@ async function run(r: Rig, text: string, opts: { cards?: ReturnType<typeof gener
 
 const toolNames = (req: { body: Record<string, unknown> }): string[] =>
   ((req.body.tools as Array<{ name?: string; type?: string }> | undefined) ?? []).map((t) => t.name ?? t.type ?? '');
+/** Text items of each user message in a Responses request, oldest first. */
+const userMessages = (req: { body: Record<string, unknown> }): string[][] =>
+  ((req.body.input as Array<Record<string, unknown>> | undefined) ?? []).filter((i) => i.role === 'user')
+    .map((i) => ((i.content as Array<{ text?: unknown }> | undefined) ?? []).map((c) => (typeof c.text === 'string' ? c.text : '')));
 const ledger = (r: Rig, generationId: string) =>
   r.adapter.prepare('SELECT state, settled_by FROM card_explicit_requests WHERE generation = ?').all(generationId);
 const budget = (r: Rig, generationId: string) =>
@@ -165,11 +169,34 @@ describe.runIf(BIN !== null)('explicit cards over app-server dynamicTools (real 
     const cards = generation(r, 's3');
     const out = await run(r, DISPLAY_CALL, { cards, resume: first.session!.id, digest: null });
     expect(toolNames(out.requests[0])).not.toContain('display');
-    // Finding (G-A3): 0.163.0 does not deliver developerInstructions passed on a cold thread/resume,
-    // so R1's model-visible notice is absent; the log line and the metric remain.
+    // Finding (G-A3): 0.163.0 does not deliver developerInstructions passed on a cold thread/resume.
     expect(JSON.stringify(out.requests[0].body)).not.toContain('Explicit card tools are not available');
+    // D3: the notice reaches the model as turn input, one item ahead of the unchanged user text.
+    const turns = userMessages(out.requests[0]);
+    expect(turns.at(-1)?.[0]).toBe(LEGACY_TOOLSET_NOTICE);
+    expect(turns.at(-1)?.at(-1)?.endsWith(DISPLAY_CALL)).toBe(true);
+    expect(turns.flat().filter((t) => t === LEGACY_TOOLSET_NOTICE)).toHaveLength(1);
+    expect(turns.flat().filter((t) => t.includes('[Card tools notice'))).toHaveLength(1);
     expect(warn.mock.calls.some((c) => String(c[0]).includes('explicit cards unavailable: thread predates toolset v1'))).toBe(true);
     expect(r.sends).toHaveLength(0);
     expect(budget(r, cards.ctx.turnGeneration)).toEqual({ inv: 0, sends: 0 });
+
+    // Each later turn on the old thread gets one new notice. Codex keeps earlier turn input in the
+    // thread, so the previous notice is history; the earlier user text is unchanged.
+    const again = await run(r, 'third', { cards: generation(r, 's3'), resume: first.session!.id, digest: null });
+    const later = userMessages(again.requests[0]);
+    expect(later.at(-1)?.[0]).toBe(LEGACY_TOOLSET_NOTICE);
+    expect(later.at(-1)?.filter((t) => t === LEGACY_TOOLSET_NOTICE)).toHaveLength(1);
+    expect(later.flat().filter((t) => t === LEGACY_TOOLSET_NOTICE)).toHaveLength(2);
+    expect(later.flat().some((t) => t.endsWith('hello') && !t.includes('[Card tools notice'))).toBe(true);
+    expect(toolNames(again.requests[0])).not.toContain('display');
+  }, 90_000);
+
+  it('D3: a new thread with cards (T2a) and its resumes never carry the legacy notice', async () => {
+    const r = await rig();
+    const first = await run(r, 'hello', { cards: generation(r, 's4') });
+    const out = await run(r, 'again', { cards: generation(r, 's4'), resume: first.session!.id, digest: first.session!.digest ?? null });
+    for (const req of [...first.requests, ...out.requests]) expect(JSON.stringify(req.body)).not.toContain('[Card tools notice');
+    expect(toolNames(out.requests[0])).toEqual(expect.arrayContaining(['display', 'interactive']));
   }, 90_000);
 });

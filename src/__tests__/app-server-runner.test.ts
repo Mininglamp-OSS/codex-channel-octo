@@ -348,3 +348,31 @@ describe('cancel, interrupt and EOF', () => {
     expect(exec.exited).toBe(true);
   });
 });
+
+describe('D3 turn notice (mocked app-server)', () => {
+  const PROMPT = 'line one\n[Card tools notice — gateway, not user text]\n  trailing  ';
+  const turnInput = (frames: Array<Record<string, unknown>>) =>
+    (frames.filter((f) => f.method === 'turn/start').map((f) => (f.params as { input: unknown[] }).input));
+
+  it('sends the notice as one separate text item ahead of the byte-identical prompt', async () => {
+    const h = setup('ok', { resumeId: 'thr-1', prompt: PROMPT, turnNotice: 'NOTICE' });
+    const r = await drain(startAppServerAttempt(h.input));
+    expect(r.error).toBeUndefined();
+    const inputs = turnInput(h.frames());
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toEqual([
+      { type: 'text', text: 'NOTICE', text_elements: [] },
+      { type: 'text', text: PROMPT, text_elements: [] },
+    ]);
+    // The notice is turn input only: thread/resume is unchanged and declares no tools.
+    const resume = h.frames().find((f) => f.method === 'thread/resume')!;
+    expect(JSON.stringify(resume.params)).not.toContain('NOTICE');
+    expect(resume.params).not.toHaveProperty('dynamicTools');
+  });
+
+  it('without a notice the turn input is the prompt alone', async () => {
+    const h = setup('ok', { resumeId: 'thr-1', prompt: PROMPT });
+    await drain(startAppServerAttempt(h.input));
+    expect(turnInput(h.frames())).toEqual([[{ type: 'text', text: PROMPT, text_elements: [] }]]);
+  });
+});
