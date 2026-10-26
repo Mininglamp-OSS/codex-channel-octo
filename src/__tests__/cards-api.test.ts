@@ -413,7 +413,7 @@ describe("typed profile boundary", () => {
     templating: {
       supported: true, wire: "template-ref/v1", extension: { x: 1 },
       templates: [{ id: "ai.reasoning-process", version: "0.4.0", owner: "x",
-        views: [{ name: "active", states: ["reasoning", "answering"], wire_profile: "v2", submit_actions: [], hint: "y" }] }],
+        views: [{ name: "active", states: ["reasoning", "answering"], wire_profile: "octo/v2", submit_actions: [], hint: "y" }] }],
     },
     config: CONFIG,
     future_capability: { anything: true },
@@ -433,7 +433,7 @@ describe("typed profile boundary", () => {
       templating: {
         supported: true, wire: "template-ref/v1",
         templates: [{ id: "ai.reasoning-process", version: "0.4.0",
-          views: [{ name: "active", states: ["reasoning", "answering"], wire_profile: "v2", submit_actions: [] }] }],
+          views: [{ name: "active", states: ["reasoning", "answering"], wire_profile: "octo/v2", submit_actions: [] }] }],
       },
       config: CONFIG,
     });
@@ -444,8 +444,8 @@ describe("typed profile boundary", () => {
   it("passes missing fields through as absent for the policy parser", async () => {
     expect(await api(() => json(200, {})).client.getProfile()).toEqual({});
     expect(await api(() => json(200, { available: true })).client.getProfile()).toEqual({ available: true });
-    const views = projectCardProfile({ templating: { templates: [{ id: "t", version: "1", views: [{ name: "result", wire_profile: "v1" }] }] } });
-    expect(views.templating?.templates?.[0].views[0]).toEqual({ name: "result", states: [], wire_profile: "v1", submit_actions: [] });
+    const views = projectCardProfile({ templating: { templates: [{ id: "t", version: "1", views: [{ name: "result", wire_profile: "octo/v1" }] }] } });
+    expect(views.templating?.templates?.[0].views[0]).toEqual({ name: "result", states: [], wire_profile: "octo/v1", submit_actions: [] });
     // Non-reasoning template refs are not restricted here; selection is a later package.
     expect(projectCardProfile({ config: { ...CONFIG, reasoning_template_ref: { id: "other.template", version: "9" } } }).config?.reasoning_template_ref)
       .toEqual({ id: "other.template", version: "9" });
@@ -482,7 +482,7 @@ describe("typed profile boundary", () => {
       [{ limits: { max_nodes: "200" } }, "limits_type"],
       [{ limits: [] }, "limits_type"],
       [{ templating: { supported: "true" } }, "templating_type"],
-      [{ templating: { templates: [{ id: "t", version: "1", views: [{ name: 1, wire_profile: "v1" }] }] } }, "templating_type"],
+      [{ templating: { templates: [{ id: "t", version: "1", views: [{ name: 1, wire_profile: "octo/v1" }] }] } }, "templating_type"],
     ];
     for (const [body, detail] of bad) {
       const err = await failure(api(() => json(200, body)).client.getProfile());

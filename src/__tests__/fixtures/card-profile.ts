@@ -1,6 +1,6 @@
 import type { CardProfileWire } from "../../cards/contracts.js";
 
-/** Synthetic contract fixture; no server discovery or live permission evidence. */
+/** Synthetic contract fixture; no live evidence. View profiles use the canonical server names; see card-profile-live.ts for the observed body. */
 export function profile(overrides: Partial<CardProfileWire> = {}): CardProfileWire {
   return {
     config: { card_enabled: true, reasoning_enabled: true,
@@ -12,9 +12,9 @@ export function profile(overrides: Partial<CardProfileWire> = {}): CardProfileWi
     actions: ["Action.OpenUrl", "Action.ToggleVisibility", "Action.CopyToClipboard", "Action.Submit"],
     templating: { supported: true, wire: "template-ref/v1", templates: [
       { id: "ai.reasoning-process", version: "0.4.0", views: [
-        { name: "active", wire_profile: "v2", states: ["reasoning", "answering"], submit_actions: [] },
-        { name: "error", wire_profile: "v2", states: ["error"], submit_actions: [] },
-        { name: "result", wire_profile: "v1", states: ["completed", "stopped"], submit_actions: [] },
+        { name: "active", wire_profile: "octo/v2", states: ["reasoning", "answering"], submit_actions: [] },
+        { name: "error", wire_profile: "octo/v2", states: ["error"], submit_actions: [] },
+        { name: "result", wire_profile: "octo/v1", states: ["completed", "stopped"], submit_actions: [] },
       ] },
     ] },
     ...overrides,

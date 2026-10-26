@@ -1534,3 +1534,116 @@ describe('stranded sending sessions: fixed-deadline expiry releases capacity', (
     a.close();
   });
 });
+
+describe('markTerminal: durable automatic terminal (WP-06 correction)', () => {
+  function activeAutomatic(name: string, kind: 'automatic' | 'display' = 'automatic'): string {
+    const r = store.reserveMessage({ kind, binding, bodyDigest: `digest-${name}`, clientMsgNo: `cmn-${name}` });
+    if (r.kind !== 'reserved') throw new Error('reserve failed');
+    expect(store.ackMessage({ cardId: r.cardId, messageId: `msg-${name}`, currentResetEpoch: 0, policyAllows: true }))
+      .toEqual({ kind: 'bound', admittable: false });
+    return r.cardId;
+  }
+
+  it('active → done with terminal_reason completed, terminal_at, retain_until and updated_at', () => {
+    const id = activeAutomatic('a');
+    now = T0 + 5000;
+    expect(store.markTerminal(id, 'completed')).toEqual({ kind: 'updated' });
+    const row = store.getMessage(id)!;
+    expect(row).toMatchObject({ state: 'done', terminalReason: 'completed', terminalAt: T0 + 5000, retainUntil: T0 + 5000 + DAY, messageId: 'msg-a' });
+    const updated = (adapter.prepare('SELECT updated_at FROM card_messages WHERE card_id = ?').get(id) as { updated_at: number }).updated_at;
+    expect(updated).toBe(T0 + 5000);
+  });
+
+  for (const reason of ['failed', 'interrupted', 'timed_out', 'policy_revoked'] as const) {
+    it(`active → error with terminal_reason ${reason}`, () => {
+      const id = activeAutomatic(reason);
+      expect(store.markTerminal(id, reason)).toEqual({ kind: 'updated' });
+      expect(store.getMessage(id)).toMatchObject({ state: 'error', terminalReason: reason });
+    });
+  }
+
+  it('repeating the same outcome is idempotent and does not move terminal_at', () => {
+    const id = activeAutomatic('idem');
+    expect(store.markTerminal(id, 'timed_out')).toEqual({ kind: 'updated' });
+    const first = store.getMessage(id)!;
+    now = T0 + 60_000;
+    expect(store.markTerminal(id, 'timed_out')).toEqual({ kind: 'already_terminal' });
+    expect(store.getMessage(id)).toEqual(first);
+  });
+
+  it('a conflicting terminal outcome is absorbed with no mutation', () => {
+    const id = activeAutomatic('conflict');
+    expect(store.markTerminal(id, 'completed')).toEqual({ kind: 'updated' });
+    const before = store.getMessage(id)!;
+    for (const other of ['failed', 'interrupted', 'timed_out', 'policy_revoked'] as const) {
+      expect(store.markTerminal(id, other)).toEqual({ kind: 'invalid_state', state: 'done' });
+    }
+    expect(store.getMessage(id)).toEqual(before);
+    const err = activeAutomatic('conflict-2');
+    store.markTerminal(err, 'failed');
+    expect(store.markTerminal(err, 'completed')).toEqual({ kind: 'invalid_state', state: 'error' });
+    expect(store.markTerminal(err, 'timed_out')).toEqual({ kind: 'invalid_state', state: 'error' });
+    expect(store.getMessage(err)).toMatchObject({ state: 'error', terminalReason: 'failed' });
+  });
+
+  it('rejects sending and ambiguous rows: N2 is never lifted and no outcome is invented', () => {
+    const sending = store.reserveMessage({ kind: 'automatic', binding, bodyDigest: 'd-s', clientMsgNo: 'cmn-s' });
+    if (sending.kind !== 'reserved') throw new Error('fixture');
+    expect(store.markTerminal(sending.cardId, 'completed')).toEqual({ kind: 'invalid_state', state: 'sending' });
+    const amb = store.reserveMessage({ kind: 'automatic', binding, bodyDigest: 'd-a', clientMsgNo: 'cmn-amb' });
+    if (amb.kind !== 'reserved') throw new Error('fixture');
+    store.markSendAmbiguous(amb.cardId);
+    expect(store.markTerminal(amb.cardId, 'failed')).toEqual({ kind: 'invalid_state', state: 'ambiguous' });
+    expect(store.unresolvedSendKinds()).toEqual(['automatic']);
+    expect(store.getMessage(sending.cardId)?.terminalAt).toBeNull();
+    expect(store.getMessage(amb.cardId)?.terminalAt).toBeNull();
+  });
+
+  it('rejects display and interactive kinds and other terminal rows', () => {
+    const display = activeAutomatic('disp', 'display');
+    expect(store.markTerminal(display, 'completed')).toEqual({ kind: 'invalid_state', state: 'active' });
+    expect(store.getMessage(display)?.state).toBe('active');
+    const inter = pendingSession('inter');
+    expect(store.markTerminal(inter.cardId, 'completed')).toEqual({ kind: 'invalid_state', state: 'active' });
+    const failed = store.reserveMessage({ kind: 'automatic', binding, bodyDigest: 'd-f', clientMsgNo: 'cmn-f' });
+    if (failed.kind !== 'reserved') throw new Error('fixture');
+    store.markSendFailed(failed.cardId);
+    expect(store.markTerminal(failed.cardId, 'failed')).toEqual({ kind: 'invalid_state', state: 'error' });
+    expect(store.markTerminal('missing', 'completed')).toEqual({ kind: 'not_found' });
+  });
+
+  it('rejects the interactive-only expired reason and unknown reasons as invalid input', () => {
+    const id = activeAutomatic('bad');
+    expect(() => store.markTerminal(id, 'expired')).toThrow(CardStoreError);
+    expect(() => store.markTerminal(id, 'nope' as never)).toThrow(CardStoreError);
+    expect(store.getMessage(id)?.state).toBe('active');
+  });
+
+  it('a terminal row stops further sequence reservation', () => {
+    const id = activeAutomatic('seq');
+    expect(store.reserveSequence(id)).toEqual({ kind: 'reserved', seq: 1 });
+    expect(store.ackSequence(id, 1)).toEqual({ kind: 'acked', seqAcked: 1 });
+    store.markTerminal(id, 'completed');
+    expect(store.reserveSequence(id)).toEqual({ kind: 'invalid_state', state: 'done' });
+  });
+
+  it('cleanup prunes a durable terminal only after retention; a nonterminal active row is never pruned', () => {
+    const done = activeAutomatic('prune');
+    const live = activeAutomatic('live');
+    store.markTerminal(done, 'completed');
+    now = T0 + DAY - 1;
+    expect(store.cleanup().messages).toBe(0);
+    now = T0 + DAY + 1;
+    expect(store.cleanup().messages).toBe(1);
+    expect(store.getMessage(done)).toBeNull();
+    expect(store.getMessage(live)?.state).toBe('active');
+    expect(store.checkInvariants()).toEqual([]);
+  });
+
+  it('a retired store refuses without touching SQL', () => {
+    const id = activeAutomatic('retired');
+    store.retire();
+    expect(() => store.markTerminal(id, 'completed')).toThrow(CardStoreError);
+    expect(newStore().getMessage(id)?.state).toBe('active');
+  });
+});
