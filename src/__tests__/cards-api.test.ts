@@ -528,12 +528,18 @@ describe("Registry phase shapes", () => {
     route: ROUTE, clientMsgNo: CLIENT, ref: REF, state: "reasoning", data: { ...DATA, phases } as RegistryData,
   });
 
-  it("accepts a tool-only frame with a nonempty neutral thought label and an empty detail", () => {
+  it("accepts a tool-only frame with a nonempty neutral thought label", () => {
     const phases = [
       { thought: "—", actions: [action] },
-      { thought: "x", actions: [{ ...action, detail: "" }] },
+      { thought: "x", actions: [{ ...action }] },
     ];
     expect(JSON.parse(send(phases).body).payload.data.phases).toEqual(phases);
+  });
+
+  it("rejects an empty or blank action detail (server schema minLength 1)", () => {
+    for (const detail of ["", " "]) {
+      expect(() => send([{ thought: "x", actions: [{ ...action, detail }] }])).toThrow(CardRequestError);
+    }
   });
 
   it("rejects blank wire thoughts and actionless phases with fixed safe fields", () => {

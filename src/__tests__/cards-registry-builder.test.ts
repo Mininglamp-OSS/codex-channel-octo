@@ -46,7 +46,7 @@ describe("lifecycle mapping (AC-008.1, PRD §7.4)", () => {
     answering: ["active", "answering", "Answering"],
     completed: ["result", "completed", "Completed"],
     failed: ["error", "error", "Failed"],
-    interrupted: ["error", "error", "Interrupted; outcome needs review"],
+    interrupted: ["error", "error", "Interrupted; needs review"],
     timed_out: ["error", "error", "Timed out"],
     policy_revoked: ["error", "error", "Unavailable by policy"],
   };
@@ -118,7 +118,7 @@ describe("buildProgressFrame", () => {
       { tool: "Command", detail: "git", statusGlyph: "…", statusTone: "Accent" },
       { tool: "File change", detail: "3 files", statusGlyph: "✗", statusTone: "Attention" },
       { tool: "Search", detail: "example.com", statusGlyph: "✓", statusTone: "Good" },
-      { tool: "Tool", detail: "", statusGlyph: "…", statusTone: "Accent" },
+      { tool: "Tool", detail: "Tool call", statusGlyph: "…", statusTone: "Accent" },
     ]);
   });
 
@@ -178,8 +178,8 @@ describe("minimal closure frame (AC-007.5)", () => {
   it("carries only the terminal status and reason: no activity, details or counts", () => {
     const frame = buildClosureFrame("interrupted", PINNED, OPTS)!;
     expect(frame.state).toBe("error");
-    expect(frame.data.statusLabel).toBe("Interrupted; outcome needs review");
-    expect(frame.data.phases).toEqual([{ thought: "Interrupted; outcome needs review", actions: [{ tool: "Status", detail: "", statusGlyph: "!", statusTone: "Attention" }] }]);
+    expect(frame.data.statusLabel).toBe("Interrupted; needs review");
+    expect(frame.data.phases).toEqual([{ thought: "Interrupted; needs review", actions: [{ tool: "Status", detail: "Interrupted; needs review", statusGlyph: "!", statusTone: "Attention" }] }]);
     expect(frame.data.progressText).toBeUndefined();
     expect(frame.data.traceExpanded).toBe(false);
     expect(() => serializeEditRegistry({ route: ROUTE, messageId: "1", ref: frame.ref, state: frame.state, data: frame.data, seq: 2, transient: false })).not.toThrow();

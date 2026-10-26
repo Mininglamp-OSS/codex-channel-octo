@@ -13,6 +13,10 @@
  * - fitted before transport so that both the initial send and a worst-case
  *   edit envelope stay within the negotiated cap (AC-007.4).
  *
+ * Every frame satisfies the server `ai.reasoning-process@0.4.1` data
+ * contract: active states always carry `progressText`, every action has a
+ * non-empty `detail` and status labels stay within 32 characters.
+ *
  * The `timed_out` text is provisional pending OD-5: it shows the reason label
  * without the "a later reply may still arrive" clause, because main revokes
  * publication on timeout and never delivers a late answer.
@@ -54,7 +58,7 @@ const VIEWS: Readonly<Record<AutomaticReason, LifecycleView>> = Object.freeze({
   answering: Object.freeze({ view: "active", state: "answering", reason: "answering", text: "Answering", tone: "Accent" }),
   completed: Object.freeze({ view: "result", state: "completed", reason: "completed", text: "Completed", tone: "Good" }),
   failed: Object.freeze({ view: "error", state: "error", reason: "failed", text: "Failed", tone: "Attention" }),
-  interrupted: Object.freeze({ view: "error", state: "error", reason: "interrupted", text: "Interrupted; outcome needs review", tone: "Warning" }),
+  interrupted: Object.freeze({ view: "error", state: "error", reason: "interrupted", text: "Interrupted; needs review", tone: "Warning" }),
   timed_out: Object.freeze({ view: "error", state: "error", reason: "timed_out", text: TIMED_OUT_PROVISIONAL_TEXT, tone: "Warning" }),
   policy_revoked: Object.freeze({ view: "error", state: "error", reason: "policy_revoked", text: "Unavailable by policy", tone: "Attention" }),
 } satisfies Record<AutomaticReason, LifecycleView>);
@@ -102,14 +106,21 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
+/** Fixed per-kind detail when the reducer kept no safe fact for the row. */
+const DETAIL_FALLBACK: Readonly<Record<ProgressRow["itemType"], string>> = Object.freeze({
+  command_execution: "Shell command", file_change: "File edit", web_search: "Web search", mcp_tool_call: "Tool call",
+});
+
 function detailOf(row: ProgressRow): string {
   const safe = row.safe;
+  let detail: string | undefined;
   switch (row.itemType) {
-    case "command_execution": return safe.program ?? "";
-    case "file_change": return safe.fileCount !== undefined ? plural(safe.fileCount, "file") : "";
-    case "web_search": return safe.domain ?? "";
-    case "mcp_tool_call": return "";
+    case "command_execution": detail = safe.program; break;
+    case "file_change": detail = safe.fileCount !== undefined ? plural(safe.fileCount, "file") : undefined; break;
+    case "web_search": detail = safe.domain; break;
+    case "mcp_tool_call": detail = undefined; break;
   }
+  return detail || DETAIL_FALLBACK[row.itemType];
 }
 
 function actionOf(row: ProgressRow): RegistryAction {
@@ -189,7 +200,8 @@ export function buildProgressFrame(model: ProgressModel, reason: AutomaticReason
       traceExpanded: v.view === "active",
       traceCollapsed: v.view !== "active",
       collapsedSummary: plural(total, "step"),
-      ...(hidden > 0 ? { progressText: `${plural(hidden, "earlier step")} not shown` } : {}),
+      ...(hidden > 0 ? { progressText: `${plural(hidden, "earlier step")} not shown` }
+        : v.view === "active" ? { progressText: `${plural(total, "step")} so far` } : {}),
       phases,
     });
     if (fits(frame, opts)) return frame;
@@ -199,7 +211,8 @@ export function buildProgressFrame(model: ProgressModel, reason: AutomaticReason
 
 /**
  * Minimal terminal closure (AC-007.5): status and reason only. It carries no
- * activity, detail, count or answer, and has no controls.
+ * activity, count or answer, and has no controls; the single status row's
+ * detail is the reason label itself.
  */
 export function buildClosureFrame(reason: AutomaticReason, pinned: PinnedTemplate, opts: BuildOptions): RegistryFrame | undefined {
   if (!controlFree(pinned) || !Object.hasOwn(VIEWS, reason) || !isTerminalReason(reason)) return undefined;
@@ -211,7 +224,7 @@ export function buildClosureFrame(reason: AutomaticReason, pinned: PinnedTemplat
     traceExpanded: false,
     traceCollapsed: true,
     collapsedSummary: v.text,
-    phases: [{ thought: v.text, actions: [{ tool: "Status", detail: "", statusGlyph: done ? "✓" : "!", statusTone: done ? "Good" : "Attention" }] }],
+    phases: [{ thought: v.text, actions: [{ tool: "Status", detail: v.text, statusGlyph: done ? "✓" : "!", statusTone: done ? "Good" : "Attention" }] }],
   });
   return fits(frame, opts) ? frame : undefined;
 }

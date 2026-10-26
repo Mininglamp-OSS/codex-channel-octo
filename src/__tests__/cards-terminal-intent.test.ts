@@ -146,7 +146,8 @@ const DATA: RegistryData = {
 };
 
 function frame(label: string, state: WireState = "reasoning"): CardFrame {
-  return { k: "registry", ref: { id: TEMPLATE_ID, version: TEMPLATE_VERSION }, state, data: { ...DATA, state, progressText: label } };
+  return { k: "registry", ref: { id: TEMPLATE_ID, version: TEMPLATE_VERSION }, state,
+    data: { ...DATA, state, progressText: label, ...(state === "error" ? { errorTitle: "Failed", errorMessage: "Failed" } : {}) } };
 }
 const done = (label = "done"): CardFrame => frame(label, "completed");
 

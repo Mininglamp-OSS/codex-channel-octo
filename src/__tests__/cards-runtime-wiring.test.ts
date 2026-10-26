@@ -462,7 +462,7 @@ describe("card-off / card-on parity over the S04-M cases (AC-009.1/.2, AC-020.1,
         expect(on.rows).toEqual([{ kind: "automatic", state: "error", reason: "failed", terminal: 1 }]);
       } else {
         expect(on.cards.terminal?.state).toBe("error");
-        expect(on.cards.terminal?.label).toBe("Interrupted; outcome needs review");
+        expect(on.cards.terminal?.label).toBe("Interrupted; needs review");
         expect(on.rows).toEqual([{ kind: "automatic", state: "error", reason: "interrupted", terminal: 1 }]);
       }
       expect(off.rows).toEqual([]);

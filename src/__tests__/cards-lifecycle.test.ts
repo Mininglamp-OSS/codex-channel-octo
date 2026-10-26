@@ -219,7 +219,7 @@ describe("ordered writes and terminals (AC-007.1, AC-008.2)", () => {
     const r = rig();
     const t = await activeTurn(r);
     await finish(r, t, report(0, 0), (x) => x.signal({ t: "handler_error", category: "stream_interrupted" }));
-    expect(r.edits().at(-1)!.data.statusLabel).toBe("Interrupted; outcome needs review");
+    expect(r.edits().at(-1)!.data.statusLabel).toBe("Interrupted; needs review");
   });
 
   it("no completed final attempt is Error/interrupted, never Done", async () => {
@@ -229,7 +229,7 @@ describe("ordered writes and terminals (AC-007.1, AC-008.2)", () => {
     t.signal({ t: "delivery_report", report: report(1, 1) });
     t.settle();
     await r.settleAll();
-    expect(r.edits().at(-1)!.data.statusLabel).toBe("Interrupted; outcome needs review");
+    expect(r.edits().at(-1)!.data.statusLabel).toBe("Interrupted; needs review");
   });
 
   it("Done needs the FINAL attempt to complete: an earlier completed attempt does not count", async () => {
@@ -239,7 +239,7 @@ describe("ordered writes and terminals (AC-007.1, AC-008.2)", () => {
     t.signal({ t: "delivery_report", report: report(1, 1) });
     t.settle();
     await r.settleAll();
-    expect(r.edits().at(-1)!.data.statusLabel).toBe("Interrupted; outcome needs review");
+    expect(r.edits().at(-1)!.data.statusLabel).toBe("Interrupted; needs review");
   });
 
   it("a retried final attempt that completes is Done", async () => {
@@ -257,7 +257,7 @@ describe("ordered writes and terminals (AC-007.1, AC-008.2)", () => {
     const t = await activeTurn(r);
     t.signal({ t: "shutdown" });
     await r.settleAll();
-    expect(r.edits().at(-1)!.data.statusLabel).toBe("Interrupted; outcome needs review");
+    expect(r.edits().at(-1)!.data.statusLabel).toBe("Interrupted; needs review");
   });
 
   it("settle before the first send begins skips the card entirely", async () => {
@@ -500,7 +500,7 @@ describe("finalize status disambiguation (NB2)", () => {
     await finish(r, t, report(1, 1));
     expect(finalize).toHaveBeenCalledTimes(2);
     const second = finalize.mock.calls[1]![1] as Extract<CardFrame, { k: "registry" }>;
-    expect(second.data.phases).toEqual([{ thought: "Completed", actions: [{ tool: "Status", detail: "", statusGlyph: "✓", statusTone: "Good" }] }]);
+    expect(second.data.phases).toEqual([{ thought: "Completed", actions: [{ tool: "Status", detail: "Completed", statusGlyph: "✓", statusTone: "Good" }] }]);
   });
 
   it("a contract outcome on a closed card is final", async () => {
@@ -525,7 +525,7 @@ describe("expired-snapshot closure (AC-007.5)", () => {
     await finish(r, t, report(1, 1));
     const terminal = r.edits().at(-1)!;
     expect(terminal.state).toBe("completed");
-    expect(terminal.data.phases).toEqual([{ thought: "Completed", actions: [{ tool: "Status", detail: "", statusGlyph: "✓", statusTone: "Good" }] }]);
+    expect(terminal.data.phases).toEqual([{ thought: "Completed", actions: [{ tool: "Status", detail: "Completed", statusGlyph: "✓", statusTone: "Good" }] }]);
     expect(terminal.data.progressText).toBeUndefined();
     expect(terminal.transient).toBeUndefined();
   });

@@ -35,7 +35,8 @@ const DATA: RegistryData = {
 };
 
 function frame(label: string, state: WireState = "reasoning"): CardFrame {
-  return { k: "registry", ref: { id: "ai.reasoning-process", version: "0.4.0" }, state, data: { ...DATA, state, progressText: label } };
+  return { k: "registry", ref: { id: "ai.reasoning-process", version: "0.4.0" }, state,
+    data: { ...DATA, state, progressText: label, ...(state === "error" ? { errorTitle: "Failed", errorMessage: "Failed" } : {}) } };
 }
 const done = (label = "done") => frame(label, "completed");
 const progressOf = (body: string): string => {
