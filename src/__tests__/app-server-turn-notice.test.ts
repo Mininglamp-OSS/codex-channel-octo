@@ -11,7 +11,6 @@ import { join } from 'node:path';
 import type { ThreadEvent } from '@openai/codex-sdk';
 import type { AppServerAttemptInput } from '../app-server/runner.js';
 import type { Config } from '../config.js';
-import type { ManagedExecution } from '../execution-scope.js';
 import type { CardInjectionLaunch } from '../cards/tool-host.js';
 
 const calls: AppServerAttemptInput[] = [];
@@ -34,7 +33,7 @@ vi.mock('../app-server/runner.js', async (importOriginal) => ({
     yield { type: 'thread.started', thread_id: input.resumeId ?? 'thr-new' };
     yield { type: 'turn.started' };
     yield { type: 'item.completed', item: { id: 'm1', type: 'agent_message', text: 'ok' } };
-    yield { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } };
+    yield { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } };
   },
 }));
 
@@ -59,12 +58,13 @@ const cardsOffered = { prepareAppServerAttempt: () => undefined } as unknown as 
 
 async function run(text: string, opts: { cards?: boolean; resume?: string; digest?: string | null; recovery?: Record<string, unknown> } = {}) {
   const sessions: Array<{ id: string; prompt: string; digest: string | null | undefined }> = [];
-  for await (const _ of queryAgentEvents(text, config(opts.recovery), undefined, undefined, {
-    onManagedExecution: (_e: ManagedExecution) => {},
+  const events = queryAgentEvents(text, config(opts.recovery), undefined, undefined, {
+    onManagedExecution: (): void => {},
     onSessionId: (id, prompt, digest) => { sessions.push({ id, prompt, digest }); },
     ...(opts.cards ? { cardInjection: cardsOffered } : {}),
     ...(opts.resume ? { resume: opts.resume, threadToolsetDigest: opts.digest ?? null } : {}),
-  })) { /* drain */ }
+  });
+  for await (const ev of events) void ev;
   return sessions;
 }
 

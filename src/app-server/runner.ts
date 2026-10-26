@@ -90,6 +90,8 @@ export interface AppServerAttemptInput {
   readonly onThreadToolset?: (digest: string | null) => void;
   /** Availability line for the model (`developerInstructions` on start and resume). */
   readonly developerInstructions?: string;
+  /** Gateway notice sent as its own `turn/start` input item ahead of the prompt (D3). */
+  readonly turnNotice?: string;
 }
 
 /** `afterResponse`: the `turn/start` response frame had been read when this arrived. */
@@ -313,9 +315,13 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
 
     // ── turn ──
     if (prestartActivity) fail('turn_binding_mismatch');
+    const turnInput = [
+      ...(input.turnNotice ? [{ type: 'text', text: input.turnNotice, text_elements: [] }] : []),
+      { type: 'text', text: input.prompt, text_elements: [] },
+    ];
     // TB-0: the frame is enqueued synchronously below; nothing runs in between.
     cards?.turnStartEnqueued();
-    const response = client.request('turn/start', { threadId, input: [{ type: 'text', text: input.prompt, text_elements: [] }] })
+    const response = client.request('turn/start', { threadId, input: turnInput })
       .then((r) => {
         const id = obj(obj(r).turn).id;
         if (typeof id !== 'string') return 'mismatch' as const;

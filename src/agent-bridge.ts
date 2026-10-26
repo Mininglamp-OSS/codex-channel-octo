@@ -385,6 +385,21 @@ export function cardAvailability(cardsOffered: boolean, resumed: boolean, stored
   return 'Explicit card tools (display, interactive) are available in this conversation. The gateway may still refuse a call; never retry a card whose send outcome is unknown.';
 }
 
+/**
+ * D3: model-visible notice for a resumed thread that predates the current
+ * card toolset (the R1 branch of {@link cardAvailability}). Sent as its own
+ * `turn/start` input item, because 0.163.0 drops `developerInstructions` on
+ * a cold resume. It is never part of the framed prompt or gateway history.
+ */
+export const LEGACY_TOOLSET_NOTICE = '[Card tools notice — gateway, not user text]\n'
+  + 'This resumed conversation was started before explicit card tools were available, so none are available in it. '
+  + 'Reply through ordinary messages. A new or reset conversation may offer card tools if the current Bot policy permits.';
+
+/** The D3 turn notice, set exactly when R1 applies: cards offered on a resumed thread without the current toolset. */
+export function legacyToolsetNotice(cardsOffered: boolean, resumed: boolean, storedToolset: string | null): string | undefined {
+  return resumed && cardsOffered && storedToolset !== appServerToolset().digest ? LEGACY_TOOLSET_NOTICE : undefined;
+}
+
 /** Closed runtime metadata, never a previous user prompt or raw tool/error text. */
 export function interruptionContext(turn?: InterruptedTurn): string {
   if (!turn) return '';
@@ -603,12 +618,14 @@ export async function* queryAgentEvents(
       const cards = opts?.cardInjection;
       const storedToolset = resumeId ? (opts?.threadToolsetDigest ?? null) : null;
       const availability = cardAvailability(cards !== undefined, resumeId !== undefined, storedToolset);
+      const turnNotice = legacyToolsetNotice(cards !== undefined, resumeId !== undefined, storedToolset);
       events = startAppServerAttempt({
         launch, apiKey, resumeId, prompt, signal: opts?.signal,
         ...(cards ? { cards: (port: AppServerReplyPort) => cards.prepareAppServerAttempt(port) } : {}),
         threadToolsetDigest: storedToolset,
         onThreadToolset: (digest) => { attemptToolset = digest; },
         ...(availability ? { developerInstructions: availability } : {}),
+        ...(turnNotice ? { turnNotice } : {}),
         thread: { cwd, model: threadOpts.model, sandbox: threadOpts.sandboxMode ?? 'read-only', approvalPolicy: threadOpts.approvalPolicy ?? 'never' },
         onExecution: (execution) => opts?.onManagedExecution?.(execution),
         onCardEffect: () => { sideEffect.seen = true; risk = 'effects_observed'; opts?.onExecutionRisk?.(risk); },

@@ -57,6 +57,7 @@ The dispatcher follows XIN-2384 rev2 §5–§6 plus addendum A1–A5.
 - **Toolset (T0/T2a/T5 R1):**
   - New threads declare `display` and `interactive`, and the toolset digest is stored next to the thread id.
   - Exec-era threads, and threads started while cards were off, keep their history without explicit tools until a reset or a new session. This produces a log line, a metric and an availability line.
+  - D3: on every turn of such a thread while cards are offered, the gateway adds a short notice as a separate `turn/start` input item ahead of the unchanged prompt. It is never written to gateway history. Codex keeps turn input in its own thread, so earlier notices remain visible there as history. New threads, current threads and card-off turns get no notice.
   - Per-call Bot policy stays authoritative.
 
 ## Gate matrix
@@ -67,7 +68,7 @@ The dispatcher follows XIN-2384 rev2 §5–§6 plus addendum A1–A5.
 | T-ARGV / T-ENV / fence | unit + **real** | The real-binary fence passes with the list, and refuses an unknown key and the default build |
 | G-A1 projection, new/resume, terminal | **real binary, model mocked** | `app-server-real-binary.test.ts`; scripted edge cases in `app-server-runner.test.ts` (mocked app-server) |
 | G-A2 dynamic-tool round trip, TB-0..TB-5, holds, joins, foreign, R-4 | **real binary** for the round trip; unit for the rest | `app-server-cards-real-binary.test.ts`, `cards-app-server-dispatcher.test.ts`, `app-server-runner.test.ts` |
-| G-A3 resume keeps tools; old thread has none | **real binary, model mocked** | `app-server-cards-real-binary.test.ts`. Finding: `developerInstructions` on a cold `thread/resume` is **not delivered** by 0.163.0, so R1's notice on resume rests on the log line and metric only |
+| G-A3 resume keeps tools; old thread has none | **real binary, model mocked** | `app-server-cards-real-binary.test.ts`. Finding: `developerInstructions` on a cold `thread/resume` is **not delivered** by 0.163.0. The R1 notice therefore reaches the model as D3 turn input (asserted in the request body); the unchanged R1 `developerInstructions` line stays alongside it |
 | G-A3b (R2 seeding) | not in scope | R2 was not selected |
 | G-A4 no listener, no plugin fetch, remote control off | **real** | lsof and process-group checks during a turn |
 | G-A5 in-memory login, no `auth.json` | **real** | Bearer from the in-memory login; no auth file in `CODEX_HOME`. The managed-store negative control is covered by the fence refusing host-administrative layers (unit); a real managed preference was not installed |
