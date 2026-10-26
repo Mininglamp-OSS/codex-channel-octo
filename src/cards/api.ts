@@ -210,6 +210,9 @@ export function classifyProfileFailure(err: OctoApiError | CardRequestError): Pr
 // ─── Request validation and closed serialization ────────────────────────────
 
 const CLIENT_MSG_NO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const SERVER_CLIENT_MSG_NO_MAX = 256;
+/** `wkhttp.ResponseOK()` body of a successful Bot API edit. */
+const EDIT_OK_STATUS = 200;
 const ANY_CONTROL = /\p{Cc}/u;
 const CHANNEL_TYPES: ReadonlySet<number> = new Set<CardChannelType>([1, 2, 5]);
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
@@ -247,6 +250,12 @@ function checkRoute(route: CardRoute): { channel_id: string; channel_type: CardC
 function checkClientMsgNo(value: string): string {
   if (typeof value !== "string" || !CLIENT_MSG_NO.test(value)) reject("invalid_request", "client_msg_no");
   return value;
+}
+
+/** Server-assigned `client_msg_no`: an opaque bounded string, possibly empty. */
+function isServerClientMsgNo(value: JsonValue): value is string {
+  return typeof value === "string" && value.length <= SERVER_CLIENT_MSG_NO_MAX
+    && !CONTROL_CHARS.test(value) && !LONE_SURROGATE.test(value);
 }
 
 function checkMessageId(value: string): string {
@@ -975,7 +984,14 @@ export function serializeEditAuthored(req: EditAuthoredRequest): FrozenRequest {
 
 export interface SendAck {
   readonly messageId: string;
+  /** Client-generated idempotency key of the durable reservation (the request's value). */
   readonly clientMsgNo: string;
+  /**
+   * `client_msg_no` as reported by the server. The Bot API does not forward the
+   * request's value to the IM, so this is server-assigned (or empty) evidence,
+   * never a correlation of the request.
+   */
+  readonly serverClientMsgNo?: string;
   readonly messageSeq?: number;
   readonly request: FrozenRequest;
 }
@@ -1187,27 +1203,41 @@ export function createCardApi(config: CardApiConfig): CardApi {
     if (value === undefined || !isJsonObject(value)) throw new OctoApiError(op, "response", raw.status, "missing_identity");
     const messageId = parseMessageIdentity(value.message_id);
     if (messageId === null) throw new OctoApiError(op, "response", raw.status, "missing_identity");
-    if (value.client_msg_no !== undefined && value.client_msg_no !== clientMsgNo) {
-      throw new OctoApiError(op, "response", raw.status, "identity_mismatch");
+    // The Bot API drops the request's client_msg_no and returns the IM-assigned one (or ""), so
+    // it is recorded as server evidence; correlation is this request's own 2xx plus message_id.
+    const serverNo = value.client_msg_no;
+    if (serverNo !== undefined && !isServerClientMsgNo(serverNo)) {
+      throw new OctoApiError(op, "response", raw.status, "malformed_response");
     }
     const seq = value.message_seq;
     if (seq !== undefined && !(typeof seq === "number" && Number.isSafeInteger(seq) && seq >= 0)) {
       throw new OctoApiError(op, "response", raw.status, "malformed_response");
     }
-    return Object.freeze({ messageId, clientMsgNo, ...(typeof seq === "number" ? { messageSeq: seq } : {}), request });
+    return Object.freeze({
+      messageId, clientMsgNo,
+      ...(typeof serverNo === "string" ? { serverClientMsgNo: serverNo } : {}),
+      ...(typeof seq === "number" ? { messageSeq: seq } : {}),
+      request,
+    });
   }
 
   /**
-   * §5.3: an edit is acknowledged only by a 2xx carrying the edited
-   * `message_id` (and, if echoed, the same `card_seq`).
+   * §5.3: an edit is acknowledged only by a 2xx on this request carrying either
+   * the edited `message_id` or the Bot API's bare `{"status":200}`; any echoed
+   * `message_id` / `card_seq` must still match the request.
    */
   async function edit(op: ApiOperation, request: FrozenRequest, messageId: string, seq: number, opts?: ApiCallOptions): Promise<EditAck> {
     const raw = await call(op, "POST", request.path, request.body, ACK_BODY_MAX_BYTES, opts);
     const value = parseBody(op, raw, true);
     if (value === undefined || !isJsonObject(value)) throw new OctoApiError(op, "response", raw.status, "missing_identity");
-    const echoed = parseMessageIdentity(value.message_id);
-    if (echoed === null) throw new OctoApiError(op, "response", raw.status, "missing_identity");
-    if (echoed !== messageId) throw new OctoApiError(op, "response", raw.status, "identity_mismatch");
+    if (value.status !== undefined && value.status !== EDIT_OK_STATUS) {
+      throw new OctoApiError(op, "response", raw.status, "malformed_response");
+    }
+    if (value.message_id !== undefined || value.status === undefined) {
+      const echoed = parseMessageIdentity(value.message_id);
+      if (echoed === null) throw new OctoApiError(op, "response", raw.status, "missing_identity");
+      if (echoed !== messageId) throw new OctoApiError(op, "response", raw.status, "identity_mismatch");
+    }
     if (value.card_seq !== undefined && value.card_seq !== seq) {
       throw new OctoApiError(op, "response", raw.status, "identity_mismatch");
     }
