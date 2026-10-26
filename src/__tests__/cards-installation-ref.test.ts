@@ -108,6 +108,7 @@ describe.runIf(POSIX)("in-process fail-closed cases", () => {
     ["two lines", () => { writeRef("install-a\ninstall-b\n"); }],
     ["an unsafe reference", () => { writeRef("../escape\n"); }],
     ["invalid UTF-8", () => { writeRef(Buffer.from([0x69, 0xff, 0xfe, 0x0a])); }],
+    ["a BOM-prefixed reference", () => { writeRef(Buffer.from([0xef, 0xbb, 0xbf, ...Buffer.from("install-a\n")])); }],
   ];
 
   it.each(invalid)("%s is provenance_invalid before any database access", async (_name, arrange) => {

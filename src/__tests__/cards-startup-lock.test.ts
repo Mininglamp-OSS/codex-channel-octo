@@ -17,7 +17,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -68,6 +68,7 @@ import { startBot } from "../index.js";
 import { SessionStore } from "../session-store.js";
 import { profile } from "./fixtures/card-profile.js";
 import { json } from "./fixtures/card-write-harness.js";
+import { unjammer } from "./fixtures/fifo-unjammer.js";
 
 const API = "https://test.invalid";
 const EARLIER = "earlier-incarnation";
@@ -253,5 +254,39 @@ describe("normal shutdown", () => {
     expect(removals).toBe(1);
     expect(events.order).toEqual(["cards.open", "cards.close", "lock.removed"]);
     expect(existsSync(lockPath)).toBe(false);
+  });
+});
+
+describe.runIf(process.platform !== "win32")("a writerless FIFO activation marker (S2-b)", () => {
+  /** A valid private installation reference with a FIFO where the marker belongs. */
+  function provisionFifoMarker(): string {
+    const p = cardSubsystemPaths(dataDir);
+    mkdirSync(p.cardsDir, { recursive: true, mode: 0o700 });
+    writeFileSync(p.installationRefPath, "install-a\n", { mode: 0o600, flag: "wx" });
+    chmodSync(p.installationRefPath, 0o600);
+    execFileSync("mkfifo", ["-m", "600", p.markerPath]);
+    return p.markerPath;
+  }
+
+  it("leaves startup card-inert under the lock without blocking, and shutdown releases the lock", async () => {
+    const guard = unjammer(provisionFifoMarker());
+    const stack = await startBot(config(), true);
+    expect(await guard.settle()).toBe("never_blocked");
+    expect(events.order).toEqual(["cards.open"]);
+    expect(cardTables()).toEqual([]);
+    expect(backups()).toEqual([]);
+    expect(cardFetches).toBe(0);
+    expect(readFileSync(lockPath, "utf8")).toMatch(new RegExp(`^${process.pid} `));
+    await stack.shutdown();
+    expect(existsSync(lockPath)).toBe(false);
+  }, 20_000);
+
+  it("a live competing holder still rejects startup before the marker is opened", async () => {
+    provisionFifoMarker();
+    const held = await competingLockHolder();
+    await expect(startBot(config(), true)).rejects.toThrow(/Another instance is running/);
+    expect(events.opens).toBe(0);
+    expect(cardTables()).toEqual([]);
+    expect(readFileSync(lockPath, "utf8")).toBe(held);
   });
 });
