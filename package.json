@@ -70,6 +70,7 @@
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "@vitest/coverage-v8": "^3.0.0",
+    "ajv": "^6.15.0",
     "eslint": "^9.0.0",
     "globals": "^14.0.0",
     "typescript": "^5.7.0",

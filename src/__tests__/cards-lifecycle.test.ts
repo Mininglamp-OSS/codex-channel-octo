@@ -27,6 +27,7 @@ import { createAdapter, type DbAdapter } from "../db-adapter.js";
 import { SessionStore } from "../session-store.js";
 import { profile } from "./fixtures/card-profile.js";
 import { json, manualTime, scriptedFetch, seqOf, type ManualTime } from "./fixtures/card-write-harness.js";
+import { reasoningSchemaErrors } from "./fixtures/reasoning-schema.js";
 
 const API = "https://api.example.com";
 const roots: string[] = [];
@@ -621,5 +622,33 @@ describe("robustness", () => {
     for (const body of r.net.requests.map((q) => q.body)) {
       for (const control of ["Action.Submit", "reasoning_stop", "reasoning_retry", "\"actions\":[{\"type\""]) expect(body).not.toContain(control);
     }
+  });
+});
+
+describe("every automatic frame on the wire satisfies the server 0.4.1 data schema (XIN-2423)", () => {
+  async function wireData(r: Rig, run: (t: AutomaticTurn) => Promise<void>): Promise<Record<string, unknown>[]> {
+    const t = await activeTurn(r);
+    await run(t);
+    return [...r.sends().map((s) => s.payload.data), ...r.edits().map((e) => e.data)];
+  }
+
+  it.each([
+    ["working → answering → completed", async (r: Rig, t: AutomaticTurn) => {
+      t.signal({ t: "delivery_start" }); await r.time.advance(800); await finish(r, t, report(1, 1));
+    }],
+    ["failed", async (r: Rig, t: AutomaticTurn) => {
+      await finish(r, t, report(0, 0), (x) => x.signal({ t: "handler_error", category: "runtime_failed" }));
+    }],
+    ["interrupted (lost stream)", async (r: Rig, t: AutomaticTurn) => {
+      await finish(r, t, report(0, 0), (x) => x.signal({ t: "handler_error", category: "stream_interrupted" }));
+    }],
+    ["interrupted (shutdown)", async (r: Rig, t: AutomaticTurn) => { t.signal({ t: "shutdown" }); await r.settleAll(); }],
+    ["timed_out", async (r: Rig, t: AutomaticTurn) => { t.signal({ t: "dispatch_timeout" }); await r.settleAll(); }],
+    ["no delivery report", async (r: Rig, t: AutomaticTurn) => { await finish(r, t, undefined); }],
+  ])("%s", async (_name, run) => {
+    const r = rig();
+    const frames = await wireData(r, (t) => run(r, t));
+    expect(frames.length).toBeGreaterThanOrEqual(2);
+    for (const data of frames) expect(reasoningSchemaErrors(data)).toEqual([]);
   });
 });
