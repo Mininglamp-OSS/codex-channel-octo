@@ -28,7 +28,6 @@
  * sending/ambiguous (N2) and terminal rows are never read for editing.
  */
 
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 import type { DbAdapter } from "../db-adapter.js";
 import { CARD_ENVELOPE_MAX_BYTES } from "./api.js";
@@ -47,6 +46,7 @@ import { FileActivationMarker, isSafeStoreRef } from "./migrations.js";
 import type { TimerPort } from "./pacer.js";
 import type { Authorization, CardPolicy } from "./policy.js";
 import { buildClosureFrame, type RegistryFrame } from "./registry-builder.js";
+import { decodeStrictUtf8, readPrivateRegularFile } from "./safe-file.js";
 import {
   initializeCardStore,
   type CardMessageRecord,
@@ -114,41 +114,19 @@ const MAX_REF_FILE_BYTES = 1024;
 type RefRead = { readonly kind: "ok"; readonly ref: string } | { readonly kind: "missing" } | { readonly kind: "invalid" };
 
 /**
- * Read the installation reference without following a symlink: a regular
- * file, not group/other accessible (POSIX), holding one safe reference with
- * at most one trailing newline. The open is `O_NONBLOCK` so a FIFO with no
- * writer cannot stall startup; that alone is not the guard — the `fstat` of
- * the opened fd rejects every FIFO, device and directory, and the bounded read
- * must match the size of that same regular file.
+ * Read the installation reference through the shared provenance reader
+ * (`readPrivateRegularFile`): a private regular file, never followed through a
+ * symlink and never blocking on a FIFO, holding one safe reference with at
+ * most one trailing newline. Decoding is strict UTF-8 with any BOM kept, so a
+ * BOM-prefixed reference fails the safe-reference check.
  */
 function readInstallationRef(path: string): RefRead {
-  let fd: number;
-  try {
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "missing" } : { kind: "invalid" };
-  }
-  try {
-    const st = fstatSync(fd);
-    if (!st.isFile() || st.size > MAX_REF_FILE_BYTES) return { kind: "invalid" };
-    if (process.platform !== "win32" && (st.mode & 0o077) !== 0) return { kind: "invalid" };
-    const buf = Buffer.alloc(MAX_REF_FILE_BYTES + 1);
-    let len = 0;
-    for (;;) {
-      const n = readSync(fd, buf, len, buf.length - len, null);
-      if (n === 0) break;
-      len += n;
-      if (len > MAX_REF_FILE_BYTES) return { kind: "invalid" };
-    }
-    if (len !== st.size) return { kind: "invalid" };
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(buf.subarray(0, len));
-    const ref = text.endsWith("\n") ? text.slice(0, -1) : text;
-    return isSafeStoreRef(ref) ? { kind: "ok", ref } : { kind: "invalid" };
-  } catch {
-    return { kind: "invalid" };
-  } finally {
-    try { closeSync(fd); } catch { /* already closed */ }
-  }
+  const file = readPrivateRegularFile(path, MAX_REF_FILE_BYTES);
+  if (file.kind !== "ok") return file;
+  const text = decodeStrictUtf8(file.bytes);
+  if (text === null) return { kind: "invalid" };
+  const ref = text.endsWith("\n") ? text.slice(0, -1) : text;
+  return isSafeStoreRef(ref) ? { kind: "ok", ref } : { kind: "invalid" };
 }
 
 /** Stores whose explicit ledger of earlier incarnations was recovered by `openCardSubsystem`. */

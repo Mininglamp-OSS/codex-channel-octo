@@ -28,6 +28,7 @@ import {
 import { basename, dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
 import type { DbAdapter } from '../db-adapter.js';
+import { decodeStrictUtf8, readPrivateRegularFile } from './safe-file.js';
 
 // ─── Versioning ─────────────────────────────────────────────────────────────
 
@@ -942,14 +943,18 @@ export function serializeActivationMarker(marker: ActivationMarker): string {
 export class FileActivationMarker implements ActivationMarkerPort {
   constructor(private readonly path: string) {}
 
+  /**
+   * Read through the shared provenance reader (S2-b): runs on the startup path
+   * under the Bot lock, so it never follows a symlink or blocks on a FIFO, and
+   * accepts only a private regular file within the marker's own byte bound.
+   * Missing is `absent`; anything else unreadable or malformed is `invalid`.
+   */
   read(): MarkerRead {
-    let text: string;
-    try {
-      text = readFileSync(this.path, 'utf8');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { state: 'absent' };
-      return { state: 'invalid' };
-    }
+    const file = readPrivateRegularFile(this.path, MAX_MARKER_BYTES);
+    if (file.kind === 'missing') return { state: 'absent' };
+    if (file.kind === 'invalid') return { state: 'invalid' };
+    const text = decodeStrictUtf8(file.bytes);
+    if (text === null) return { state: 'invalid' };
     const marker = parseActivationMarker(text);
     return marker ? { state: 'present', marker } : { state: 'invalid' };
   }

@@ -267,6 +267,7 @@ describe("T14: a version 1 build on a version 2 store", () => {
     expect(patched).not.toBe(migrations);
     writeFileSync(join(dir, "cards", "migrations.ts"), patched);
     writeFileSync(join(dir, "cards", "store.ts"), readFileSync(join(src, "store.ts"), "utf8"));
+    writeFileSync(join(dir, "cards", "safe-file.ts"), readFileSync(join(src, "safe-file.ts"), "utf8"));
     const mod = (await import(join(dir, "cards", "store.ts"))) as { initializeCardStore: Init };
     return mod.initializeCardStore;
   }
