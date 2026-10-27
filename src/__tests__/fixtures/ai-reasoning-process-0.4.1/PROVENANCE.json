@@ -1,0 +1,15 @@
+{
+  "file": "data.schema.json",
+  "description": "Server data contract of the ai.reasoning-process@0.4.1 card template. The Bot API Registry render path validates template data against it and answers HTTP 400 on any violation.",
+  "source": {
+    "repository": "octo-server",
+    "commit": "624f82453859518d2329f8835656ccf49577aa68",
+    "lastChangedIn": "4336e4435040d6346e1fb3da281c440f202540c6",
+    "path": "pkg/cardtmpl/ai_reasoning_process/handoff/ai.reasoning-process@0.4.1/contract/data.schema.json",
+    "validator": "modules/bot_api/card_template_catalog.go renderPayload -> ErrFieldsInvalid -> ErrBotAPICardInvalid"
+  },
+  "sha256": "cccb8afc30e7dadc12759274cd97fedead159db3ffc117f3c0feadd4e6f887bc",
+  "modifications": "none; byte-identical copy",
+  "license": "Apache-2.0",
+  "dialect": "http://json-schema.org/draft-07/schema#"
+}

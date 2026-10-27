@@ -220,13 +220,19 @@ describe("client transport", () => {
     expect(calls[0].init.body).toBe(ack.request.body);
   });
 
-  it("treats 2xx without identity or with a foreign client id as an unconfirmed send", async () => {
-    for (const body of ["", "{}", '{"message_id":"abc"}', "[1]", `{"message_id":1,"client_msg_no":"other"}`, "not json"]) {
+  it("treats 2xx without a valid identity as an unconfirmed send", async () => {
+    for (const body of ["", "{}", '{"message_id":"abc"}', "[1]", '{"message_id":1,"client_msg_no":7}', "not json"]) {
       const { client } = api(() => json(200, body));
       const err = await failure(client.sendRegistry({ route: ROUTE, clientMsgNo: CLIENT, ref: REF, state: "reasoning", data: DATA }));
       expect(err).toBeInstanceOf(OctoApiError);
       expect(classifySendFailure(err)).toBe("ambiguous");
     }
+  });
+
+  it("acknowledges a send whose client_msg_no is server-assigned rather than echoed", async () => {
+    const { client } = api(() => json(200, `{"message_id":${BIG_ID},"client_msg_no":"other","message_seq":5}`));
+    const ack = await client.sendRegistry({ route: ROUTE, clientMsgNo: CLIENT, ref: REF, state: "reasoning", data: DATA });
+    expect(ack).toMatchObject({ messageId: BIG_ID, clientMsgNo: CLIENT, serverClientMsgNo: "other", messageSeq: 5 });
   });
 
   it("classifies send, edit and profile failures per §5.3", async () => {
@@ -413,7 +419,7 @@ describe("typed profile boundary", () => {
     templating: {
       supported: true, wire: "template-ref/v1", extension: { x: 1 },
       templates: [{ id: "ai.reasoning-process", version: "0.4.0", owner: "x",
-        views: [{ name: "active", states: ["reasoning", "answering"], wire_profile: "v2", submit_actions: [], hint: "y" }] }],
+        views: [{ name: "active", states: ["reasoning", "answering"], wire_profile: "octo/v2", submit_actions: [], hint: "y" }] }],
     },
     config: CONFIG,
     future_capability: { anything: true },
@@ -433,7 +439,7 @@ describe("typed profile boundary", () => {
       templating: {
         supported: true, wire: "template-ref/v1",
         templates: [{ id: "ai.reasoning-process", version: "0.4.0",
-          views: [{ name: "active", states: ["reasoning", "answering"], wire_profile: "v2", submit_actions: [] }] }],
+          views: [{ name: "active", states: ["reasoning", "answering"], wire_profile: "octo/v2", submit_actions: [] }] }],
       },
       config: CONFIG,
     });
@@ -444,8 +450,8 @@ describe("typed profile boundary", () => {
   it("passes missing fields through as absent for the policy parser", async () => {
     expect(await api(() => json(200, {})).client.getProfile()).toEqual({});
     expect(await api(() => json(200, { available: true })).client.getProfile()).toEqual({ available: true });
-    const views = projectCardProfile({ templating: { templates: [{ id: "t", version: "1", views: [{ name: "result", wire_profile: "v1" }] }] } });
-    expect(views.templating?.templates?.[0].views[0]).toEqual({ name: "result", states: [], wire_profile: "v1", submit_actions: [] });
+    const views = projectCardProfile({ templating: { templates: [{ id: "t", version: "1", views: [{ name: "result", wire_profile: "octo/v1" }] }] } });
+    expect(views.templating?.templates?.[0].views[0]).toEqual({ name: "result", states: [], wire_profile: "octo/v1", submit_actions: [] });
     // Non-reasoning template refs are not restricted here; selection is a later package.
     expect(projectCardProfile({ config: { ...CONFIG, reasoning_template_ref: { id: "other.template", version: "9" } } }).config?.reasoning_template_ref)
       .toEqual({ id: "other.template", version: "9" });
@@ -482,7 +488,7 @@ describe("typed profile boundary", () => {
       [{ limits: { max_nodes: "200" } }, "limits_type"],
       [{ limits: [] }, "limits_type"],
       [{ templating: { supported: "true" } }, "templating_type"],
-      [{ templating: { templates: [{ id: "t", version: "1", views: [{ name: 1, wire_profile: "v1" }] }] } }, "templating_type"],
+      [{ templating: { templates: [{ id: "t", version: "1", views: [{ name: 1, wire_profile: "octo/v1" }] }] } }, "templating_type"],
     ];
     for (const [body, detail] of bad) {
       const err = await failure(api(() => json(200, body)).client.getProfile());
@@ -528,12 +534,18 @@ describe("Registry phase shapes", () => {
     route: ROUTE, clientMsgNo: CLIENT, ref: REF, state: "reasoning", data: { ...DATA, phases } as RegistryData,
   });
 
-  it("accepts a tool-only frame with a nonempty neutral thought label and an empty detail", () => {
+  it("accepts a tool-only frame with a nonempty neutral thought label", () => {
     const phases = [
       { thought: "—", actions: [action] },
-      { thought: "x", actions: [{ ...action, detail: "" }] },
+      { thought: "x", actions: [{ ...action }] },
     ];
     expect(JSON.parse(send(phases).body).payload.data.phases).toEqual(phases);
+  });
+
+  it("rejects an empty or blank action detail (server schema minLength 1)", () => {
+    for (const detail of ["", " "]) {
+      expect(() => send([{ thought: "x", actions: [{ ...action, detail }] }])).toThrow(CardRequestError);
+    }
   });
 
   it("rejects blank wire thoughts and actionless phases with fixed safe fields", () => {
