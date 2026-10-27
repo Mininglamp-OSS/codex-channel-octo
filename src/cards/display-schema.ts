@@ -57,18 +57,19 @@ export function neutralizeMentions(text: string): string {
   return text.replace(/@/g, "＠");
 }
 
-const URL_SCHEME = /([A-Za-z][A-Za-z0-9+.-]*):(?=\/\/)/g;
+/** Every `://`, whatever precedes it; a literal match keeps this linear on long input. */
+const URL_SCHEME = /:\/\//g;
 const BARE_SCHEME = /\b(javascript|vbscript|data|file|blob|about|mailto|tel|sms|intent|octo|ftp):(?=\S)/gi;
 const WWW = /\bwww\./gi;
 
 /**
- * Defang URLs in authored text so no renderer can autolink them: `x://`
- * becomes `x[:]//`, script-like and other non-web schemes become `x[:]`,
+ * Defang URLs in authored text so no renderer can autolink them: every
+ * `://` becomes `[:]//`, script-like and other non-web schemes become `x[:]`,
  * and `www.` becomes `www[.]`. Only structured, `safeLinkUrl`-validated
  * links are ever live; authored text never is.
  */
 export function neutralizeUrls(text: string): string {
-  return text.replace(URL_SCHEME, "$1[:]").replace(BARE_SCHEME, "$1[:]").replace(WWW, "www[.]");
+  return text.replace(URL_SCHEME, "[:]//").replace(BARE_SCHEME, "$1[:]").replace(WWW, "www[.]");
 }
 
 const MD_INLINE = /[\\`*_[\]()<>~|]/g;

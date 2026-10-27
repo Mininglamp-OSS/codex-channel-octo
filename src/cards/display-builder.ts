@@ -78,8 +78,10 @@ const CODE_SPAN_SAFE = /^[^`\n[\]()<>\\]*$/;
 
 /** Wrap the non-blank core of `text` in a Markdown mark, keeping outer spaces. */
 function mark(text: string, m: string): string {
-  const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(text)!;
-  return match[2] === "" ? text : `${match[1]}${m}${match[2]}${m}${match[3]}`;
+  const core = text.trim();
+  if (core === "") return text;
+  const start = text.indexOf(core);
+  return `${text.slice(0, start)}${m}${core}${m}${text.slice(start + core.length)}`;
 }
 
 /** The only live Markdown link: escaped authored label, validated URL. */
