@@ -5,6 +5,9 @@ import { selectTemplate } from "../cards/template.js";
 import { CARD_BOUNDS, effectiveLimits, measureEnvelope, measureStructure, normalizeLimits,
   withinCount, withinUtf8, withinScalars } from "../cards/limits.js";
 import { profile } from "./fixtures/card-profile.js";
+import { liveProfileJson } from "./fixtures/card-profile-live.js";
+import { projectCardProfile } from "../cards/api.js";
+import type { JsonValue } from "../cards/contracts.js";
 
 function states(value: unknown) {
   const p = negotiate(parseProfile(value));
@@ -81,7 +84,10 @@ describe("strict server profile policy", () => {
     [{ card_version: undefined }, ["enabled", "disabled", "disabled"]],
     [{ elements: [] }, ["enabled", "disabled", "disabled"]],
     [{ elements: ["TextBlock"] }, ON],
-    [{ elements: ["TextBlock", "Image"] }, ["enabled", "disabled", "disabled"]],
+    // D-W2 Option A: an unknown element narrows interaction only; display intersects.
+    [{ elements: ["TextBlock", "Image"] }, ["enabled", "enabled", "disabled"]],
+    [{ elements: ["Image", "RichTextBlock"] }, ["enabled", "disabled", "disabled"]],
+    [{ actions: ["Action.OpenUrl", "Action.Unknown"] }, ["enabled", "disabled", "disabled"]],
     [{ inputs: ["Input.Image"] }, ["enabled", "enabled", "disabled"]],
     [{ inputs: undefined }, ["enabled", "enabled", "disabled"]],
     [{ actions: ["Action.OpenUrl"] }, ["enabled", "enabled", "disabled"]],
@@ -133,6 +139,46 @@ describe("strict server profile policy", () => {
     expect([...p.display.elements]).not.toContain("Image");
     expect(Object.isFrozen(p)).toBe(true);
     expect("add" in p.display.elements).toBe(false);
+  });
+});
+
+describe("display element intersection (D-W2 Option A, display only)", () => {
+  const live = () => projectCardProfile(liveProfileJson() as unknown as JsonValue);
+
+  it("the live profile enables display with exactly its known elements; interaction stays disabled", () => {
+    const p = parseProfile(live());
+    expect(p.display.state).toBe("enabled");
+    expect([...p.display.elements].sort()).toEqual(["ActionSet", "ColumnSet", "Container", "FactSet", "RichTextBlock", "Table", "TextBlock"]);
+    expect(p.interaction.state).toBe("disabled");
+    expect(p.reasons).toContain("profile_incompatible");
+  });
+
+  it("interaction stays disabled with Action.Submit added while the unknown Image elements remain", () => {
+    const body = liveProfileJson() as unknown as { actions: string[] };
+    body.actions.push("Action.Submit");
+    const p = parseProfile(projectCardProfile(body as unknown as JsonValue));
+    expect(p.display.state).toBe("enabled");
+    expect(p.interaction.state).toBe("disabled");
+  });
+
+  it("unknown elements plus TextBlock give display exactly TextBlock; unknown elements are never negotiated", () => {
+    const p = parseProfile(profile({ elements: ["Image", "TextBlock", "ImageSet", "Media"] }));
+    expect(p.display.state).toBe("enabled");
+    expect([...p.display.elements]).toEqual(["TextBlock"]);
+  });
+
+  it("a profile without TextBlock or with an unknown action keeps display disabled", () => {
+    const noText = liveProfileJson() as unknown as { elements: string[] };
+    noText.elements = noText.elements.filter((e) => e !== "TextBlock");
+    expect(parseProfile(projectCardProfile(noText as unknown as JsonValue)).display.state).toBe("disabled");
+    const unknownAction = liveProfileJson() as unknown as { actions: string[] };
+    unknownAction.actions.push("Action.Execute");
+    expect(parseProfile(projectCardProfile(unknownAction as unknown as JsonValue)).display.state).toBe("disabled");
+  });
+
+  it("automatic is unaffected by the element list", () => {
+    expect(parseProfile(profile({ elements: ["Image"] })).automatic.state).toBe("enabled");
+    expect(parseProfile(profile({ elements: ["TextBlock", "Image"] })).automatic).toEqual(parseProfile(profile()).automatic);
   });
 });
 

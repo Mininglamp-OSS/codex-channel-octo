@@ -101,7 +101,7 @@ async function runtimeRig(over: { ops?: boolean; prof?: () => unknown; exposure?
   const cwd = tempDir("wp08-cwd-", "/tmp");
   let n = 0;
   const input = (o: Partial<CardTurnInput> = {}): CardTurnInput => ({
-    dispatchId: `d-${++n}`, sessionKey: `s-${n}`, channelId: "c", channelType: 1, requesterUid: "u", resetEpoch: 0, cron: false,
+    dispatchId: `d-${++n}`, sessionKey: `s-${n}`, channelId: "c", channelType: 1, requesterUid: "u", resetEpoch: 0, cron: false, obo: false, docTask: false,
     deadlineMono: time.now() + 300_000, sessionCwd: () => cwd, currentResetEpoch: () => 0, ...o,
   });
   return { runtime, adapter, time, dataDir, input };
@@ -142,7 +142,7 @@ describe("injection gate G-a…G-g at beginTurn (AM-08 v4 §7.2; AC-011.3/.11)",
 
   it("G-e/G-a/G-d and missing trusted inputs fail closed", async () => {
     const r = await runtimeRig();
-    for (const bad of [{ cron: true }, { deadlineMono: undefined }, { deadlineMono: r.time.now() - 1 }, { sessionCwd: undefined },
+    for (const bad of [{ cron: true }, { obo: undefined }, { docTask: undefined }, { obo: true }, { docTask: true }, { deadlineMono: undefined }, { deadlineMono: r.time.now() - 1 }, { sessionCwd: undefined },
       { currentResetEpoch: undefined }, { sessionCwd: () => { throw new Error("cwd"); } }] as Partial<CardTurnInput>[]) {
       expect(r.runtime.beginTurn(r.input(bad))!.injection).toBeUndefined();
     }

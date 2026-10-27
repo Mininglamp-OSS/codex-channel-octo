@@ -198,7 +198,9 @@ describe("beginTurn route matrix (AC-006.1) and trusted context", () => {
 
   it("DM, group and community topic get a coordinator with the trusted route kind; other channel types get none", async () => {
     const { runtime, adapter } = await ready();
-    expect(runtime.beginTurn(input(ChannelType.DM))?.coordinator.context.routeEligibility).toEqual({ kind: "dm", obo: false, docTask: false, cron: false });
+    expect(runtime.beginTurn(input(ChannelType.DM, { obo: false, docTask: false }))?.coordinator.context.routeEligibility).toEqual({ kind: "dm", obo: false, docTask: false, cron: false });
+    // D-W1(b): an unknown route fact is never guessed false.
+    expect(runtime.beginTurn(input(ChannelType.DM, { dispatchId: "d-unknown" }))?.coordinator.context.routeEligibility).toEqual({ kind: "dm", obo: true, docTask: true, cron: false });
     expect(runtime.beginTurn(input(ChannelType.Group))?.coordinator.context.routeEligibility.kind).toBe("group");
     expect(runtime.beginTurn(input(ChannelType.CommunityTopic))?.coordinator.context.routeEligibility.kind).toBe("topic");
     for (const other of [0, 3, 4, 6, 99]) expect(runtime.beginTurn(input(other))).toBeUndefined();
