@@ -18,7 +18,7 @@
  * handler never retries, resends or reinterprets a host result.
  */
 import { createHash } from "node:crypto";
-import type { CardChannelType, CardToolResult, DisplayCardArgs, JsonValue, Limits, RouteKind, TrustedTurnContext } from "./contracts.js";
+import type { CardChannelType, CardToolResult, DisplayCardArgs, JsonValue, Limits, PolicySnapshot, RouteKind, TrustedTurnContext } from "./contracts.js";
 import { buildDisplayCard, type DisplayAuthored, type DisplayCapabilities } from "./display-builder.js";
 import { validateDisplayArgs } from "./display-schema.js";
 import { normalizeLimits } from "./limits.js";
@@ -31,14 +31,21 @@ import type { ExplicitOpContext, ExplicitOpHandler, ExplicitSendPort } from "./t
 export type DisplayExplicitCard = Extract<ExplicitCard, { opcode: "display" }> & {
   readonly authored: DisplayAuthored;
   readonly plain: string;
+  /** In memory only: the policy snapshot the card was fitted under, re-authorized pinned before the send. */
+  readonly snapshot?: PolicySnapshot;
 };
+
+/** Display capabilities plus, when they came from a policy, the snapshot they were read from. */
+export interface ExplicitDisplayCapabilities extends DisplayCapabilities {
+  readonly snapshot?: PolicySnapshot;
+}
 
 export interface ExplicitDisplayOptions {
   /**
    * Display capabilities for this call; `undefined` (or a throw) means no
    * display card. Defaults to {@link BASELINE_DISPLAY_CAPABILITIES}.
    */
-  readonly capabilities?: () => DisplayCapabilities | undefined;
+  readonly capabilities?: () => ExplicitDisplayCapabilities | undefined;
 }
 
 /**
@@ -98,7 +105,7 @@ export function createExplicitDisplay(options: ExplicitDisplayOptions = {}): Exp
       const binding = bindingOf(c.ctx);
       if (binding === "ineligible") return ROUTE_INELIGIBLE;
       if (binding === null) return ROUTE_INVALID;
-      let caps: DisplayCapabilities | undefined;
+      let caps: ExplicitDisplayCapabilities | undefined;
       try { caps = capabilities(); } catch { caps = undefined; }
       if (caps === undefined) return NO_CAPABILITY;
 
@@ -113,6 +120,7 @@ export function createExplicitDisplay(options: ExplicitDisplayOptions = {}): Exp
       const card: DisplayExplicitCard = Object.freeze({
         opcode: "display", binding, bodyDigest, profile: built.authored.profile,
         pinnedLimitsJson: JSON.stringify(pinnedLimits(caps.limits)), authored: built.authored, plain: built.plain,
+        ...(caps.snapshot !== undefined ? { snapshot: caps.snapshot } : {}),
       });
       if (signal.aborted) return CLOSED;
       return send.reserveAndSend(card);

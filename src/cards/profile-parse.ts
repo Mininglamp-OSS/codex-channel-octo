@@ -74,7 +74,11 @@ export function parseProfile(value: unknown): NormalizedProfile {
     const elementsOK = allowedList(value.elements, ELEMENTS) && value.elements.includes("TextBlock");
     const actionsOK = allowedList(value.actions, ACTIONS);
     const layoutOK = value.card_version === "1.5" && elementsOK && limits.payloadValid && limits.layoutValid;
-    const display = config.display_enabled && profilesOK && (value.profiles as readonly string[]).includes("octo/v1") && layoutOK && actionsOK;
+    // Display only (D-W2 Option A): advertised elements outside the closed list are ignored, never negotiated or
+    // emitted; TextBlock stays mandatory. Interaction keeps the strict list, and actions stay strict for both.
+    const displayElements = stringList(value.elements) ? value.elements.filter(e => ELEMENTS.includes(e)) : [];
+    const displayLayoutOK = value.card_version === "1.5" && displayElements.includes("TextBlock") && limits.payloadValid && limits.layoutValid;
+    const display = config.display_enabled && profilesOK && (value.profiles as readonly string[]).includes("octo/v1") && displayLayoutOK && actionsOK;
     const interaction = config.interaction_enabled && profilesOK && (value.profiles as readonly string[]).includes("octo/v2")
       && layoutOK && actionsOK && (value.actions as readonly string[]).includes("Action.Submit")
       && allowedList(value.inputs, Object.keys(INPUTS)) && limits.inputsValid;
@@ -85,7 +89,7 @@ export function parseProfile(value: unknown): NormalizedProfile {
       automatic: Object.freeze({ state: auto ? "enabled" : "disabled", ...(auto && typeof template !== "string" ? { template } : {}),
         maxPayloadBytes: limits.limits.maxPayloadBytes }),
       display: Object.freeze({ state: display ? "enabled" : "disabled", ...(display ? { profile: "octo/v1" as const, cardVersion: "1.5" as const } : {}),
-        elements: readonlySet(display ? value.elements as readonly string[] : []), limits: limits.limits }),
+        elements: readonlySet(display ? displayElements : []), limits: limits.limits }),
       interaction: Object.freeze({ state: interaction ? "enabled" : "disabled", ...(interaction ? { profile: "octo/v2" as const, cardVersion: "1.5" as const } : {}),
         inputs: readonlySet(interaction ? (value.inputs as readonly string[]).map(k => INPUTS[k]) : []), limits: limits.limits }),
       reasons: Object.freeze([...reasons]),

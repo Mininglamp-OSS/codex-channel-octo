@@ -7,9 +7,12 @@
  * - `beginTurn` freezes a `TrustedTurnContext` from router-verified fields
  *   and returns the turn's coordinator; a newer generation of the same
  *   session supersedes the older one. Only when every explicit-tool gate
- *   G-a…G-g holds (AM-08 v4 §7.2) does it also register the generation's
- *   handler and return the authority-free `CardInjectionLaunch`; the
- *   production op table is empty at WP-08, so no turn gets one;
+ *   G-a…G-g holds (AM-08 v4 §7.2), a transport exists and both route facts
+ *   (OBO, document task) are proven false does it also register the
+ *   generation's handler and return the authority-free `CardInjectionLaunch`.
+ *   The op table is derived per runtime from `PRODUCTION_EXPLICIT_OPS`, with
+ *   display capabilities read from this Bot's own policy; the explicit
+ *   transport sends through this Bot's API client and the shared pacer;
  * - `onTimeout` is the router's `DispatchObserver`: it addresses the exact
  *   dispatch handle, never the latest turn of a session;
  * - `close(reason)` runs the single aggregate drain, retires the card store
@@ -63,6 +66,8 @@ import {
   type PreparedAutomaticRecovery,
 } from "./recovery.js";
 import { createResourceRegistry, type CardDrainResult } from "./resource-registry.js";
+import { createExplicitDisplay, type ExplicitDisplayCapabilities } from "./explicit-display.js";
+import { createExplicitTransport } from "./explicit-transport.js";
 import type { CardBinding } from "./store.js";
 import {
   PRODUCTION_EXPLICIT_OPS,
@@ -71,7 +76,9 @@ import {
   gatewayAdmitsInjection,
   type CardInjectionLaunch,
   type ExplicitGeneration,
+  type ExplicitOpHandler,
   type ExplicitOpTable,
+  type ExplicitTransport,
   type ToolHost,
 } from "./tool-host.js";
 import { cardSubsystemPaths, ledgerRecovered } from "./recovery.js";
@@ -118,6 +125,14 @@ export interface CardTurnInput {
   readonly resetEpoch: number;
   /** Authenticated in-process cron fire. */
   readonly cron: boolean;
+  /**
+   * Router-verified on-behalf-of fact. `undefined` means unknown: no trusted
+   * upstream contract names it yet (D-W1(b)), and an unknown or `true` fact
+   * offers no explicit op. Never guessed `false`.
+   */
+  readonly obo: boolean | undefined;
+  /** Router-verified document-task fact; same rules as {@link CardTurnInput.obo}. */
+  readonly docTask: boolean | undefined;
   /** Monotonic dispatch deadline (`TurnContext.deadline`); bounds explicit authority. */
   readonly deadlineMono?: number;
   /** Resolves the turn's Codex working directory, checked for project config layers (G-d); read only past G-b/G-c/G-e. */
@@ -158,6 +173,8 @@ export interface CardRuntimeOptions {
   readonly newId?: () => string;
   /** Test-only explicit op table (G-b); never set by `index.ts`. */
   readonly explicitOpsForTest?: ExplicitOpTable;
+  /** Test-only explicit transport; `null` builds none. Never set by `index.ts`. */
+  readonly explicitTransportForTest?: ExplicitTransport | null;
 }
 
 export interface OpenCardRuntimeOptions extends CardRuntimeOptions {
@@ -190,6 +207,30 @@ export function classifyCardError(err: unknown): RuntimeErrorCategory {
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * Display capabilities of one call: this Bot's negotiated elements and
+ * effective limits, plus the snapshot they came from; undefined unless the
+ * Bot's current policy allows display.
+ */
+function displayCapabilities(policy: CardPolicy, botRef: BotRef): ExplicitDisplayCapabilities | undefined {
+  const auth = policy.authorize("display", { botRef });
+  if (!auth.allowed) return undefined;
+  return Object.freeze({ elements: auth.snapshot.display.elements, limits: auth.limits, snapshot: auth.snapshot });
+}
+
+/**
+ * Per-runtime op table derived from the registered keys: display gets a
+ * handler bound to this Bot's capabilities. An op with no per-runtime
+ * handler here is left out.
+ */
+function runtimeExplicitOps(registered: ExplicitOpTable, capabilities: () => ExplicitDisplayCapabilities | undefined): ExplicitOpTable {
+  const table = new Map<ToolOpcode, ExplicitOpHandler>();
+  for (const op of registered.keys()) {
+    if (op === "display") table.set(op, createExplicitDisplay({ capabilities }) as ExplicitOpHandler);
+  }
+  return Object.freeze(table);
 }
 
 /**
@@ -320,14 +361,22 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
   // Explicit tools. G-b: with no op there is no host, listener or bootstrap
   // directory at all; G-g: the host also refuses a store whose ledger was not
   // recovered first. Only the production entry point supplies the data dir.
-  const explicitOps = options.explicitOpsForTest ?? PRODUCTION_EXPLICIT_OPS;
+  const explicitOps = options.explicitOpsForTest ?? runtimeExplicitOps(PRODUCTION_EXPLICIT_OPS, () => displayCapabilities(policy, botRef));
+  let transport: ExplicitTransport | undefined;
+  try {
+    transport = options.explicitTransportForTest === null ? undefined
+      : options.explicitTransportForTest ?? createExplicitTransport({ api, pacer, policy, clock });
+  } catch {
+    transport = undefined;
+  }
   const openOptions = "dataDir" in options ? options as OpenCardRuntimeOptions : undefined;
   let toolHost: ToolHost | undefined;
   if (explicitOps.size > 0 && openOptions?.bootstrapExcludedRoots !== undefined && ledgerRecovered(subsystem.store)) {
     try {
       toolHost = createToolHost({ store: subsystem.store, installationRef: subsystem.meta.installationRef,
         cardsDir: cardSubsystemPaths(openOptions.dataDir).cardsDir, ops: explicitOps,
-        excludedRoots: openOptions.bootstrapExcludedRoots, clock, wall: openOptions.wall ?? WALL, timers, policy });
+        excludedRoots: openOptions.bootstrapExcludedRoots, clock, wall: openOptions.wall ?? WALL, timers, policy,
+        ...(transport !== undefined ? { transport } : {}) });
     } catch {
       toolHost = undefined;
     }
@@ -365,12 +414,14 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
   // Warm the policy so the first turn's decision usually sees a resolved snapshot.
   track(refresh());
 
-  /** Ops offered to one turn when G-a, G-c, G-d, G-e and G-g hold; empty otherwise. */
+  /** Ops offered to one turn when G-a, G-c, G-d, G-e and G-g hold, a transport exists and the route is proven ordinary; empty otherwise. */
   const explicitOffer = (input: CardTurnInput): { readonly ops: readonly ToolOpcode[]; readonly cwd?: string } => {
     const none = { ops: [] };
     if (toolHost === undefined || closing || !ledgerRecovered(subsystem.store)) return none; // G-b, G-g
+    if (transport === undefined) return none; // a call could only be charged and fail
     if (!explicitPlatformCertified()) return none; // G-c
-    if (input.cron === true) return none; // G-e: no OBO or document-task target exists on this path
+    if (input.cron === true) return none; // G-e
+    if (input.obo !== false || input.docTask !== false) return none; // D-W1(b): unknown or true is not offered
     if (typeof input.deadlineMono !== "number" || !Number.isFinite(input.deadlineMono) || input.deadlineMono <= clock.nowMono()) return none;
     if (typeof input.currentResetEpoch !== "function" || typeof input.sessionCwd !== "function") return none;
     let cwd: string;
@@ -404,8 +455,8 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
           resetEpoch,
           policyIdentity: botRef.credentialRef,
           runtimeIncarnation: RUNTIME_INCARNATION,
-          // No OBO or document-task targets exist on this path; both fail closed if ever set.
-          routeEligibility: Object.freeze({ kind, obo: false, docTask: false, cron: input.cron === true }),
+          // Only a fact proven false is false; an unknown one counts as ineligible (D-W1(b)).
+          routeEligibility: Object.freeze({ kind, obo: input.obo !== false, docTask: input.docTask !== false, cron: input.cron === true }),
           origin: Object.freeze({ kind: "user" as const }),
         });
         const binding: CardBinding = Object.freeze({ sessionKey: input.sessionKey, channelId: input.channelId,

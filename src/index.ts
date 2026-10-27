@@ -489,6 +489,8 @@ export async function handleMessage(
         const begun = cardRuntime.beginTurn({
           dispatchId: turn.turnId, sessionKey, channelId, channelType, requesterUid: msg.from_uid,
           resetEpoch: typeof barrier === 'number' ? barrier : 0, cron: isAuthenticCronFire(msg.payload),
+          // No trusted inbound field marks OBO or document-task deliveries yet, so both stay unknown and no explicit op is offered.
+          obo: undefined, docTask: undefined,
           deadlineMono: turn.deadline, sessionCwd: () => resolveSessionCwd(config.cwdBase ?? config.cwd, sessionCtx),
           currentResetEpoch: () => { const b = store.getResetBarrier(sessionKey); return typeof b === 'number' ? b : 0; },
         });
