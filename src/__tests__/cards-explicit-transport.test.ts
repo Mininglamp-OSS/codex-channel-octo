@@ -245,6 +245,110 @@ describe('the built snapshot is re-authorized, pinned, just before the send (C4)
   });
 });
 
+describe('every emitted element is rechecked against the current display element set (X1)', () => {
+  /** Refresh the policy to the same Bot's profile with a different element set; display stays enabled. */
+  const shrinkTo = async (r: ReturnType<typeof unitRig>, elements: string[]) => {
+    r.setProfile(() => profile({ elements }));
+    await r.time.advance(60_001);
+    await r.policy.snapshot();
+    // The pinned snapshot is still authorized and its limits still cover the card: only the element set moved.
+    const auth = r.policy.authorize('display', { botRef: r.botRef });
+    expect(auth.allowed).toBe(true);
+  };
+  const types = (card: DisplayExplicitCard) => JSON.stringify(card.authored.card);
+
+  it('a FactSet card after a TextBlock-only refresh fails closed with zero fetches', async () => {
+    const r = unitRig();
+    const card = await r.build();
+    expect(types(card)).toContain('"FactSet"');
+    await shrinkTo(r, ['TextBlock']);
+    expect(r.policy.authorize('display', { botRef: r.botRef }, card.snapshot).allowed).toBe(true);
+    expect(await r.send(card)).toEqual({ kind: 'failed' });
+    expect(r.net.sends()).toHaveLength(0);
+    expect(r.pacer.gate).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, DisplayCardArgs, string, string[]]>([
+    ['a FactSet nested in a ColumnSet column', { blocks: [{ kind: 'columns', columns: [{ blocks: [{ kind: 'text', text: 'a' }] },
+      { blocks: [{ kind: 'facts', items: [{ label: 'k', value: 'v' }] }] }] }] }, 'FactSet',
+    ['TextBlock', 'RichTextBlock', 'Container', 'ColumnSet', 'Table', 'ActionSet']],
+    ['a FactSet nested in a Container', { blocks: [{ kind: 'group', blocks: [{ kind: 'facts', items: [{ label: 'k', value: 'v' }] }] }] },
+      'FactSet', ['TextBlock', 'Container']],
+    ['a Container nested in a ColumnSet column', {
+      blocks: [{ kind: 'columns', columns: [{ blocks: [{ kind: 'group', blocks: [{ kind: 'text', text: 'deep' }] }] }] }] }, 'Container',
+    ['TextBlock', 'ColumnSet']],
+    ['a ColumnSet itself', { blocks: [{ kind: 'columns', columns: [{ blocks: [{ kind: 'text', text: 'a' }] }] }] }, 'ColumnSet',
+      ['TextBlock', 'Container']],
+    ['an OpenUrl ActionSet', { blocks: [{ kind: 'link', label: 'site', url: 'https://example.com/a' }] }, 'ActionSet', ['TextBlock']],
+    ['a ToggleVisibility ActionSet over a hidden Container', { blocks: [{ kind: 'collapsible', label: 'more',
+      blocks: [{ kind: 'text', text: 'hidden' }] }] }, 'ActionSet', ['TextBlock', 'Container']],
+    ['a CopyToClipboard ActionSet', { blocks: [{ kind: 'copy', label: 'copy', text: 'abc' }] }, 'ActionSet', ['TextBlock', 'FactSet']],
+    ['a RichTextBlock', { blocks: [{ kind: 'rich_text', runs: [{ kind: 'strong', text: 'x' }] }] }, 'RichTextBlock', ['TextBlock']],
+    ['a Table', { blocks: [{ kind: 'table', headers: ['h'], rows: [['c']] }] }, 'Table', ['TextBlock', 'Container']],
+  ])('%s that the refresh dropped fails closed with zero fetches', async (_name, args, dropped, remaining) => {
+    const r = unitRig();
+    const card = await r.build(args);
+    expect(types(card)).toContain(`"type":"${dropped}"`);
+    await shrinkTo(r, remaining);
+    expect(await r.send(card)).toEqual({ kind: 'failed' });
+    expect(r.net.sends()).toHaveLength(0);
+  });
+
+  it('an unchanged element set after a refresh still sends exactly once', async () => {
+    const r = unitRig();
+    const card = await r.build({ title: 'All', blocks: [{ kind: 'facts', items: [{ label: 'k', value: 'v' }] },
+      { kind: 'columns', columns: [{ blocks: [{ kind: 'group', blocks: [{ kind: 'table', headers: ['h'], rows: [['c']] }] }] }] },
+      { kind: 'collapsible', label: 'more', blocks: [{ kind: 'rich_text', runs: [{ kind: 'text', text: 'r' }] }] }] });
+    await shrinkTo(r, [...(profile().elements as string[])]);
+    expect(await r.send(card)).toEqual({ kind: 'acked', messageId: expect.stringMatching(/^9\d+$/) });
+    expect(r.net.sends()).toHaveLength(1);
+  });
+
+  it('a refresh that drops only elements the card does not use still sends exactly once', async () => {
+    const r = unitRig();
+    const card = await r.build();
+    await shrinkTo(r, ['TextBlock', 'FactSet']);
+    expect(await r.send(card)).toEqual({ kind: 'acked', messageId: expect.stringMatching(/^9\d+$/) });
+    expect(r.net.sends()).toHaveLength(1);
+  });
+
+  it('a TextBlock-only card built under the narrowed set still sends', async () => {
+    const r = unitRig();
+    await shrinkTo(r, ['TextBlock']);
+    const card = await r.build();
+    expect(types(card)).not.toContain('"FactSet"');
+    expect(await r.send(card)).toEqual({ kind: 'acked', messageId: expect.stringMatching(/^9\d+$/) });
+    expect(r.net.sends()).toHaveLength(1);
+  });
+
+  it('two Bots: only the Bot whose element set shrank refuses its card; the other still sends once', async () => {
+    const a = unitRig();
+    const b = unitRig();
+    const cardA = await a.build();
+    const cardB = await b.build();
+    await shrinkTo(a, ['TextBlock']);
+    await b.time.advance(60_001);
+    await b.policy.snapshot();
+    expect(await a.send(cardA)).toEqual({ kind: 'failed' });
+    expect(await b.send(cardB)).toEqual({ kind: 'acked', messageId: expect.stringMatching(/^9\d+$/) });
+    expect(a.net.sends()).toHaveLength(0);
+    expect(b.net.sends()).toHaveLength(1);
+    // Bot B's card is never re-authorized against Bot A's narrowed policy.
+    const t = createExplicitTransport({ api: a.api, pacer: a.pacer, policy: a.policy, clock: a.time.clock });
+    expect(await t.send({ ctx: a.ctx, card: cardB, cardId: 'card-1', clientMsgNo: randomUUID(), signal: new AbortController().signal })).toEqual({ kind: 'failed' });
+    expect(a.net.sends()).toHaveLength(0);
+  });
+
+  it('a card whose body carries an element outside the closed display set is never sent', async () => {
+    const r = unitRig();
+    const card = await r.build();
+    const forged = { ...card, authored: { ...card.authored, card: { ...card.authored.card,
+      body: [{ type: 'Container', items: [{ type: 'Image', url: 'https://example.com/i.png' }] }] } } };
+    expect(await r.send(forged as unknown as ExplicitCard)).toEqual({ kind: 'failed' });
+    expect(r.net.sends()).toHaveLength(0);
+  });
+});
+
 // ─── [INT-SYNTH] the real runtime with the production table ─────────────────
 
 const THREAD = 'thr-1';
