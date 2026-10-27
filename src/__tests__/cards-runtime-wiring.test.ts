@@ -81,23 +81,48 @@ vi.mock("../cards/recovery.js", async (importOriginal) => {
   return { ...actual, openCardSubsystem: vi.fn((o: Parameters<typeof actual.openCardSubsystem>[0]) => { openSpy.calls++; return actual.openCardSubsystem(o); }) };
 });
 
+// Route-fact wiring cases only: when enabled, every opened runtime is wrapped so
+// the exact `CardTurnInput` of each `beginTurn` is recorded; it still delegates
+// every call to the real runtime, so no gate is bypassed.
+const beginSpy = vi.hoisted(() => ({ enabled: false, inputs: [] as unknown[] }));
+vi.mock("../cards/runtime.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../cards/runtime.js")>();
+  const wrap = (r: CardRuntime): CardRuntime => Object.freeze({
+    get closing() { return r.closing; },
+    recovery: r.recovery,
+    beginTurn: (input: Parameters<CardRuntime["beginTurn"]>[0]) => { beginSpy.inputs.push(input); return r.beginTurn(input); },
+    idle: () => r.idle(),
+    close: (reason?: ShutdownReason) => r.close(reason),
+    onTimeout: (id: string) => r.onTimeout(id),
+  });
+  return { ...actual, openCardRuntime: vi.fn(async (o: Parameters<typeof actual.openCardRuntime>[0]) => {
+    const r = await actual.openCardRuntime(o);
+    return r !== undefined && beginSpy.enabled ? wrap(r) : r;
+  }) };
+});
+
 import { BotManager, type ManagedBot } from "../bot-manager.js";
 import type { ShutdownReason } from "../cards/contracts.js";
 import { provisionFirstInstallMarker } from "../cards/migrations.js";
 import { createPacer } from "../cards/pacer.js";
 import { cardSubsystemPaths } from "../cards/recovery.js";
 import { reduceItem } from "../cards/redact.js";
-import { openCardRuntime, type CardRuntime } from "../cards/runtime.js";
+import { openCardRuntime, type CardRuntime, type CardTurnInput } from "../cards/runtime.js";
+import { explicitPlatformCertified, registerGatewayExposure, type ExplicitTransport } from "../cards/tool-host.js";
 import type { Config } from "../config.js";
 import { createAdapter, type DbAdapter } from "../db-adapter.js";
 import { GroupContext } from "../group-context.js";
 import { handleMessage, startBot } from "../index.js";
+import { WS_IM_ORIGIN, deriveRouteFacts, type InboundOrigin, type OutboundIdentity } from "../inbound-route-facts.js";
+import { CRON_FIRE_NONCE_KEY } from "../cron-fire-marker.js";
 import { OctoGateway } from "../gateway.js";
 import { ChannelType, MessageType, type BotMessage } from "../octo/types.js";
 import { SessionRouter } from "../session-router.js";
 import { SessionStore } from "../session-store.js";
 import { StreamRelay } from "../stream-relay.js";
 import { profile } from "./fixtures/card-profile.js";
+import { liveProfileJson } from "./fixtures/card-profile-live.js";
+import { ADMITTED_CONFIG_TOML } from "./fixtures/gd-admit.js";
 import { json, manualTime, scriptedFetch, type ManualTime } from "./fixtures/card-write-harness.js";
 
 const API = "https://test.invalid";
@@ -767,5 +792,202 @@ describe("startBot hook sites (index.ts)", () => {
     expect(callback).toBeDefined();
     await callback!();
     expect(registrySpy.reasons).toEqual(["shutdown"]);
+  });
+});
+
+// ─── WP-09 RC-1 route facts through the real ordinary path ──────────────────
+
+const CERTIFIED = explicitPlatformCertified();
+const FANOUT = { obo_fanout: true, obo_origin_channel_id: "g1", obo_origin_channel_type: 2, obo_origin_from_uid: "u_bob",
+  obo_origin_message_id: "1", obo_origin_message_idstr: "1", obo_respond_as: "u_admin", obo_grantor_uid: "u_admin",
+  obo_grantor_name: "Admin", obo_system_hint: "h" };
+
+type Facts = Pick<CardTurnInput, "obo" | "docTask" | "cron">;
+const factsOf = (i: unknown): Facts => { const x = i as CardTurnInput; return { obo: x.obo, docTask: x.docTask, cron: x.cron }; };
+
+describe("route facts reach beginTurn from the WS IM origin only (T1, T2, T4, T5, T7)", () => {
+  beforeEach(() => { beginSpy.enabled = true; beginSpy.inputs = []; });
+  afterEach(() => { beginSpy.enabled = false; vi.unstubAllGlobals(); });
+
+  async function turn(payload: Record<string, unknown>, origin?: unknown, outboundIdentity?: OutboundIdentity): Promise<Facts> {
+    beginSpy.inputs = [];
+    const h = new Harness();
+    await h.open(true);
+    try {
+      agentScript.events = answerEvents("ok", false);
+      h.stub(() => ok("1"));
+      const msg = { ...h.msg(1), payload: { type: MessageType.Text, content: "request 1", ...payload } } as BotMessage;
+      const args = [msg, h.config, h.store, h.router, new GroupContext(h.adapter, 6000), new StreamRelay(), "bot", () => "owner", h.runtime] as const;
+      if (origin === undefined && outboundIdentity === undefined) await handleMessage(...args);
+      else await handleMessage(...args, origin as InboundOrigin | undefined, outboundIdentity);
+      await h.time.advance(0);
+      await h.runtime?.idle();
+      expect(beginSpy.inputs).toHaveLength(1);
+      return factsOf(beginSpy.inputs[0]);
+    } finally {
+      await h.close();
+    }
+  }
+
+  it("T1: WS IM origin, clean payload and the Bot's own identity → both facts proven false", async () => {
+    expect(await turn({}, WS_IM_ORIGIN, "self")).toEqual({ obo: false, docTask: false, cron: false });
+  });
+
+  it("a legacy caller without an origin stays unknown/unknown, as before this change", async () => {
+    expect(await turn({})).toEqual({ obo: undefined, docTask: undefined, cron: false });
+    expect(await turn({}, WS_IM_ORIGIN)).toEqual({ obo: undefined, docTask: false, cron: false });
+  });
+
+  it("T2: a top-level reserved key or a full fan-out copy → obo true", async () => {
+    for (const p of [{ __obo_processed__: true, actual_sender_uid: "bot" }, { obo_future: 1 }, FANOUT]) {
+      beginSpy.inputs = [];
+      expect(await turn(p, WS_IM_ORIGIN, "self")).toEqual({ obo: true, docTask: false, cron: false });
+    }
+  });
+
+  it("T3: a reserved key nested under extra has no effect", async () => {
+    expect(await turn({ extra: FANOUT }, WS_IM_ORIGIN, "self")).toEqual({ obo: false, docTask: false, cron: false });
+  });
+
+  it("T4: a forged origin string or look-alike object, or a payload-claimed origin → unknown/unknown", async () => {
+    for (const [p, o] of [[{}, "ws_im"], [{}, { ...WS_IM_ORIGIN }], [{ origin: "ws_im" }, undefined]] as const) {
+      beginSpy.inputs = [];
+      expect(await turn(p, o ?? null, "self")).toEqual({ obo: undefined, docTask: undefined, cron: false });
+    }
+  });
+
+  it("T5: a config-OBO outbound identity → obo unknown", async () => {
+    expect(await turn({}, WS_IM_ORIGIN, "unknown")).toEqual({ obo: undefined, docTask: false, cron: false });
+  });
+
+  it("T7: a forged _cronFire without the nonce is the ordinary WS path", async () => {
+    expect(await turn({ _cronFire: true, [CRON_FIRE_NONCE_KEY]: "guess" }, WS_IM_ORIGIN, "self")).toEqual({ obo: false, docTask: false, cron: false });
+  });
+
+  describe("startBot: onInbound mints the origin and the merged Config sets the identity", () => {
+    let root: string;
+    beforeEach(() => {
+      root = tempDir("wp09-route-");
+      mkdirSync(join(root, "data"));
+      provision(join(root, "data"));
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) =>
+        new URL(String(url)).pathname.endsWith("/v1/bot/card/profile") ? json(200, profile()) : ok("1")));
+    });
+    afterEach(() => { vi.restoreAllMocks(); });
+
+    async function inbound(extra: Record<string, unknown>, payload: Record<string, unknown> = {}): Promise<Facts> {
+      let handler: ((m: BotMessage) => void) | undefined;
+      const set = OctoGateway.prototype.setMessageHandler;
+      vi.spyOn(OctoGateway.prototype, "setMessageHandler").mockImplementation(function (this: OctoGateway, fn: (m: BotMessage) => void) {
+        handler = fn; return set.call(this, fn);
+      });
+      agentScript.events = answerEvents("ok", false);
+      const stack = await startBot({ botId: "test", apiUrl: API, botToken: "test-token", baseDir: root,
+        cards: { disable: false, eventTransport: "off", reasoningSummary: "off" }, cwd: join(root, "workspace"), dataDir: join(root, "data"),
+        sdk: { toolProgress: true }, rateLimit: { maxPerMinute: 100 }, context: { maxContextChars: 6000, historyLimit: 40 },
+        maxResponseChars: 524288, dispatchTimeoutMs: 300000, ...extra } as Parameters<typeof startBot>[0], true);
+      try {
+        expect(handler).toBeDefined();
+        handler!({ message_id: "m1", message_seq: 1, from_uid: "human", from_name: "Human", channel_id: "human", channel_type: ChannelType.DM,
+          timestamp: 0, payload: { type: MessageType.Text, content: "hi", ...payload } } as BotMessage);
+        await vi.waitFor(() => expect(beginSpy.inputs).toHaveLength(1));
+        return factsOf(beginSpy.inputs[0]);
+      } finally {
+        await stack.shutdown();
+      }
+    }
+
+    it("a clean merged Config → both facts proven false", async () => {
+      expect(await inbound({})).toEqual({ obo: false, docTask: false, cron: false });
+    });
+
+    it("an onBehalfOf / on_behalf_of key anywhere in the merged Config → obo unknown", async () => {
+      expect(await inbound({ onBehalfOf: "u_admin" })).toEqual({ obo: undefined, docTask: false, cron: false });
+      beginSpy.inputs = [];
+      expect(await inbound({ bots: [{ id: "test", persona: { on_behalf_of: "u_admin" } }] })).toEqual({ obo: undefined, docTask: false, cron: false });
+    });
+
+    it("a reserved inbound key → obo true", async () => {
+      expect(await inbound({}, { obo_fanout: true })).toEqual({ obo: true, docTask: false, cron: false });
+    });
+  });
+});
+
+describe("T1: derived facts offer an explicit op only when every other gate holds", () => {
+  const cleanups: (() => void | Promise<void>)[] = [];
+  afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
+
+  async function rig(over: { profile?: () => unknown; transport?: ExplicitTransport | null } = {}) {
+    const dataDir = join(tempDir("wp09-offer-"), "data");
+    mkdirSync(dataDir);
+    provision(dataDir);
+    const adapter = createAdapter(join(dataDir, "cc-octo.db"));
+    new SessionStore(adapter).init();
+    const time = manualTime();
+    const net = scriptedFetch(time);
+    const body = over.profile ?? (() => liveProfileJson());
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) =>
+      new URL(String(input)).pathname.endsWith("/v1/bot/card/profile") ? json(200, body()) : net.fetchImpl(input, init)) as typeof fetch;
+    const codexHome = tempDir("wp09-home-");
+    writeFileSync(join(codexHome, "config.toml"), ADMITTED_CONFIG_TOML);
+    cleanups.push(registerGatewayExposure({ sandboxMode: "read-only", codexHome, apiKeyConfigured: true, sdkEnvAuthMarkers: false }));
+    // No explicitOpsForTest: the production table; the transport hook only removes the transport.
+    const runtime = (await openCardRuntime({ adapter, dataDir, apiUrl: API, botToken: "token-a", clock: time.clock, wall: time.wall,
+      timers: time.timers, fetchImpl, bootstrapExcludedRoots: [], ...(over.transport !== undefined ? { explicitTransportForTest: over.transport } : {}) }))!;
+    await runtime.idle();
+    cleanups.push(async () => { await runtime.close("shutdown"); adapter.close(); });
+    const cwd = mkdtempSync(join("/tmp", "wp09-cwd-"));
+    roots.push(cwd);
+    const ordinary = deriveRouteFacts({ origin: WS_IM_ORIGIN, payload: { type: MessageType.Text, content: "hi" }, outboundIdentity: "self" });
+    const input = (o: Partial<CardTurnInput> = {}): CardTurnInput => ({ dispatchId: `d-${Math.random()}`, sessionKey: `s-${Math.random()}`,
+      channelId: "c", channelType: ChannelType.DM, requesterUid: "u", resetEpoch: 0, cron: false, ...ordinary,
+      deadlineMono: time.now() + 300_000, sessionCwd: () => cwd, currentResetEpoch: () => 0, ...o });
+    return { runtime, input, time };
+  }
+
+  it.runIf(CERTIFIED)("control: the ordinary WS IM facts with every gate holding are offered display", async () => {
+    const r = await rig();
+    const begun = r.runtime.beginTurn(r.input())!;
+    expect(begun.injection).toBeDefined();
+    expect(begun.coordinator.context.routeEligibility).toEqual({ kind: "dm", obo: false, docTask: false, cron: false });
+  });
+
+  it("any single other gate false → no offer", async () => {
+    const r = await rig();
+    const negatives: Partial<CardTurnInput>[] = [
+      { cron: true },
+      { deadlineMono: r.time.now() },
+      { deadlineMono: undefined },
+      { currentResetEpoch: undefined },
+      { sessionCwd: undefined },
+      { sessionCwd: () => { throw new Error("cwd"); } },
+      { sessionCwd: () => join(tmpdir(), "..", "not-admitted-cwd") },
+    ];
+    for (const n of negatives) expect(r.runtime.beginTurn(r.input(n))!.injection, JSON.stringify(Object.keys(n))).toBeUndefined();
+    const denied = await rig({ profile: () => profile({ config: { ...profile().config!, display_enabled: false, interaction_enabled: false } }) });
+    expect(denied.runtime.beginTurn(denied.input())!.injection).toBeUndefined();
+    const noTransport = await rig({ transport: null });
+    expect(noTransport.runtime.beginTurn(noTransport.input())!.injection).toBeUndefined();
+    await r.runtime.close("shutdown");
+    expect(r.runtime.beginTurn(r.input())).toBeUndefined();
+  });
+
+  it("known OBO, config OBO, a forged origin or a non-IM origin derive facts that are never offered", async () => {
+    const r = await rig();
+    const derived = [
+      deriveRouteFacts({ origin: WS_IM_ORIGIN, payload: { content: "hi", ...FANOUT }, outboundIdentity: "self" }),
+      deriveRouteFacts({ origin: WS_IM_ORIGIN, payload: { content: "hi", __obo_processed__: true }, outboundIdentity: "self" }),
+      deriveRouteFacts({ origin: WS_IM_ORIGIN, payload: { content: "hi" }, outboundIdentity: "unknown" }),
+      deriveRouteFacts({ origin: "ws_im" as unknown as InboundOrigin, payload: { content: "hi" }, outboundIdentity: "self" }),
+      deriveRouteFacts({ origin: undefined, payload: { content: "hi" }, outboundIdentity: "self" }),
+    ];
+    for (const f of derived) {
+      const begun = r.runtime.beginTurn(r.input(f))!;
+      expect(begun.injection).toBeUndefined();
+      const e = begun.coordinator.context.routeEligibility;
+      expect([e.obo, e.docTask]).toEqual([f.obo !== false, f.docTask !== false]);
+    }
   });
 });
