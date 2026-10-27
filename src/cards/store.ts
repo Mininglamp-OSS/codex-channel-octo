@@ -17,8 +17,12 @@ import type { DbAdapter } from '../db-adapter.js';
 import type { CardChannelType, WallClock } from './contracts.js';
 import {
   CARD_TABLES,
+  INTENT_LEGACY_KEY,
+  LEGACY_IDS_SQL,
   RETENTION_MS,
   SESSION_TTL_MS,
+  UPGRADE_V2_BACKUP_LABEL,
+  UPGRADE_V3_BACKUP_LABEL,
   backupBeforeMigration,
   checkCardInvariants,
   countProtectedRows,
@@ -26,6 +30,8 @@ import {
   isSafeStoreRef,
   migrateCardSchema,
   referenceSchema,
+  upgradeCardSchemaV1toV2,
+  upgradeCardSchemaV2toV3,
   type ActivationMarkerPort,
   type BackupReceipt,
   type CardMeta,
@@ -54,6 +60,9 @@ export type CardStoreErrorCode = 'storage_failure' | 'nested_transaction' | 'asy
  * not in an absorbing terminal state ('done', 'error', 'expired', 'abandoned').
  */
 const SEQUENCE_WRITABLE = "message_id IS NOT NULL AND state NOT IN ('done','error','expired','abandoned')";
+
+/** Not a legacy automatic card recorded by the version 2 upgrade (DTI-2.1 §2.2). */
+const NOT_LEGACY = `card_id NOT IN (${LEGACY_IDS_SQL})`;
 
 export class CardStoreError extends Error {
   constructor(
@@ -142,7 +151,14 @@ export interface CardMessageRecord {
   readonly seqReserved: number;
   readonly seqAcked: number;
   readonly state: CardMessageState;
+  /** Recorded terminal outcome; `null` while the row is live. */
   readonly terminalReason: CardTerminalReason | null;
+  /** Durable terminal intent of a live automatic card; `null` once terminal or without intent. */
+  readonly terminalIntent: CardTerminalReason | null;
+  readonly templateId: string | null;
+  readonly templateVersion: string | null;
+  readonly profile: string | null;
+  readonly pinnedLimitsJson: string | null;
   readonly createdAt: number;
   readonly terminalAt: number | null;
   readonly retainUntil: number | null;
@@ -214,6 +230,12 @@ export interface ExplicitRequestRecord {
   readonly clientMsgNo: string | null;
   readonly cardId: string | null;
   readonly safeResultJson: string | null;
+  /** `app_server` when the app-server dispatcher finished the row (SC-1). */
+  readonly settledBy: 'app_server' | null;
+  /** Late transport outcome after an app-server `ambiguous` settlement; audit only. */
+  readonly lateOutcome: 'acked' | 'failed' | null;
+  readonly lateMessageId: string | null;
+  readonly lateAt: number | null;
 }
 
 // ─── Store options ──────────────────────────────────────────────────────────
@@ -231,7 +253,8 @@ export interface CardStoreOptions {
 interface MessageRow {
   card_id: string; kind: CardKind; session_key: string; channel_id: string; channel_type: number;
   generation: string; topic_scope: string | null; reset_epoch: number; body_digest: string;
-  client_msg_no: string; message_id: string | null; seq_reserved: number; seq_acked: number;
+  client_msg_no: string; message_id: string | null; template_id: string | null; template_version: string | null;
+  profile: string | null; pinned_limits_json: string | null; seq_reserved: number; seq_acked: number;
   state: CardMessageState; terminal_reason: CardTerminalReason | null; created_at: number;
   terminal_at: number | null; retain_until: number | null;
 }
@@ -271,6 +294,7 @@ interface RequestRow {
   generation: string; request_id: string; body_digest: string; opcode: ExplicitOpcode;
   state: ExplicitRequestState; send_slot: number | null; client_msg_no: string | null;
   card_id: string | null; safe_result_json: string | null;
+  settled_by: 'app_server' | null; late_outcome: 'acked' | 'failed' | null; late_message_id: string | null; late_at: number | null;
 }
 
 function toMessage(r: MessageRow): CardMessageRecord {
@@ -279,7 +303,10 @@ function toMessage(r: MessageRow): CardMessageRecord {
     channelType: r.channel_type, generation: r.generation, topicScope: r.topic_scope,
     resetEpoch: r.reset_epoch, bodyDigest: r.body_digest, clientMsgNo: r.client_msg_no,
     messageId: r.message_id, seqReserved: r.seq_reserved, seqAcked: r.seq_acked, state: r.state,
-    terminalReason: r.terminal_reason, createdAt: r.created_at, terminalAt: r.terminal_at,
+    terminalReason: r.terminal_at === null ? null : r.terminal_reason,
+    terminalIntent: r.terminal_at === null ? r.terminal_reason : null,
+    templateId: r.template_id, templateVersion: r.template_version, profile: r.profile,
+    pinnedLimitsJson: r.pinned_limits_json, createdAt: r.created_at, terminalAt: r.terminal_at,
     retainUntil: r.retain_until,
   };
 }
@@ -323,7 +350,8 @@ function toRequest(r: RequestRow): ExplicitRequestRecord {
   return {
     generation: r.generation, requestId: r.request_id, bodyDigest: r.body_digest, opcode: r.opcode,
     state: r.state, sendSlot: r.send_slot, clientMsgNo: r.client_msg_no, cardId: r.card_id,
-    safeResultJson: r.safe_result_json,
+    safeResultJson: r.safe_result_json, settledBy: r.settled_by, lateOutcome: r.late_outcome,
+    lateMessageId: r.late_message_id, lateAt: r.late_at,
   };
 }
 
@@ -401,10 +429,35 @@ export type SendOutcomeResult =
   | { readonly kind: 'not_found' }
   | { readonly kind: 'invalid_state'; readonly state: CardMessageState };
 
+export type MarkTerminalResult =
+  | { readonly kind: 'updated' }
+  /** The same terminal outcome is already recorded; nothing changed. */
+  | { readonly kind: 'already_terminal' }
+  | { readonly kind: 'not_found' }
+  /** Not an acknowledged live automatic card, or a different terminal outcome is recorded; nothing changed. */
+  | { readonly kind: 'invalid_state'; readonly state: CardMessageState };
+
+/** Terminal reasons an automatic card can record; `expired` belongs to interactive cards. */
+const AUTOMATIC_TERMINAL_REASONS: ReadonlySet<string> = new Set<CardTerminalReason>(['completed', 'failed', 'interrupted', 'timed_out', 'policy_revoked']);
+
 export type ReserveSequenceResult =
   | { readonly kind: 'reserved'; readonly seq: number }
   | { readonly kind: 'not_found' }
   | { readonly kind: 'invalid_state'; readonly state: CardMessageState };
+
+export type ReserveTerminalResult =
+  | { readonly kind: 'reserved'; readonly seq: number }
+  /** A durable intent is already recorded; nothing was written. */
+  | { readonly kind: 'intent_exists'; readonly reason: CardTerminalReason; readonly seq: number }
+  | { readonly kind: 'not_found' }
+  | { readonly kind: 'invalid_state'; readonly state: CardMessageState };
+
+/** A live, bound automatic card as seen by startup recovery. */
+export interface LiveAutomaticCard {
+  readonly record: CardMessageRecord;
+  /** Written before durable intent existed (version 2 `intent_legacy`). */
+  readonly legacy: boolean;
+}
 
 export type AckSequenceResult =
   | { readonly kind: 'acked'; readonly seqAcked: number }
@@ -520,6 +573,12 @@ export interface FinishExplicitInput {
   readonly requestId: string;
   readonly outcome: ExplicitFinish;
   readonly safeResultJson: string;
+  /**
+   * `app_server`: finished by the app-server dispatcher. Recorded on the row;
+   * an `ambiguous` row so marked never accepts a later `acked`/`failed`
+   * (SC-1a) — late outcomes go to {@link CardStore.recordLateExplicitOutcome}.
+   */
+  readonly settledBy?: 'app_server';
   /** Card transition committed in the same transaction (T-bind / failure / ambiguity). */
   readonly message?:
     | { readonly kind: 'ack'; readonly messageId: string; readonly currentResetEpoch: number; readonly policyAllows: boolean }
@@ -534,6 +593,24 @@ export type FinishExplicitResult =
   | { readonly kind: 'invalid_transition'; readonly from: ExplicitRequestState }
   | { readonly kind: 'not_found' }
   | { readonly kind: 'card_transition_failed'; readonly detail: AckMessageResult | SendOutcomeResult };
+
+export interface LateExplicitOutcomeInput {
+  readonly generation: string;
+  readonly requestId: string;
+  readonly outcome: 'acked' | 'failed';
+  /**
+   * For `acked`: the acknowledged identity, bound to the card through the
+   * existing T-bind with the current reset epoch and a fresh policy decision
+   * (SC-1b). The request row, its safe result and the budgets never change.
+   */
+  readonly ack?: { readonly messageId: string; readonly currentResetEpoch: number; readonly policyAllows: boolean };
+}
+
+export type LateExplicitOutcomeResult =
+  | { readonly kind: 'recorded'; readonly ack?: AckMessageResult }
+  | { readonly kind: 'already' }
+  | { readonly kind: 'not_found' }
+  | { readonly kind: 'not_applicable'; readonly state: ExplicitRequestState; readonly settledBy: 'app_server' | null };
 
 export interface LedgerRecovery {
   readonly closedGenerations: number;
@@ -912,22 +989,89 @@ export class CardStore {
   }
 
   /**
+   * Record the acknowledged terminal of an automatic card: `completed` →
+   * `done`, any other automatic reason → `error`, with the existing
+   * retention. Only a bound live automatic card (`active`/`answering`) moves.
+   * The same outcome again is idempotent; a different recorded outcome is
+   * absorbing and nothing is written. Sending/ambiguous rows are refused, so
+   * N2 suspension is never lifted here. A row with a durable intent moves
+   * only to that intent's reason and only once its terminal sequence is
+   * acknowledged (I3/I4).
+   */
+  markTerminal(cardId: string, reason: CardTerminalReason): MarkTerminalResult {
+    text(cardId);
+    if (typeof reason !== 'string' || !AUTOMATIC_TERMINAL_REASONS.has(reason)) throw new CardStoreError('invalid_input');
+    const target = reason === 'completed' ? 'done' : 'error';
+    return this.tx<MarkTerminalResult>(() => {
+      const msg = this.get<MessageRow>('SELECT * FROM card_messages WHERE card_id = ?', cardId);
+      if (!msg) return { kind: 'not_found' };
+      // Only a bound automatic card: a send-failed or unsent row never had a terminal edit.
+      if (msg.kind !== 'automatic' || msg.message_id === null) return { kind: 'invalid_state', state: msg.state };
+      if (msg.state === 'done' || msg.state === 'error') {
+        return msg.state === target && msg.terminal_reason === reason ? { kind: 'already_terminal' } : { kind: 'invalid_state', state: msg.state };
+      }
+      if (msg.state !== 'active' && msg.state !== 'answering') return { kind: 'invalid_state', state: msg.state };
+      if (msg.terminal_reason !== null && (msg.terminal_reason !== reason || msg.seq_acked !== msg.seq_reserved)) {
+        return { kind: 'invalid_state', state: msg.state };
+      }
+      const now = this.now();
+      const changed = this.run(
+        `UPDATE card_messages SET state = ?, terminal_reason = ?, terminal_at = ?, retain_until = ?, updated_at = ?
+         WHERE card_id = ? AND state IN ('active','answering')
+           AND (terminal_reason IS NULL OR (terminal_reason = ? AND seq_acked = seq_reserved))`,
+        target, reason, now, now + RETENTION_MS, now, cardId, reason,
+      );
+      if (changed === 0) return { kind: 'invalid_state', state: msg.state };
+      return { kind: 'updated' };
+    });
+  }
+
+  /**
    * Reserve the next edit sequence before the edit is sent. Only a bound,
    * non-terminal card can reserve: the guard is part of the UPDATE predicate,
-   * so a terminal transition can never be followed by a sequence change.
+   * so a terminal transition can never be followed by a sequence change. A
+   * card with a durable terminal intent never reserves again (I2), and a
+   * legacy automatic card is frozen.
    */
   reserveSequence(cardId: string): ReserveSequenceResult {
     text(cardId);
     return this.tx(() => {
       const changed = this.run(
         `UPDATE card_messages SET seq_reserved = seq_reserved + 1, updated_at = ?
-         WHERE card_id = ? AND ${SEQUENCE_WRITABLE}`,
+         WHERE card_id = ? AND ${SEQUENCE_WRITABLE} AND terminal_reason IS NULL AND ${NOT_LEGACY}`,
         this.now(), cardId,
       );
       const msg = this.get<MessageRow>('SELECT * FROM card_messages WHERE card_id = ?', cardId);
       if (!msg) return { kind: 'not_found' };
       if (changed === 0) return { kind: 'invalid_state', state: msg.state };
       return { kind: 'reserved', seq: msg.seq_reserved };
+    });
+  }
+
+  /**
+   * Reserve the terminal edit sequence of a live automatic card and record
+   * its terminal intent in the same transaction, before any transport (I1).
+   * The intent is absorbing (I3): a repeat writes nothing and reports the
+   * recorded intent. Legacy, unbound, sending/ambiguous, terminal and
+   * non-automatic rows are refused.
+   */
+  reserveTerminalSequence(cardId: string, reason: CardTerminalReason): ReserveTerminalResult {
+    text(cardId);
+    if (typeof reason !== 'string' || !AUTOMATIC_TERMINAL_REASONS.has(reason)) throw new CardStoreError('invalid_input');
+    return this.tx<ReserveTerminalResult>(() => {
+      const changed = this.run(
+        `UPDATE card_messages SET seq_reserved = seq_reserved + 1, terminal_reason = ?, updated_at = ?
+         WHERE card_id = ? AND kind = 'automatic' AND state IN ('active','answering')
+           AND message_id IS NOT NULL AND terminal_at IS NULL AND terminal_reason IS NULL AND ${NOT_LEGACY}`,
+        reason, this.now(), cardId,
+      );
+      const msg = this.get<MessageRow>('SELECT * FROM card_messages WHERE card_id = ?', cardId);
+      if (!msg) return { kind: 'not_found' };
+      if (changed === 1) return { kind: 'reserved', seq: msg.seq_reserved };
+      if (msg.terminal_at === null && msg.terminal_reason !== null) {
+        return { kind: 'intent_exists', reason: msg.terminal_reason, seq: msg.seq_reserved };
+      }
+      return { kind: 'invalid_state', state: msg.state };
     });
   }
 
@@ -1530,6 +1674,8 @@ export class CardStore {
       if (req.state === input.outcome && (req.state === 'acked' || req.state === 'failed' || req.state === 'cancelled')) {
         return { kind: 'already', state: req.state };
       }
+      // SC-1a: an app-server ambiguous settlement is final for the request row.
+      if (req.settled_by !== null && req.state === 'ambiguous') return { kind: 'invalid_transition', from: req.state };
       const allowed: Record<ExplicitRequestState, readonly ExplicitFinish[]> = {
         charged: ['failed', 'cancelled'],
         reserved: ['acked', 'failed', 'ambiguous', 'cancelled'],
@@ -1560,10 +1706,48 @@ export class CardStore {
         return { kind: 'invalid_transition', from: req.state };
       }
       this.run(
-        `UPDATE card_explicit_requests SET state = ?, safe_result_json = ?, updated_at = ? WHERE generation = ? AND request_id = ?`,
-        input.outcome, resultJson, now, input.generation, input.requestId,
+        `UPDATE card_explicit_requests SET state = ?, safe_result_json = ?, settled_by = COALESCE(settled_by, ?), updated_at = ?
+         WHERE generation = ? AND request_id = ?`,
+        input.outcome, resultJson, input.settledBy === 'app_server' ? 'app_server' : null, now, input.generation, input.requestId,
       );
       return ack ? { kind: 'finished', ack } : { kind: 'finished' };
+    });
+  }
+
+  /**
+   * SC-1: record a late transport outcome for a request the app-server
+   * dispatcher settled `ambiguous`. Written once to the `late_*` audit
+   * columns; the request state, safe result, invocation and send counters are
+   * never touched. A late ack may bind the card through the existing T-bind
+   * (fresh policy, current reset epoch), in the same transaction (SC-1b).
+   */
+  recordLateExplicitOutcome(input: LateExplicitOutcomeInput): LateExplicitOutcomeResult {
+    text(input.generation); text(input.requestId);
+    if (input.outcome !== 'acked' && input.outcome !== 'failed') throw new CardStoreError('invalid_input');
+    if (input.outcome === 'failed' && input.ack !== undefined) throw new CardStoreError('invalid_input');
+    if (input.ack !== undefined) { text(input.ack.messageId); int(input.ack.currentResetEpoch); }
+    return this.tx<LateExplicitOutcomeResult>(() => {
+      const now = this.now();
+      const req = this.get<RequestRow>(
+        'SELECT * FROM card_explicit_requests WHERE generation = ? AND request_id = ?',
+        input.generation, input.requestId,
+      );
+      if (!req) return { kind: 'not_found' };
+      if (req.settled_by === null || req.state !== 'ambiguous') {
+        return { kind: 'not_applicable', state: req.state, settledBy: req.settled_by };
+      }
+      if (req.late_outcome !== null) return { kind: 'already' };
+      let ack: AckMessageResult | undefined;
+      if (input.ack !== undefined && req.card_id !== null) {
+        ack = this.ackInTx({ cardId: req.card_id, messageId: input.ack.messageId,
+          currentResetEpoch: input.ack.currentResetEpoch, policyAllows: input.ack.policyAllows }, now);
+      }
+      this.run(
+        `UPDATE card_explicit_requests SET late_outcome = ?, late_message_id = ?, late_at = ?
+         WHERE generation = ? AND request_id = ?`,
+        input.outcome, input.ack?.messageId ?? null, now, input.generation, input.requestId,
+      );
+      return ack ? { kind: 'recorded', ack } : { kind: 'recorded' };
     });
   }
 
@@ -1651,6 +1835,38 @@ export class CardStore {
 
   activeSessions(): number {
     return this.read(() => this.activeSessionCount());
+  }
+
+  /**
+   * Kinds of cards whose initial send may have been accepted (`sending` or
+   * `ambiguous`): the D-B/N2 suspension input of every write-queue
+   * construction. Read-only; a read failure throws so callers fail closed.
+   */
+  unresolvedSendKinds(): readonly string[] {
+    return this.read(() => {
+      const rows = this.adapter
+        .prepare(`SELECT DISTINCT kind FROM card_messages WHERE state IN ('ambiguous','sending') ORDER BY kind`)
+        .all() as Array<{ kind: string }>;
+      return Object.freeze(rows.map((r) => r.kind));
+    });
+  }
+
+  /**
+   * Live, bound automatic cards (`active`/`answering`) in creation order, the
+   * input of startup recovery. Sending/ambiguous rows are excluded (N2). A
+   * read failure throws so the caller fails closed.
+   */
+  liveAutomaticCards(): readonly LiveAutomaticCard[] {
+    return this.read(() => {
+      const rows = this.adapter
+        .prepare(
+          `SELECT *, card_id IN (${LEGACY_IDS_SQL}) AS legacy_flag FROM card_messages
+           WHERE kind = 'automatic' AND terminal_at IS NULL AND state IN ('active','answering') AND message_id IS NOT NULL
+           ORDER BY created_at, card_id`,
+        )
+        .all() as Array<MessageRow & { legacy_flag: number }>;
+      return Object.freeze(rows.map((r) => Object.freeze({ record: toMessage(r), legacy: r.legacy_flag === 1 })));
+    });
   }
 
   checkInvariants(): InvariantViolation[] {
@@ -1780,8 +1996,16 @@ export function compareProtectedGraph(candidate: ProtectedGraphRows, tail: Prote
   const out: RestoreConflict[] = [];
   const keyOf = (table: CardTable, r: Readonly<Record<string, unknown>>): string =>
     TABLE_KEYS[table].map((k) => String(r[k])).join('/');
-  const lineage = (rows: ProtectedGraphRows): unknown => rows.card_meta.find((r) => r.k === 'lineage_id')?.v;
-  if (lineage(candidate) !== lineage(tail)) out.push({ table: 'card_meta', key: 'lineage_id', code: 'lineage_mismatch' });
+  const metaOf = (rows: ProtectedGraphRows, k: string): unknown => rows.card_meta.find((r) => r.k === k)?.v;
+  if (metaOf(candidate, 'lineage_id') !== metaOf(tail, 'lineage_id')) out.push({ table: 'card_meta', key: 'lineage_id', code: 'lineage_mismatch' });
+  // The intent-capable version and its exact legacy set are facts of the lineage.
+  if (metaOf(candidate, 'schema_version') !== metaOf(tail, 'schema_version')) {
+    out.push({ table: 'card_meta', key: 'schema_version', code: 'conflicting_fact' });
+  }
+  const tailLegacy = metaOf(tail, INTENT_LEGACY_KEY);
+  if (tailLegacy !== undefined && metaOf(candidate, INTENT_LEGACY_KEY) !== tailLegacy) {
+    out.push({ table: 'card_meta', key: INTENT_LEGACY_KEY, code: 'conflicting_fact' });
+  }
   const admittedSessions = (rows: ProtectedGraphRows): Set<unknown> => new Set(rows.card_admissions.map((r) => r.session_id));
   const candAdmitted = admittedSessions(candidate);
   const tailAdmitted = admittedSessions(tail);
@@ -1806,6 +2030,10 @@ export function compareProtectedGraph(candidate: ProtectedGraphRows, tail: Prote
         }
         if (t.message_id !== null && c.message_id !== t.message_id) out.push({ table, key, code: 'conflicting_fact' });
         if (t.terminal_at !== null && c.terminal_at === null) out.push({ table, key, code: 'revived_work' });
+        // A durable terminal intent is absorbing: losing it revives work, changing it contradicts.
+        if (t.terminal_at === null && t.terminal_reason !== null && c.terminal_reason !== t.terminal_reason) {
+          out.push({ table, key, code: c.terminal_reason === null ? 'revived_work' : 'conflicting_fact' });
+        }
         // Absorbing terminal outcomes are final facts: a different terminal outcome contradicts.
         if (TERMINAL_MESSAGE.has(String(t.state)) && TERMINAL_MESSAGE.has(String(c.state))
             && (c.state !== t.state || c.terminal_reason !== t.terminal_reason)) {
@@ -1943,6 +2171,40 @@ export async function initializeCardStore(options: CardStoreInitOptions): Promis
   const ready = (meta: CardMeta, provenance: 'first_install' | 'reopened' | 'activation_reconciled', backup?: BackupReceipt): CardStoreInit => {
     return backup ? { state: 'ready', store, meta, provenance, backup } : { state: 'ready', store, meta, provenance };
   };
+  /**
+   * Open a complete store, upgrading it in place first: version 1 to the
+   * intent-capable version 2 (DTI-2.1 §2.2), then version 2 to version 3
+   * (SC-1). One backup before the first step, then for each step a
+   * re-inspection, one upgrade transaction and the invariants. Any failure
+   * leaves the store at the last committed version and cards disabled.
+   */
+  const open = async (meta: CardMeta, provenance: 'reopened' | 'activation_reconciled'): Promise<CardStoreInit> => {
+    if (meta.schemaVersion === 3) return ready(meta, provenance);
+    let backup: BackupReceipt;
+    try {
+      backup = await backupBeforeMigration(adapter, options.backupDir, nowMs,
+        meta.schemaVersion === 1 ? UPGRADE_V2_BACKUP_LABEL : UPGRADE_V3_BACKUP_LABEL);
+    } catch {
+      return disabled('migration_failed');
+    }
+    let upgraded: CardMeta = meta;
+    while (upgraded.schemaVersion !== 3) {
+      const from = upgraded.schemaVersion;
+      try {
+        // Re-inspect after the await: the store must still be the same lineage at the same version.
+        const again = inspectCardSchema(adapter);
+        if (again.state !== 'complete' || again.meta.schemaVersion !== from || again.meta.lineageId !== meta.lineageId) {
+          return disabled('provenance_conflict');
+        }
+        upgraded = from === 1 ? upgradeCardSchemaV1toV2(adapter, meta.lineageId) : upgradeCardSchemaV2toV3(adapter, meta.lineageId);
+      } catch {
+        return disabled('migration_failed');
+      }
+      const violations = validate();
+      if (violations) return disabled(violations.includes('integrity_check') ? 'integrity_failed' : 'invariant_failed', violations);
+    }
+    return ready(upgraded, provenance, backup);
+  };
   const activate = (lineageId: string, backupRef: string | null, nowMs: number): boolean => {
     try {
       marker.write({
@@ -1966,7 +2228,7 @@ export async function initializeCardStore(options: CardStoreInitOptions): Promis
     if (violations) return disabled(violations.includes('integrity_check') ? 'integrity_failed' : 'invariant_failed', violations);
     if (m.everActivated) {
       if (m.lineageId !== inspected.meta.lineageId) return disabled('lineage_mismatch');
-      return ready(inspected.meta, 'reopened');
+      return open(inspected.meta, 'reopened');
     }
     // DB committed but the marker fsync never happened. No card effect can
     // precede activation, so only an empty graph is reconciled forward.
@@ -1978,7 +2240,7 @@ export async function initializeCardStore(options: CardStoreInitOptions): Promis
     }
     if (rows !== 0) return disabled('provenance_conflict');
     if (!activate(inspected.meta.lineageId, m.backupRef, nowMs)) return disabled('marker_write_failed');
-    return ready(inspected.meta, 'activation_reconciled');
+    return open(inspected.meta, 'activation_reconciled');
   }
 
   // No card objects in the database.
