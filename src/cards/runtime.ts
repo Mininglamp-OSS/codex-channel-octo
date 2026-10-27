@@ -70,6 +70,7 @@ import { createExplicitDisplay, type ExplicitDisplayCapabilities } from "./expli
 import { createExplicitTransport } from "./explicit-transport.js";
 import type { CardBinding } from "./store.js";
 import {
+  CALL_ADMISSION_MS,
   PRODUCTION_EXPLICIT_OPS,
   createToolHost,
   explicitPlatformCertified,
@@ -426,7 +427,9 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
     if (!explicitPlatformCertified()) return none; // G-c
     if (input.cron === true) return none; // G-e
     if (input.obo !== false || input.docTask !== false) return none; // D-W1(b): unknown or true is not offered
-    if (typeof input.deadlineMono !== "number" || !Number.isFinite(input.deadlineMono) || input.deadlineMono <= clock.nowMono()) return none;
+    if (typeof input.deadlineMono !== "number" || !Number.isFinite(input.deadlineMono)) return none;
+    const remaining = input.deadlineMono - clock.nowMono();
+    if (!Number.isFinite(remaining) || remaining < CALL_ADMISSION_MS) return none;
     if (typeof input.currentResetEpoch !== "function" || typeof input.sessionCwd !== "function") return none;
     let cwd: string;
     try { cwd = input.sessionCwd(); } catch { return none; }

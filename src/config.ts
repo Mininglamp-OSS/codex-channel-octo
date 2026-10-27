@@ -1,4 +1,5 @@
 import { validateRecovery, type RecoveryConfig } from './agent-recovery.js';
+import { preserveConfigSuppression } from './inbound-route-facts.js';
 /**
  * Configuration loading.
  *
@@ -418,7 +419,7 @@ function readConfigFile(configFilePath: string): PartialConfig {
       if (bot !== null && typeof bot === 'object') checkCardSource(bot);
     }
   }
-  return cleaned as PartialConfig;
+  return preserveConfigSuppression(cleaned, parsed) as PartialConfig;
 }
 
 function assertPrivateMemory(value: Config['privateMemory']): void {
@@ -493,7 +494,7 @@ function resolveCards(...layers: (Partial<CardConfig> | undefined)[]): Readonly<
 
 function mergeConfig(base: Config, override: PartialConfig): Config {
   assertPrivateMemory(override.privateMemory);
-  return {
+  return preserveConfigSuppression({
     cards: resolveCards(base.cards, override.cards),
     botToken: override.botToken ?? base.botToken,
     apiUrl: override.apiUrl ?? base.apiUrl,
@@ -524,7 +525,7 @@ function mergeConfig(base: Config, override: PartialConfig): Config {
     allowedBotUids: override.allowedBotUids ?? base.allowedBotUids,
     mentionFreeGroups: override.mentionFreeGroups ?? base.mentionFreeGroups,
     bots: override.bots ?? base.bots,
-  };
+  }, base, override);
 }
 
 /**
@@ -793,7 +794,7 @@ export function resolveBotConfigs(config: Config): Config[] {
     assertMaxResponseChars(id, resolved.maxResponseChars);
     // GROUP.md trust boundary: groupConfigDir must not be the bot's writable cwd.
     assertGroupConfigDirOutsideCwd(resolved);
-    return resolved;
+    return preserveConfigSuppression(resolved, config, bot, perBotFile);
   });
 
   return resolvedBots;

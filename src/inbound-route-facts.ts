@@ -67,6 +67,9 @@ const OBO_CONFIG_KEY_NORMALIZED = new Set(OBO_CONFIG_KEYS.map(normalizeConfigKey
 const MAX_CONFIG_DEPTH = 64;
 const MAX_CONFIG_NODES = 50_000;
 
+/** Suppression only: no source key, value, credential or sending authority. */
+const CONFIG_SUPPRESSED: unique symbol = Symbol("inbound-route-facts.config-suppressed");
+
 function isReservedKey(key: string): boolean {
   return key.startsWith(RESERVED_MARKER_PREFIX) || key.startsWith(RESERVED_ROUTING_PREFIX) || key === RESERVED_SENDER_KEY;
 }
@@ -113,6 +116,19 @@ export function deriveOutboundIdentity(config: unknown): OutboundIdentity {
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * Preserve unknown identity BEFORE a configuration projection drops raw keys.
+ * Each explicit merge must carry this bit from its sources. It is immutable
+ * and non-enumerable, carries no configuration values, and is invisible to
+ * JSON/log projections. The pure scanner treats every symbol key as unknown.
+ */
+export function preserveConfigSuppression<T extends object>(target: T, ...sources: readonly unknown[]): T {
+  if (deriveOutboundIdentity(target) === "unknown" || sources.some((source) => deriveOutboundIdentity(source) === "unknown")) {
+    Object.defineProperty(target, CONFIG_SUPPRESSED, { value: true });
+  }
+  return target;
 }
 
 function scanConfig(root: object): boolean {

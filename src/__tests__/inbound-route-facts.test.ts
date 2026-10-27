@@ -249,6 +249,11 @@ describe("K2: configuration projection retains suppression without retaining raw
         expect(deriveOutboundIdentity(resolveBotConfigs(loaded)[0])).toBe("unknown");
         expect(JSON.stringify(resolved)).not.toContain("fixture-sensitive-value");
         expect(Object.keys(resolved)).not.toContain(key);
+        const symbols = Object.getOwnPropertySymbols(resolved);
+        expect(symbols).toHaveLength(1);
+        expect(Object.getOwnPropertyDescriptor(resolved, symbols[0])).toEqual({
+          value: true, enumerable: false, writable: false, configurable: false,
+        });
       }
     }
   });
@@ -367,8 +372,11 @@ describe("T7: a forged _cronFire without the nonce is the ordinary WS path", () 
 describe("T8: single origin producer and turn entry", () => {
   const prod = () => sourceFiles(SRC).map((f) => ({ file: rel(f), text: readFileSync(f, "utf8") }));
 
-  it("index.ts is the only production importer of the route-facts module, and onInbound the only origin producer", () => {
-    expect(prod().filter((f) => /inbound-route-facts(\.js)?["']/.test(f.text)).map((f) => f.file)).toEqual(["index.ts"]);
+  it("config.ts imports only suppression provenance; index.ts alone imports and produces the WS origin", () => {
+    expect(prod().filter((f) => /inbound-route-facts(\.js)?["']/.test(f.text)).map((f) => f.file)).toEqual(["config.ts", "index.ts"]);
+    expect(read("config.ts").match(/import[^;]+inbound-route-facts\.js['"];?/g)).toEqual([
+      "import { preserveConfigSuppression } from './inbound-route-facts.js';",
+    ]);
     expect(prod().filter((f) => f.file !== "inbound-route-facts.ts" && f.text.includes("WS_IM_ORIGIN")).map((f) => f.file)).toEqual(["index.ts"]);
     const index = read("index.ts");
     const uses = [...index.matchAll(/WS_IM_ORIGIN/g)].map((m) => m.index!);
