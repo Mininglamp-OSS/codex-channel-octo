@@ -12,6 +12,7 @@
  *   codex-channel-octo stop  [--timeout=<seconds>]
  *   codex-channel-octo restart
  *   codex-channel-octo status
+ *   codex-channel-octo cards provision --bot <botId>
  *
  * POSIX only (macOS/Linux): stop relies on SIGTERM/SIGKILL. On Windows, run the
  * gateway under a service manager instead — Node has no SIGTERM semantics there.
@@ -24,6 +25,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { DEFAULT_CONFIG_PATH } from './config.js';
 import { configure } from './configure.js';
+import { describeProvisionResult, provisionBotCards } from './cards/provision.js';
 
 export interface SupervisorPaths {
   baseDir: string;
@@ -61,6 +63,10 @@ export interface ParsedArgs {
   model?: string;
   /** `configure --api-url <url>` — Octo IM server url (cc top-level apiUrl). */
   apiUrl?: string;
+  /** Positional subcommand of `cards` (e.g. `cards provision`). */
+  subcommand?: string;
+  /** `cards provision --bot <botId>`. */
+  bot?: string;
 }
 
 /**
@@ -103,6 +109,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let apiKey: string | undefined;
   let model: string | undefined;
   let apiUrl: string | undefined;
+  let subcommand: string | undefined;
+  let bot: string | undefined;
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '--foreground' || a === '-f') {
@@ -142,11 +150,21 @@ export function parseArgs(argv: string[]): ParsedArgs {
       apiUrl = next;
     } else if (a.startsWith('--api-url=')) {
       apiUrl = a.slice('--api-url='.length);
+    } else if (a === '--bot') {
+      const next = rest[++i];
+      if (next === undefined || next.startsWith('--')) {
+        throw new Error('cards: --bot requires a value')
+      }
+      bot = next;
+    } else if (a.startsWith('--bot=')) {
+      bot = a.slice('--bot='.length);
+    } else if (cmd === 'cards' && !a.startsWith('-') && subcommand === undefined) {
+      subcommand = a;
     } else if (!a.startsWith('-') && version === undefined) {
       version = a;
     }
   }
-  return { cmd, foreground, timeoutMs: timeoutSec * 1000, version, gatewayUrl, apiKey, model, apiUrl };
+  return { cmd, foreground, timeoutMs: timeoutSec * 1000, version, gatewayUrl, apiKey, model, apiUrl, subcommand, bot };
 }
 
 /**
@@ -421,6 +439,7 @@ Usage:
   codex-channel-octo status                 show running state
   codex-channel-octo upgrade [<version>]    npm install -g the gateway (default latest) then restart
   codex-channel-octo configure --gateway-url <url> [--api-key <key>] [--model <model>] [--api-url <octo-server-url>]   write LLM gateway + key (+ optional model / Octo server url) to config (key also via CODEX_OCTO_CONFIGURE_API_KEY)
+  codex-channel-octo cards provision --bot <botId>   write first-install card provenance for one bot (never overwrites)
   codex-channel-octo version                print the version
 
 Paths (under ~/.codex-channel-octo):
@@ -440,7 +459,7 @@ export async function run(argv: string[], baseDir?: string, procId: ProcIdentity
     console.error(`codex-channel-octo: ${(err as Error).message}`);
     return 2;
   }
-  const { cmd, foreground, timeoutMs, version, gatewayUrl, apiKey, model, apiUrl } = parsed;
+  const { cmd, foreground, timeoutMs, version, gatewayUrl, apiKey, model, apiUrl, subcommand, bot } = parsed;
   const paths = resolveSupervisorPaths(baseDir);
   switch (cmd) {
     case 'start':
@@ -465,6 +484,20 @@ export async function run(argv: string[], baseDir?: string, procId: ProcIdentity
         console.error(`codex-channel-octo: ${(err as Error).message}`);
         return 2;
       }
+    }
+    case 'cards': {
+      if (subcommand !== 'provision' || !bot) {
+        console.error('codex-channel-octo: usage: cards provision --bot <botId>');
+        return 2;
+      }
+      const configPath = baseDir ? join(baseDir, 'config.json') : undefined;
+      const result = provisionBotCards({ botId: bot, configPath });
+      if (result.kind === 'provisioned') {
+        console.log(`codex-channel-octo: ${describeProvisionResult(bot, result)}`);
+        return 0;
+      }
+      console.error(`codex-channel-octo: ${describeProvisionResult(bot, result)}`);
+      return 1;
     }
     case 'version':
     case '--version':

@@ -539,8 +539,8 @@ export type AutomaticStatus =
   | { readonly view: "active"; readonly state: "answering"; readonly reason: "answering"; readonly text: "Answering" }
   | { readonly view: "result"; readonly state: "completed"; readonly reason: "completed"; readonly text: "Completed" }
   | { readonly view: "error"; readonly state: "error"; readonly reason: "failed"; readonly text: "Failed" }
-  | { readonly view: "error"; readonly state: "error"; readonly reason: "interrupted"; readonly text: "Interrupted; outcome needs review" }
-  | { readonly view: "error"; readonly state: "error"; readonly reason: "timed_out"; readonly text: "Timed out; a later reply may still arrive" }
+  | { readonly view: "error"; readonly state: "error"; readonly reason: "interrupted"; readonly text: "Interrupted; needs review" }
+  | { readonly view: "error"; readonly state: "error"; readonly reason: "timed_out"; readonly text: "Timed out" }
   | { readonly view: "error"; readonly state: "error"; readonly reason: "expired"; readonly text: "Expired" }
   | { readonly view: "error"; readonly state: "error"; readonly reason: "policy_revoked"; readonly text: "Unavailable by policy" };
 
