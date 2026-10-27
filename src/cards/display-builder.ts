@@ -141,8 +141,9 @@ class Renderer {
           ? [{ type: "RichTextBlock", inlines: block.runs.map(textRun) }]
           : [tb(block.runs.map(markdownRun).join(""))];
       case "facts":
+        // Fact title and value render Markdown, like TextBlock text.
         return this.has("FactSet")
-          ? [{ type: "FactSet", facts: block.items.map((f) => ({ title: inertText(f.label), value: inertText(f.value) })) }]
+          ? [{ type: "FactSet", facts: block.items.map((f) => ({ title: markdownText(f.label), value: markdownText(f.value) })) }]
           : block.items.map((f) => tb(`${markdownText(f.label)}: ${markdownText(f.value)}`));
       case "columns":
         if (this.has("ColumnSet")) {
