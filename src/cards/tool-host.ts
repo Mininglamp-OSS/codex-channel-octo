@@ -75,6 +75,7 @@ import {
   readFrame,
   type ToolRequestFrame,
 } from "./protocol.js";
+import { EXPLICIT_DISPLAY } from "./explicit-display.js";
 import { ledgerRecovered } from "./recovery.js";
 import { EXPLICIT_BUDGET_EXHAUSTED, MAX_EXPLICIT_INVOCATIONS, type CardBinding, type CardStore, type ExplicitCard, type ExplicitFinish, type FinishExplicitInput } from "./store.js";
 
@@ -183,8 +184,8 @@ export interface ExplicitOpHandler<O extends ToolOpcode = ToolOpcode> {
 
 export type ExplicitOpTable = ReadonlyMap<ToolOpcode, ExplicitOpHandler>;
 
-/** WP-08: frozen EMPTY. WP-09 adds the display handler only. */
-export const PRODUCTION_EXPLICIT_OPS: ExplicitOpTable = Object.freeze(new Map<ToolOpcode, ExplicitOpHandler>());
+/** WP-09: the display handler only; `interactive` stays unregistered until WP-10. */
+export const PRODUCTION_EXPLICIT_OPS: ExplicitOpTable = Object.freeze(new Map<ToolOpcode, ExplicitOpHandler>([["display", EXPLICIT_DISPLAY as ExplicitOpHandler]]));
 
 export const EXPLICIT_OP_UNAVAILABLE = Object.freeze({
   status: "error",

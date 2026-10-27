@@ -25,7 +25,7 @@ import { cardSubsystemPaths, openCardSubsystem } from '../cards/recovery.js';
 import type { CardBinding, CardStore, ExplicitCard } from '../cards/store.js';
 import {
   CALL_SETTLE_MS, JOIN_MAX, PRODUCTION_EXPLICIT_OPS, appServerToolset, createToolHost,
-  type ExplicitSendPort, type ExplicitTransport, type ExplicitTransportOutcome, type ToolHost,
+  type ExplicitOpHandler, type ExplicitOpTable, type ExplicitSendPort, type ExplicitTransport, type ExplicitTransportOutcome, type ToolHost,
 } from '../cards/tool-host.js';
 import { createAdapter, type DbAdapter } from '../db-adapter.js';
 import { SessionStore } from '../session-store.js';
@@ -205,7 +205,8 @@ function transport(outcome: () => Promise<ExplicitTransportOutcome> = async () =
   return t;
 }
 
-async function rig(t: ExplicitTransport): Promise<Rig> {
+async function rig(t: ExplicitTransport | undefined,
+  ops: ExplicitOpTable = new Map([['display', createExplicitDisplay({ capabilities: () => FULL }) as ExplicitOpHandler]])): Promise<Rig> {
   const dataDir = join(mkdtempSync(join(tmpdir(), 'wp09-disp-')), 'data');
   roots.push(dataDir);
   mkdirSync(dataDir);
@@ -222,7 +223,7 @@ async function rig(t: ExplicitTransport): Promise<Rig> {
   if (sub.state !== 'ready') throw new Error(`subsystem ${sub.state}`);
   const host = createToolHost({
     store: sub.store, installationRef: sub.meta.installationRef, cardsDir: p.cardsDir,
-    ops: new Map([['display', createExplicitDisplay({ capabilities: () => FULL })]]), excludedRoots: [],
+    ops, excludedRoots: [],
     clock: time.clock, wall: time.wall, timers: time.timers,
     entry: { nodePath: process.execPath, serverPath: new URL(import.meta.url).pathname }, transport: t,
   });
@@ -293,6 +294,19 @@ describe('sent only after the ACK (AC-010.4) through the real host', () => {
     expect(result(a.replies[0])).toEqual({ status: 'error', error: { code: 'validation_failed', diagnostics: [{ path: '$.blocks[0].url', rule: 'link_scheme' }] } });
     expect(t.sends).toBe(0);
     expect(counters(r, a.ctx.turnGeneration)).toEqual({ inv: 1, sends: 0 });
+  });
+});
+
+describe('production inertness at this head', () => {
+  it('the production table without a transport (as the runtime builds it) charges, fails and sends nothing', async () => {
+    const r = await rig(undefined, PRODUCTION_EXPLICIT_OPS);
+    const a = bound(r);
+    a.cards.onToolCall(1, call('c1'));
+    await r.time.advance(0);
+    expect(result(a.replies[0])).toEqual({ status: 'error', error: { code: 'unavailable', diagnostics: [{ path: '$.op', rule: 'explicit_op_unavailable' }] } });
+    expect(rows(r, a.ctx.turnGeneration)).toEqual([expect.objectContaining({ state: 'failed' })]);
+    expect(counters(r, a.ctx.turnGeneration)).toEqual({ inv: 1, sends: 0 });
+    expect(r.adapter.prepare('SELECT COUNT(*) AS n FROM card_messages').get()).toEqual({ n: 0 });
   });
 });
 

@@ -83,7 +83,7 @@ describe('display card body (AC-010.3)', () => {
     expect(body[5]).toEqual({ type: 'FactSet', facts: [{ title: 'Branch', value: 'main' }] });
     expect(body[6]).toMatchObject({ type: 'ColumnSet', columns: [{ type: 'Column', width: 'stretch' }, { type: 'Column', width: 'stretch' }] });
     expect(body[7]).toMatchObject({ type: 'Table', firstRowAsHeader: true, columns: [{ width: 1 }, { width: 1 }] });
-    expect((body[7] as { rows: unknown[] }).rows).toHaveLength(3);
+    expect((body[7] as { readonly rows: readonly unknown[] }).rows).toHaveLength(3);
     expect(body[8]).toEqual({ type: 'ActionSet', actions: [{ type: 'Action.OpenUrl', title: 'Open run', url: 'https://example.com/runs/1' }] });
     expect(body[9]).toEqual({ type: 'Container', items: [{ type: 'TextBlock', text: 'grouped', wrap: true }] });
   });
