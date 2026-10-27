@@ -120,15 +120,33 @@ export function deriveOutboundIdentity(config: unknown): OutboundIdentity {
 
 /**
  * Preserve unknown identity BEFORE a configuration projection drops raw keys.
+ * Shared layers own everything except the root `bots` registry; each entry
+ * is scanned separately as a selected layer, never as a sibling's source.
  * Each explicit merge must carry this bit from its sources. It is immutable
  * and non-enumerable, carries no configuration values, and is invisible to
  * JSON/log projections. The pure scanner treats every symbol key as unknown.
  */
-export function preserveConfigSuppression<T extends object>(target: T, ...sources: readonly unknown[]): T {
-  if (deriveOutboundIdentity(target) === "unknown" || sources.some((source) => deriveOutboundIdentity(source) === "unknown")) {
+export function preserveConfigSuppression<T extends object>(target: T, scope: "shared" | "selected", ...sources: readonly unknown[]): T {
+  const identity = scope === "shared" ? deriveSharedIdentity : deriveOutboundIdentity;
+  if (identity(target) === "unknown" || sources.some((source) => identity(source) === "unknown")) {
     Object.defineProperty(target, CONFIG_SUPPRESSED, { value: true });
   }
   return target;
+}
+
+/** A shared source excludes only its root Bot registry, without invoking accessors. */
+function deriveSharedIdentity(config: unknown): OutboundIdentity {
+  if (config === null || typeof config !== "object" || Array.isArray(config)) return "unknown";
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(config);
+    if (Object.hasOwn(descriptors, "bots") && !("value" in descriptors.bots)) return "unknown";
+    delete descriptors.bots;
+    // Preserve prototype, symbols and every other descriptor: a genuine
+    // shared suppression bit or uninspectable setting must still fail closed.
+    return deriveOutboundIdentity(Object.create(Object.getPrototypeOf(config), descriptors));
+  } catch {
+    return "unknown";
+  }
 }
 
 function scanConfig(root: object): boolean {

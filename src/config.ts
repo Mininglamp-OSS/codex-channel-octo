@@ -379,7 +379,7 @@ function defaults(): Config {
   };
 }
 
-function readConfigFile(configFilePath: string): PartialConfig {
+function readConfigFile(configFilePath: string, scope: 'shared' | 'selected' = 'selected'): PartialConfig {
   if (!existsSync(configFilePath)) {
     return {};
   }
@@ -416,10 +416,13 @@ function readConfigFile(configFilePath: string): PartialConfig {
   checkCardSource(cleaned);
   if (Array.isArray(cleaned.bots)) {
     for (const bot of cleaned.bots) {
-      if (bot !== null && typeof bot === 'object') checkCardSource(bot);
+      if (bot !== null && typeof bot === 'object') {
+        checkCardSource(bot);
+        preserveConfigSuppression(bot, 'selected');
+      }
     }
   }
-  return preserveConfigSuppression(cleaned, parsed) as PartialConfig;
+  return preserveConfigSuppression(cleaned, scope, parsed) as PartialConfig;
 }
 
 function assertPrivateMemory(value: Config['privateMemory']): void {
@@ -525,7 +528,7 @@ function mergeConfig(base: Config, override: PartialConfig): Config {
     allowedBotUids: override.allowedBotUids ?? base.allowedBotUids,
     mentionFreeGroups: override.mentionFreeGroups ?? base.mentionFreeGroups,
     bots: override.bots ?? base.bots,
-  }, base, override);
+  }, 'shared', base, override);
 }
 
 /**
@@ -549,7 +552,7 @@ export function loadConfig(configPath?: string): Config {
       `(see config.example.json / config.bot.example.json).`,
     );
   }
-  const fileCfg = readConfigFile(path);
+  const fileCfg = readConfigFile(path, 'shared');
   // Config comes ONLY from config.json (global + per-bot layers) — there is no
   // environment-variable override path. The Codex upstream routing
   // (sdk.codexBaseUrl / sdk.codexApiKey) is set in config.json and forwarded to
@@ -794,7 +797,8 @@ export function resolveBotConfigs(config: Config): Config[] {
     assertMaxResponseChars(id, resolved.maxResponseChars);
     // GROUP.md trust boundary: groupConfigDir must not be the bot's writable cwd.
     assertGroupConfigDirOutsideCwd(resolved);
-    return preserveConfigSuppression(resolved, config, bot, perBotFile);
+    preserveConfigSuppression(resolved, 'shared', config);
+    return preserveConfigSuppression(resolved, 'selected', bot, perBotFile);
   });
 
   return resolvedBots;
