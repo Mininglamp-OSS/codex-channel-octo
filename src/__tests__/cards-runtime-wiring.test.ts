@@ -84,13 +84,18 @@ vi.mock("../cards/recovery.js", async (importOriginal) => {
 // Route-fact wiring cases only: when enabled, every opened runtime is wrapped so
 // the exact `CardTurnInput` of each `beginTurn` is recorded; it still delegates
 // every call to the real runtime, so no gate is bypassed.
-const beginSpy = vi.hoisted(() => ({ enabled: false, inputs: [] as unknown[] }));
+const beginSpy = vi.hoisted(() => ({ enabled: false, inputs: [] as unknown[], offers: [] as boolean[] }));
 vi.mock("../cards/runtime.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../cards/runtime.js")>();
   const wrap = (r: CardRuntime): CardRuntime => Object.freeze({
     get closing() { return r.closing; },
     recovery: r.recovery,
-    beginTurn: (input: Parameters<CardRuntime["beginTurn"]>[0]) => { beginSpy.inputs.push(input); return r.beginTurn(input); },
+    beginTurn: (input: Parameters<CardRuntime["beginTurn"]>[0]) => {
+      beginSpy.inputs.push(input);
+      const begun = r.beginTurn(input);
+      beginSpy.offers.push(begun?.injection !== undefined);
+      return begun;
+    },
     idle: () => r.idle(),
     close: (reason?: ShutdownReason) => r.close(reason),
     onTimeout: (id: string) => r.onTimeout(id),
@@ -806,7 +811,7 @@ type Facts = Pick<CardTurnInput, "obo" | "docTask" | "cron">;
 const factsOf = (i: unknown): Facts => { const x = i as CardTurnInput; return { obo: x.obo, docTask: x.docTask, cron: x.cron }; };
 
 describe("route facts reach beginTurn from the WS IM origin only (T1, T2, T4, T5, T7)", () => {
-  beforeEach(() => { beginSpy.enabled = true; beginSpy.inputs = []; });
+  beforeEach(() => { beginSpy.enabled = true; beginSpy.inputs = []; beginSpy.offers = []; });
   afterEach(() => { beginSpy.enabled = false; vi.unstubAllGlobals(); });
 
   async function turn(payload: Record<string, unknown>, origin?: unknown, outboundIdentity?: OutboundIdentity): Promise<Facts> {
@@ -920,6 +925,39 @@ describe("route facts reach beginTurn from the WS IM origin only (T1, T2, T4, T5
       provision(resolved.dataDir);
       // Pass the exact resolver object: provenance may intentionally be non-enumerable.
       expect(await inbound({}, {}, resolved)).toEqual({ obo: layer === "clean" ? false : undefined, docTask: false, cron: false });
+    });
+
+    it.each(["clean", "inline-a", "inline-b", "file-a", "file-b", "global"])("two-Bot %s matrix through resolution, startBot and onInbound", async (scenario) => {
+      // startBot's real G-f excludes /tmp and the OS temp directory. Keep this
+      // owned fixture outside those roots so the clean-Bot offer is non-vacuous.
+      root = mkdtempSync(join("/var/tmp", "wp09-two-bots-"));
+      roots.push(root);
+      const marker = { onBehalfOf: "fixture-user" };
+      writeFileSync(join(root, "config.json"), JSON.stringify({ apiUrl: API,
+        sdk: { toolProgress: true, codexApiKey: "fixture-key" },
+        bots: ["a", "b"].map((id) => ({ id, ...(scenario === `inline-${id}` ? marker : {}) })),
+        ...(scenario === "global" ? marker : {}) }), { mode: 0o600 });
+      for (const id of ["a", "b"]) {
+        mkdirSync(join(root, id));
+        writeFileSync(join(root, id, "config.json"), JSON.stringify({ botToken: `fixture-token-${id}`,
+          ...(scenario === `file-${id}` ? marker : {}) }), { mode: 0o600 });
+        mkdirSync(join(root, id, "codex-home"));
+        writeFileSync(join(root, id, "codex-home", "config.toml"), ADMITTED_CONFIG_TOML);
+      }
+      const loaded = loadConfig(join(root, "config.json"));
+      const observed = [];
+      for (const id of ["a", "b"]) {
+        const resolved = resolveBotConfigById(loaded, id);
+        mkdirSync(resolved.dataDir, { recursive: true });
+        provision(resolved.dataDir);
+        beginSpy.inputs = [];
+        beginSpy.offers = [];
+        observed.push({ id, facts: await inbound({}, {}, resolved), offered: beginSpy.offers[0] });
+      }
+      expect(observed).toEqual(["a", "b"].map((id) => {
+        const suppressed = scenario === "global" || scenario === `inline-${id}` || scenario === `file-${id}`;
+        return { id, facts: { obo: suppressed ? undefined : false, docTask: false, cron: false }, offered: CERTIFIED && !suppressed };
+      }));
     });
 
     it("a reserved inbound key → obo true", async () => {

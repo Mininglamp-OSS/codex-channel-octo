@@ -262,6 +262,28 @@ describe("K2: configuration projection retains suppression without retaining raw
     const { resolved } = fixture("per-file", {});
     expect(deriveOutboundIdentity(resolved)).toBe("self");
   });
+
+  it.each(["inline-a", "inline-b", "file-a", "file-b", "global"])("two-Bot %s provenance stays with its owning layer across repeated resolution", (scenario) => {
+    for (const key of ["onBehalfOf", "on_behalf_of"]) {
+      const root = mkdtempSync(join(tmpdir(), "route-two-bots-"));
+      roots.push(root);
+      const marker = { dropped: [{ [key]: "fixture-sensitive-value" }] };
+      writeFileSync(join(root, "config.json"), JSON.stringify({ apiUrl: "https://a.invalid",
+        bots: ["a", "b"].map((id) => ({ id, ...(scenario === `inline-${id}` ? marker : {}) })),
+        ...(scenario === "global" ? marker : {}) }), { mode: 0o600 });
+      for (const id of ["a", "b"]) {
+        mkdirSync(join(root, id));
+        writeFileSync(join(root, id, "config.json"), JSON.stringify({ botToken: `fixture-token-${id}`,
+          ...(scenario === `file-${id}` ? marker : {}) }), { mode: 0o600 });
+      }
+      const loaded = loadConfig(join(root, "config.json"));
+      for (let pass = 0; pass < 2; pass++) {
+        expect(resolveBotConfigs(loaded).map((config) => ({ id: config.botId, identity: deriveOutboundIdentity(config) }))).toEqual(
+          ["a", "b"].map((id) => ({ id, identity: scenario === "global" || scenario === `inline-${id}` || scenario === `file-${id}` ? "unknown" : "self" })),
+        );
+      }
+    }
+  });
 });
 
 describe("T6: OBO strings appear in non-test source only inside inbound-route-facts.ts", () => {
