@@ -104,3 +104,12 @@ describe('plain fitting', () => {
     expect(plain).toMatch(/… \d+ more lines not shown$/);
   });
 });
+
+describe('authored URLs in plain text are inert (B1)', () => {
+  it('defangs authored URLs and schemes but keeps validated structured links', () => {
+    expect(renderDisplayPlain({ blocks: [
+      { kind: 'text', text: 'see http://evil.local/x, www.evil.com and javascript:alert(1)' },
+      { kind: 'link', label: 'Run', url: 'https://example.com/r' },
+    ] })).toBe('see http[:]//evil.local/x, www[.]evil.com and javascript[:]alert(1)\nRun: https://example.com/r');
+  });
+});

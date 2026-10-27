@@ -22,16 +22,17 @@ import { provisionFirstInstallMarker } from '../cards/migrations.js';
 import { parseProfile } from '../cards/profile-parse.js';
 import { canonicalJson } from '../cards/protocol.js';
 import { cardSubsystemPaths, openCardSubsystem } from '../cards/recovery.js';
+import { openCardRuntime, type CardTurnInput } from '../cards/runtime.js';
 import type { CardBinding, CardStore, ExplicitCard } from '../cards/store.js';
 import {
-  CALL_SETTLE_MS, JOIN_MAX, PRODUCTION_EXPLICIT_OPS, appServerToolset, createToolHost,
+  CALL_SETTLE_MS, JOIN_MAX, PRODUCTION_EXPLICIT_OPS, appServerToolset, createToolHost, explicitPlatformCertified, registerGatewayExposure,
   type ExplicitOpHandler, type ExplicitOpTable, type ExplicitSendPort, type ExplicitTransport, type ExplicitTransportOutcome, type ToolHost,
 } from '../cards/tool-host.js';
 import { createAdapter, type DbAdapter } from '../db-adapter.js';
 import { SessionStore } from '../session-store.js';
 import { liveProfileJson } from './fixtures/card-profile-live.js';
-import { manualTime, type ManualTime } from './fixtures/card-write-harness.js';
-import { admissibleGateway } from './fixtures/gd-admit.js';
+import { json, manualTime, scriptedFetch, type ManualTime } from './fixtures/card-write-harness.js';
+import { ADMITTED_CONFIG_TOML, admissibleGateway } from './fixtures/gd-admit.js';
 
 const LIMITS: Limits = normalizeLimits(undefined).limits;
 const FULL = Object.freeze({ elements: new Set(DISPLAY_ELEMENTS), limits: LIMITS });
@@ -371,5 +372,70 @@ describe('late ACK binding on explicit display requests (XIN-2384 SC-1a/SC-1b)',
     expect(result(a.replies.at(-1))).toEqual({ status: 'error', error: { code: 'send_unconfirmed' } });
     expect(t.sends).toBe(1);
     expect(counters(r, a.ctx.turnGeneration)).toEqual({ inv: 1, sends: 1 });
+  });
+});
+
+// ─── N2: the real production table through the real runtime ────────────────
+
+async function productionRuntime(profileBody: unknown) {
+  const dataDir = join(mkdtempSync(join(tmpdir(), 'wp09-prod-')), 'data');
+  roots.push(dataDir);
+  mkdirSync(dataDir);
+  const p = cardSubsystemPaths(dataDir);
+  mkdirSync(p.cardsDir, { recursive: true, mode: 0o700 });
+  writeFileSync(p.installationRefPath, 'install-a\n', { mode: 0o600, flag: 'wx' });
+  chmodSync(p.installationRefPath, 0o600);
+  provisionFirstInstallMarker(p.markerPath, 'install-a', Date.UTC(2026, 9, 24));
+  const adapter = createAdapter(join(dataDir, 'cc-octo.db'));
+  new SessionStore(adapter).init();
+  const time = manualTime();
+  const net = scriptedFetch(time);
+  let profileReads = 0;
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (new URL(String(input)).pathname.endsWith('/v1/bot/card/profile')) { profileReads++; return json(200, profileBody); }
+    return net.fetchImpl(input, init);
+  }) as typeof fetch;
+  // An admissible G-d exposure, so G-a (the profile) is the only gate left to refuse.
+  const codexHome = mkdtempSync(join(tmpdir(), 'wp09-home-'));
+  roots.push(codexHome);
+  writeFileSync(join(codexHome, 'config.toml'), ADMITTED_CONFIG_TOML);
+  cleanups.push(registerGatewayExposure({ sandboxMode: 'read-only', codexHome, apiKeyConfigured: true, sdkEnvAuthMarkers: false }));
+  // No explicitOpsForTest: the runtime uses PRODUCTION_EXPLICIT_OPS.
+  const runtime = (await openCardRuntime({ adapter, dataDir, apiUrl: 'https://test.invalid', botToken: 'token-a',
+    clock: time.clock, wall: time.wall, timers: time.timers, fetchImpl, bootstrapExcludedRoots: [] }))!;
+  await runtime.idle();
+  cleanups.push(async () => { await runtime.close('shutdown'); adapter.close(); });
+  const cwd = mkdtempSync(join('/tmp', 'wp09-cwd-'));
+  roots.push(cwd);
+  const input = (): CardTurnInput => ({ dispatchId: `d-${randomUUID()}`, sessionKey: `s-${randomUUID()}`, channelId: 'c', channelType: 1,
+    requesterUid: 'u', resetEpoch: 0, cron: false, deadlineMono: time.now() + 300_000, sessionCwd: () => cwd, currentResetEpoch: () => 0 });
+  const ledger = () => ({
+    generations: (adapter.prepare('SELECT COUNT(*) AS n FROM card_handler_generations').get() as { n: number }).n,
+    requests: (adapter.prepare('SELECT COUNT(*) AS n FROM card_explicit_requests').get() as { n: number }).n,
+    messages: (adapter.prepare("SELECT COUNT(*) AS n FROM card_messages WHERE kind = 'display'").get() as { n: number }).n,
+  });
+  return { runtime, input, ledger, profileReads: () => profileReads };
+}
+
+describe('runtime-level production path with the live profile (WP09-PF N2 replacement)', () => {
+  it('the real production table offers no op, opens no attempt and writes no ledger row while the live profile disables display', async () => {
+    const r = await productionRuntime(liveProfileJson());
+    expect(r.profileReads()).toBeGreaterThan(0);
+    for (let i = 0; i < 3; i++) {
+      const begun = r.runtime.beginTurn(r.input())!;
+      expect(begun.coordinator).toBeDefined();
+      expect(begun.injection).toBeUndefined();
+      expect(begun.coordinator.context.injectedServerId).toBeUndefined();
+    }
+    expect(r.ledger()).toEqual({ generations: 0, requests: 0, messages: 0 });
+  });
+
+  it.runIf(explicitPlatformCertified())('control: the same rig with display enabled does offer display, so the refusal above is G-a', async () => {
+    const enabled = liveProfileJson() as unknown as { elements: string[] };
+    enabled.elements = enabled.elements.filter((e) => e !== 'Image' && e !== 'ImageSet');
+    const r = await productionRuntime(enabled);
+    const begun = r.runtime.beginTurn(r.input())!;
+    expect(begun.injection).toBeDefined();
+    expect(r.ledger()).toMatchObject({ generations: 1, requests: 0, messages: 0 });
   });
 });

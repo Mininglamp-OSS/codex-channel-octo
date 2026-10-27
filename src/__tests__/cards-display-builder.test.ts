@@ -180,3 +180,110 @@ describe('fitting before transport (AC-007.4)', () => {
     expect(wireBytes(r, 16_384)).toBeLessThanOrEqual(16_384);
   });
 });
+
+// ─── B1: authored text can never become an active link ──────────────────────
+
+/** Reviewer repros plus field variants: inline, image, reference, angle and bare autolinks. */
+const HOSTILE = [
+  '[click](http://127.0.0.1/)',
+  '[js](javascript:alert(1))',
+  '<http://evil.local/x>',
+  'see http://evil.local/x now',
+  'go www.evil.com today',
+  'javascript:alert(1)',
+  '![img](http://evil.local/p.png)',
+  '[ref][1]\n\n[1]: http://evil.local/r',
+  '[ok](https://example.org/x)',
+];
+/** Any of these surviving verbatim means an authored URL could still be activated. */
+const LIVE_FRAGMENTS = ['://127.0.0.1', '://evil.local', 'javascript:', 'www.evil', '://example.org'];
+
+/** One card that puts `s` into every authored, TextBlock-bearing field of every kind. */
+function everywhere(s: string): DisplayCardArgs {
+  return {
+    title: s.replace(/\n/g, ' '),
+    blocks: [
+      { kind: 'heading', text: s.replace(/\n/g, ' ') },
+      text(s),
+      { kind: 'rich_text', runs: [{ kind: 'text', text: s }, { kind: 'emphasis', text: s }, { kind: 'strong', text: s }, { kind: 'code', text: s },
+        { kind: 'link', label: s.replace(/\n/g, ' '), url: 'https://example.com/safe' }] },
+      { kind: 'facts', items: [{ label: s.replace(/\n/g, ' '), value: s }] },
+      { kind: 'table', headers: [s.replace(/\n/g, ' ')], rows: [[s]] },
+      { kind: 'link', label: s.replace(/\n/g, ' '), url: 'https://example.com/safe' },
+      { kind: 'columns', columns: [{ blocks: [text(s)] }] },
+      { kind: 'group', blocks: [text(s)] },
+      { kind: 'collapsible', label: s.replace(/\n/g, ' '), blocks: [text(s)] },
+      { kind: 'copy', label: s.replace(/\n/g, ' '), text: s },
+    ],
+  };
+}
+
+/** Every rendered string except validated hrefs and the clipboard payload (never rendered). */
+function renderedStrings(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') out.push(value);
+  else if (Array.isArray(value)) for (const v of value) renderedStrings(v, out);
+  else if (value !== null && typeof value === 'object') {
+    const o = value as Record<string, unknown>;
+    for (const [k, v] of Object.entries(o)) {
+      if (k === 'url' && o.type === 'Action.OpenUrl') continue;
+      if (k === 'text' && o.type === 'Action.CopyToClipboard') continue;
+      renderedStrings(v, out);
+    }
+  }
+  return out;
+}
+
+/** Markdown constructs that would be live in a TextBlock: unescaped `[`, `]`, `(`, `<`, `>`, `!`. */
+const UNESCAPED_MD = /(?<!\\)(?:\\\\)*[[\]()<>]/;
+const BUILDER_LINK = /\[[^\]]*\]\(https:\/\/example\.com\/safe\)/g;
+
+describe('authored Markdown and autolinks are inert in every field (B1)', () => {
+  const capsCases: [string, DisplayCapabilities][] = [['full', FULL], ['TextBlock-only', TEXT_ONLY]];
+  for (const [capsName, caps] of capsCases) {
+    it.each(HOSTILE)(`${capsName}: %j never yields an active link`, (s) => {
+      const r = built(everywhere(s), caps);
+      expect(wireBytes(r)).toBeGreaterThan(0);
+      const rendered = renderedStrings(r.authored.card.body);
+      for (const str of [...rendered, r.plain]) {
+        for (const frag of LIVE_FRAGMENTS) expect(str).not.toContain(frag);
+      }
+      // TextBlock text is Markdown: only builder-generated links to the validated URL may stay live.
+      const blocks: string[] = [];
+      const walk = (v: unknown): void => {
+        if (Array.isArray(v)) v.forEach(walk);
+        else if (v !== null && typeof v === 'object') {
+          const o = v as Record<string, unknown>;
+          if (o.type === 'TextBlock') blocks.push(o.text as string);
+          Object.values(o).forEach(walk);
+        }
+      };
+      walk(r.authored.card.body);
+      for (const t of blocks) expect(t.replace(BUILDER_LINK, '')).not.toMatch(UNESCAPED_MD);
+    });
+  }
+
+  it('structured links stay live and validated in both modes', () => {
+    const args: DisplayCardArgs = { blocks: [{ kind: 'link', label: 'Run [1]', url: 'https://example.com/safe' }] };
+    expect(built(args).authored.card.body[0]).toEqual({ type: 'ActionSet', actions: [{ type: 'Action.OpenUrl', title: 'Run [1]', url: 'https://example.com/safe' }] });
+    expect(built(args, TEXT_ONLY).authored.card.body[0]).toEqual({ type: 'TextBlock', text: '[Run \\[1\\]](https://example.com/safe)', wrap: true });
+  });
+
+  it('escapes Markdown structure in authored text without changing ordinary words', () => {
+    const r = built({ blocks: [text('# not a heading\n- not a list\n1. not ordered\n*a* _b_ `c` ~d~ |e|'), text('All checks passed.')] }, TEXT_ONLY);
+    expect(r.authored.card.body.map((e) => (e as { text: string }).text)).toEqual([
+      '\\# not a heading\n\\- not a list\n1\\. not ordered\n\\*a\\* \\_b\\_ \\`c\\` \\~d\\~ \\|e\\|',
+      'All checks passed.',
+    ]);
+  });
+
+  it('builder marks wrap escaped run text (fallback rich text)', () => {
+    const r = built({ blocks: [{ kind: 'rich_text', runs: [{ kind: 'strong', text: '[x](http://evil.local)' }, { kind: 'emphasis', text: ' a*b ' }, { kind: 'code', text: 'npm test' }] }] }, TEXT_ONLY);
+    expect((r.authored.card.body[0] as { text: string }).text).toBe('**\\[x\\]\\(http\\[:\\]//evil.local\\)** _a\\*b_ `npm test`');
+  });
+
+  it('the clipboard payload stays the exact (redacted, mention-neutralized) authored text', () => {
+    const r = built({ blocks: [{ kind: 'copy', label: 'Copy', text: 'curl https://example.org/x' }] });
+    expect(r.authored.card.body[1]).toEqual({ type: 'ActionSet', actions: [{ type: 'Action.CopyToClipboard', title: 'Copy', text: 'curl https://example.org/x' }] });
+    expect((r.authored.card.body[0] as { text: string }).text).toBe('curl https\\[:\\]//example.org/x');
+  });
+});
