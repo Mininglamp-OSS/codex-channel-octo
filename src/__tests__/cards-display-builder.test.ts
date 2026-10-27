@@ -194,6 +194,9 @@ const HOSTILE = [
   '![img](http://evil.local/p.png)',
   '[ref][1]\n\n[1]: http://evil.local/r',
   '[ok](https://example.org/x)',
+  '[x]\n\n[x]: //evil.example',
+  '[x]: //evil.example "t"',
+  'see [x] and [x][] here\n\n[x]: https://example.org/y',
 ];
 /** Any of these surviving verbatim means an authored URL could still be activated. */
 const LIVE_FRAGMENTS = ['://127.0.0.1', '://evil.local', 'javascript:', 'www.evil', '://example.org'];
@@ -238,6 +241,18 @@ function renderedStrings(value: unknown, out: string[] = []): string[] {
 const hasUnescapedMd = (t: string): boolean => /[[\]()<>]/.test(t.replace(/\\./g, ''));
 const BUILDER_LINK = /\[(?:\\.|[^\\\]])*\]\(https:\/\/example\.com\/safe\)/g;
 
+/** Every Markdown-rendered field of a card: TextBlock.text and Fact.title/value. */
+function collectMarkdownFields(value: unknown, out: { kind: string; text: string }[] = []): { kind: string; text: string }[] {
+  if (Array.isArray(value)) for (const v of value) collectMarkdownFields(v, out);
+  else if (value !== null && typeof value === 'object') {
+    const o = value as Record<string, unknown>;
+    if (o.type === 'TextBlock') out.push({ kind: 'TextBlock', text: o.text as string });
+    if (o.type === 'FactSet') for (const f of o.facts as { title: string; value: string }[]) out.push({ kind: 'Fact', text: f.title }, { kind: 'Fact', text: f.value });
+    Object.values(o).forEach((v) => collectMarkdownFields(v, out));
+  }
+  return out;
+}
+
 describe('authored Markdown and autolinks are inert in every field (B1)', () => {
   const capsCases: [string, DisplayCapabilities][] = [['full', FULL], ['TextBlock-only', TEXT_ONLY]];
   for (const [capsName, caps] of capsCases) {
@@ -248,20 +263,24 @@ describe('authored Markdown and autolinks are inert in every field (B1)', () => 
       for (const str of [...rendered, r.plain]) {
         for (const frag of LIVE_FRAGMENTS) expect(str).not.toContain(frag);
       }
-      // TextBlock text is Markdown: only builder-generated links to the validated URL may stay live.
-      const blocks: string[] = [];
-      const walk = (v: unknown): void => {
-        if (Array.isArray(v)) v.forEach(walk);
-        else if (v !== null && typeof v === 'object') {
-          const o = v as Record<string, unknown>;
-          if (o.type === 'TextBlock') blocks.push(o.text as string);
-          Object.values(o).forEach(walk);
-        }
-      };
-      walk(r.authored.card.body);
-      for (const t of blocks) expect(hasUnescapedMd(t.replace(BUILDER_LINK, '')), t).toBe(false);
+      // TextBlock text and Fact title/value are Markdown: only builder-generated links to the validated URL may stay live.
+      const markdownFields = collectMarkdownFields(r.authored.card.body);
+      expect(markdownFields.length).toBeGreaterThan(0);
+      if (capsName === 'full') expect(markdownFields.some((f) => f.kind === 'Fact')).toBe(true);
+      for (const f of markdownFields) expect(hasUnescapedMd(f.text.replace(BUILDER_LINK, '')), `${f.kind}: ${f.text}`).toBe(false);
     });
   }
+
+  it('Fact title and value are Markdown surfaces: escaped and defanged like TextBlock text', () => {
+    const r = built({ blocks: [{ kind: 'facts', items: [{ label: '[x] *k*', value: '[x]\n\n[x]: //evil.example' }] }] });
+    expect(r.authored.card.body[0]).toEqual({ type: 'FactSet', facts: [{ title: '\\[x\\] \\*k\\*', value: '\\[x\\]\n\n\\[x\\]: //evil.example' }] });
+  });
+
+  it('TextRuns and action titles keep the non-Markdown inert treatment (no visible escapes)', () => {
+    const r = built({ blocks: [{ kind: 'rich_text', runs: [{ kind: 'text', text: 'a*b* see http://evil.local' }] }, { kind: 'link', label: 'Run *1*', url: 'https://example.com/safe' }] });
+    expect(r.authored.card.body[0]).toEqual({ type: 'RichTextBlock', inlines: [{ type: 'TextRun', text: 'a*b* see http[:]//evil.local' }] });
+    expect(r.authored.card.body[1]).toMatchObject({ actions: [{ title: 'Run *1*' }] });
+  });
 
   it('structured links stay live and validated in both modes', () => {
     const args: DisplayCardArgs = { blocks: [{ kind: 'link', label: 'Run [1]', url: 'https://example.com/safe' }] };
