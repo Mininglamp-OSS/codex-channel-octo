@@ -81,7 +81,10 @@ describe("strict server profile policy", () => {
     [{ card_version: undefined }, ["enabled", "disabled", "disabled"]],
     [{ elements: [] }, ["enabled", "disabled", "disabled"]],
     [{ elements: ["TextBlock"] }, ON],
-    [{ elements: ["TextBlock", "Image"] }, ["enabled", "disabled", "disabled"]],
+    // D-W1b: display narrows to the known element intersection; interaction stays strict.
+    [{ elements: ["TextBlock", "Image"] }, ["enabled", "enabled", "disabled"]],
+    [{ elements: ["RichTextBlock", "Image"] }, ["enabled", "disabled", "disabled"]],
+    [{ actions: ["Action.OpenUrl", "Action.Unknown"] }, ["enabled", "disabled", "disabled"]],
     [{ inputs: ["Input.Image"] }, ["enabled", "enabled", "disabled"]],
     [{ inputs: undefined }, ["enabled", "enabled", "disabled"]],
     [{ actions: ["Action.OpenUrl"] }, ["enabled", "enabled", "disabled"]],
@@ -95,6 +98,16 @@ describe("strict server profile policy", () => {
     [{ limits: { max_inputs_bytes: 0 } }, ["enabled", "enabled", "disabled"]],
   ])("narrows exactly affected capability %#", (delta, expected) => {
     expect(states(profile(delta))).toEqual(expected);
+  });
+
+  it("intersects display elements with the closed list and keeps interaction and automatic unaffected", () => {
+    const p = parseProfile(profile({ elements: ["TextBlock", "Image", "FactSet", "ImageSet", "ActionSet"] }));
+    expect(p.display.state).toBe("enabled");
+    expect([...p.display.elements]).toEqual(["TextBlock", "FactSet", "ActionSet"]);
+    expect(p.interaction.state).toBe("disabled");
+    expect([...p.interaction.inputs]).toEqual([]);
+    expect(p.automatic.state).toBe("enabled");
+    expect(p.reasons).toEqual(["profile_incompatible"]);
   });
 
   it("rejects unknown keys at every projected contract boundary", () => {
@@ -140,9 +153,9 @@ describe("pinned control-free template", () => {
   it("selects exactly one server-selected id/version with the approved views", () => {
     const p = profile(); const selected = selectTemplate(p);
     expect(selected).toEqual({ id: "ai.reasoning-process", version: "0.4.0", controlFree: true,
-      views: { active: { view: "active", version: "v2", controlFree: true },
-        error: { view: "error", version: "v2", controlFree: true },
-        result: { view: "result", version: "v1", controlFree: true } } });
+      views: { active: { view: "active", version: "octo/v2", controlFree: true },
+        error: { view: "error", version: "octo/v2", controlFree: true },
+        result: { view: "result", version: "octo/v1", controlFree: true } } });
     expect(Object.isFrozen(selected)).toBe(true);
   });
 
@@ -157,7 +170,7 @@ describe("pinned control-free template", () => {
     if (defect === "extra_view") views.push({ ...views[0], name: "extra" });
     if (defect === "extra_state") views[0].states.push("unknown");
     if (defect === "missing_state") views[0].states.pop();
-    if (defect === "view_version") views[0].wire_profile = "v1";
+    if (defect === "view_version") views[0].wire_profile = "octo/v1";
     if (defect === "duplicate_view") views[2] = views[0];
     if (defect === "stop") views[0].submit_actions.push("reasoning_stop");
     if (defect === "retry") views[1].submit_actions.push("reasoning_retry");

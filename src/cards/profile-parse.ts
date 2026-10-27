@@ -71,12 +71,17 @@ export function parseProfile(value: unknown): NormalizedProfile {
     const template = selectTemplate(value as CardProfileWire);
     const auto = config.reasoning_enabled && typeof template !== "string" && limits.payloadValid;
     const profilesOK = allowedList(value.profiles, ["octo/v1", "octo/v2"]);
+    // Display only uses the known elements it can emit, so an advertised element outside the closed list
+    // narrows display to the intersection; interaction (inputs/actions) stays strict.
+    const displayElements = stringList(value.elements) && value.elements.includes("TextBlock")
+      ? value.elements.filter(e => ELEMENTS.includes(e)) : undefined;
     const elementsOK = allowedList(value.elements, ELEMENTS) && value.elements.includes("TextBlock");
     const actionsOK = allowedList(value.actions, ACTIONS);
-    const layoutOK = value.card_version === "1.5" && elementsOK && limits.payloadValid && limits.layoutValid;
-    const display = config.display_enabled && profilesOK && (value.profiles as readonly string[]).includes("octo/v1") && layoutOK && actionsOK;
+    const layoutValid = value.card_version === "1.5" && limits.payloadValid && limits.layoutValid;
+    const display = config.display_enabled && profilesOK && (value.profiles as readonly string[]).includes("octo/v1")
+      && layoutValid && displayElements !== undefined && actionsOK;
     const interaction = config.interaction_enabled && profilesOK && (value.profiles as readonly string[]).includes("octo/v2")
-      && layoutOK && actionsOK && (value.actions as readonly string[]).includes("Action.Submit")
+      && layoutValid && elementsOK && actionsOK && (value.actions as readonly string[]).includes("Action.Submit")
       && allowedList(value.inputs, Object.keys(INPUTS)) && limits.inputsValid;
     if (!config.reasoning_enabled || !config.display_enabled || !config.interaction_enabled) reasons.add("capability_disabled");
     if (config.reasoning_enabled && !auto) reasons.add(typeof template === "string" ? "template_incompatible" : "profile_incompatible");
@@ -85,7 +90,7 @@ export function parseProfile(value: unknown): NormalizedProfile {
       automatic: Object.freeze({ state: auto ? "enabled" : "disabled", ...(auto && typeof template !== "string" ? { template } : {}),
         maxPayloadBytes: limits.limits.maxPayloadBytes }),
       display: Object.freeze({ state: display ? "enabled" : "disabled", ...(display ? { profile: "octo/v1" as const, cardVersion: "1.5" as const } : {}),
-        elements: readonlySet(display ? value.elements as readonly string[] : []), limits: limits.limits }),
+        elements: readonlySet(display ? displayElements ?? [] : []), limits: limits.limits }),
       interaction: Object.freeze({ state: interaction ? "enabled" : "disabled", ...(interaction ? { profile: "octo/v2" as const, cardVersion: "1.5" as const } : {}),
         inputs: readonlySet(interaction ? (value.inputs as readonly string[]).map(k => INPUTS[k]) : []), limits: limits.limits }),
       reasons: Object.freeze([...reasons]),
