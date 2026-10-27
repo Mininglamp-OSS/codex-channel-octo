@@ -23,7 +23,7 @@ import { provisionFirstInstallMarker } from '../cards/migrations.js';
 import { createPacer } from '../cards/pacer.js';
 import { createPolicy } from '../cards/policy.js';
 import { cardSubsystemPaths } from '../cards/recovery.js';
-import { openCardRuntime, type CardRuntimeOptions, type CardTurnInput } from '../cards/runtime.js';
+import { openCardRuntime, type CardTurnInput, type OpenCardRuntimeOptions } from '../cards/runtime.js';
 import type { ExplicitCard } from '../cards/store.js';
 import { appServerToolset, explicitPlatformCertified, registerGatewayExposure, type ExplicitTransport } from '../cards/tool-host.js';
 import { createAdapter } from '../db-adapter.js';
@@ -237,8 +237,9 @@ describe('the built snapshot is re-authorized, pinned, just before the send (C4)
   it('a card without its snapshot, or an interactive card, is never sent', async () => {
     const r = unitRig();
     const card = await r.build();
-    const { snapshot: _drop, ...bare } = card;
-    expect(await r.send(Object.freeze(bare) as ExplicitCard)).toEqual({ kind: 'failed' });
+    const bare: Record<string, unknown> = { ...card };
+    delete bare.snapshot;
+    expect(await r.send(Object.freeze(bare) as unknown as ExplicitCard)).toEqual({ kind: 'failed' });
     expect(await r.send({ ...card, opcode: 'interactive' } as unknown as ExplicitCard)).toEqual({ kind: 'failed' });
     expect(r.net.sends()).toHaveLength(0);
   });
@@ -273,7 +274,7 @@ async function runtimeRig(profileBody: () => unknown, over: { token?: string; ti
   roots.push(codexHome);
   writeFileSync(join(codexHome, 'config.toml'), ADMITTED_CONFIG_TOML);
   cleanups.push(registerGatewayExposure({ sandboxMode: 'read-only', codexHome, apiKeyConfigured: true, sdkEnvAuthMarkers: false }));
-  const options: CardRuntimeOptions & { adapter: typeof adapter; dataDir: string; bootstrapExcludedRoots: string[] } = {
+  const options: OpenCardRuntimeOptions = {
     adapter, dataDir, apiUrl: 'https://test.invalid', botToken: over.token ?? 'token-a',
     clock: time.clock, wall: time.wall, timers: time.timers, fetchImpl, bootstrapExcludedRoots: [],
     ...(over.transport !== undefined ? { explicitTransportForTest: over.transport } : {}),

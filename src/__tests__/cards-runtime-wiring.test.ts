@@ -194,7 +194,7 @@ describe("beginTurn route matrix (AC-006.1) and trusted context", () => {
     return { runtime, adapter, time };
   }
   const input = (channelType: number, over: Record<string, unknown> = {}) =>
-    ({ dispatchId: `d-${channelType}`, sessionKey: `s-${channelType}`, channelId: "c", channelType, requesterUid: "u", resetEpoch: 0, cron: false, ...over });
+    ({ dispatchId: `d-${channelType}`, sessionKey: `s-${channelType}`, channelId: "c", channelType, requesterUid: "u", resetEpoch: 0, cron: false, obo: undefined, docTask: undefined, ...over });
 
   it("DM, group and community topic get a coordinator with the trusted route kind; other channel types get none", async () => {
     const { runtime, adapter } = await ready();
@@ -609,7 +609,7 @@ describe("per-Bot isolation with a shared origin cooldown (AC-002.1, AC-007.6)",
     const a = await bot("a", "https://API.example.com:443/base", "token-a");
     const b = await bot("b", "https://api.example.com", "token-b");
     const c = await bot("c", "https://other.example.com", "token-c");
-    const begin = (x: typeof a, id: string) => x.runtime.beginTurn({ dispatchId: id, sessionKey: id, channelId: "c", channelType: 1, requesterUid: "u", resetEpoch: 0, cron: false })!.coordinator;
+    const begin = (x: typeof a, id: string) => x.runtime.beginTurn({ dispatchId: id, sessionKey: id, channelId: "c", channelType: 1, requesterUid: "u", resetEpoch: 0, cron: false, obo: undefined, docTask: undefined })!.coordinator;
     const item = { kind: "item_state", attempt: 0, itemId: "x", seq: 0, itemType: "command_execution", phase: "started", safe: { category: "command" } } as const;
 
     const ta = begin(a, "a1");
