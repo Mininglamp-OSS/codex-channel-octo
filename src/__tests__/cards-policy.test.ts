@@ -83,6 +83,19 @@ describe("per-Bot monotonic cache", () => {
     const bad = setup(async () => { throw new Error("credential_SECRET_RAW_RESPONSE"); });
     expect(JSON.stringify(await bad.policy.snapshot())).not.toContain("SECRET_RAW");
   });
+  it("the snapshot carries the advertised display actions and they are part of the profile hash", async () => {
+    const full = await setup().policy.snapshot();
+    const openOnly = await setup(async () => profile({ actions: ["Action.OpenUrl"] })).policy.snapshot();
+    expect([...openOnly.display.actions]).toEqual(["Action.OpenUrl"]);
+    expect("add" in openOnly.display.actions).toBe(false);
+    expect(openOnly.display.state).toBe("enabled");
+    // Only the display action subset differs: interaction (with Action.Submit) and elements stay identical.
+    const openSubmit = await setup(async () => profile({ actions: ["Action.OpenUrl", "Action.Submit"] })).policy.snapshot();
+    expect(states(openSubmit)).toEqual(states(full));
+    expect(openSubmit.profileHash).not.toBe(full.profileHash);
+    const reordered = await setup(async () => profile({ actions: [...profile().actions!].reverse() })).policy.snapshot();
+    expect(reordered.profileHash).toBe(full.profileHash);
+  });
 
   it("honors shorter configured TTLs and removes disabled entries at their exact deadline", async () => {
     const s = setup(async () => deny(), A, 100);

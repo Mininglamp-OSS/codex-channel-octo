@@ -182,6 +182,42 @@ describe("display element intersection (D-W2 Option A, display only)", () => {
   });
 });
 
+describe("display action subset (advertised local actions only)", () => {
+  const actions = (value: unknown) => [...parseProfile(value).display.actions].sort();
+
+  it("carries exactly the advertised local actions; Action.Submit is never a display action", () => {
+    expect(actions(profile())).toEqual(["Action.CopyToClipboard", "Action.OpenUrl", "Action.ToggleVisibility"]);
+    expect(actions(profile({ actions: ["Action.OpenUrl"] }))).toEqual(["Action.OpenUrl"]);
+    expect(actions(profile({ actions: ["Action.Submit", "Action.CopyToClipboard"] }))).toEqual(["Action.CopyToClipboard"]);
+    expect(actions(profile({ actions: [] }))).toEqual([]);
+    expect(parseProfile(profile({ actions: [] })).display.state).toBe("enabled");
+  });
+
+  it("the live profile's OpenUrl-only action list negotiates OpenUrl only", () => {
+    const body = liveProfileJson() as unknown as { actions: string[] };
+    body.actions = ["Action.OpenUrl"];
+    const p = parseProfile(projectCardProfile(body as unknown as JsonValue));
+    expect(p.display.state).toBe("enabled");
+    expect([...p.display.actions]).toEqual(["Action.OpenUrl"]);
+  });
+
+  it("disabled or failed display carries no actions; an unknown action still fails the profile closed", () => {
+    expect(actions(profile({ actions: ["Action.OpenUrl", "Action.Unknown"] }))).toEqual([]);
+    expect(parseProfile(profile({ actions: ["Action.OpenUrl", "Action.Unknown"] })).display.state).toBe("disabled");
+    expect(actions(profile({ config: { ...profile().config!, display_enabled: false } }))).toEqual([]);
+    expect(actions(undefined)).toEqual([]);
+    expect("add" in parseProfile(profile()).display.actions).toBe(false);
+    expect(negotiate(parseProfile(profile({ actions: ["Action.OpenUrl"] })), { display: false }).display.actions.size).toBe(1);
+  });
+
+  it("interaction negotiation is unchanged by the display action subset", () => {
+    const view = (i: ReturnType<typeof parseProfile>["interaction"]) => ({ ...i, inputs: [...i.inputs] });
+    expect(view(parseProfile(profile({ actions: ["Action.OpenUrl", "Action.Submit"] })).interaction))
+      .toEqual(view(parseProfile(profile()).interaction));
+    expect(parseProfile(profile({ actions: ["Action.OpenUrl"] })).interaction.state).toBe("disabled");
+  });
+});
+
 describe("pinned control-free template", () => {
   it("selects exactly one server-selected id/version with the approved views", () => {
     const p = profile(); const selected = selectTemplate(p);

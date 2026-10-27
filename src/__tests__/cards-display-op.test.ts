@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectCardProfile, serializeSendAuthored } from '../cards/api.js';
 import type { CardToolResult, DisplayCardArgs, JsonValue, Limits, TrustedTurnContext } from '../cards/contracts.js';
-import { DISPLAY_ELEMENTS } from '../cards/display-builder.js';
+import { DISPLAY_ACTIONS, DISPLAY_ELEMENTS } from '../cards/display-builder.js';
 import { BASELINE_DISPLAY_CAPABILITIES, EXPLICIT_DISPLAY, createExplicitDisplay, type DisplayExplicitCard } from '../cards/explicit-display.js';
 import { normalizeLimits } from '../cards/limits.js';
 import { provisionFirstInstallMarker } from '../cards/migrations.js';
@@ -35,7 +35,7 @@ import { json, manualTime, scriptedFetch, type ManualTime } from './fixtures/car
 import { ADMITTED_CONFIG_TOML, admissibleGateway } from './fixtures/gd-admit.js';
 
 const LIMITS: Limits = normalizeLimits(undefined).limits;
-const FULL = Object.freeze({ elements: new Set(DISPLAY_ELEMENTS), limits: LIMITS });
+const FULL = Object.freeze({ elements: new Set(DISPLAY_ELEMENTS), actions: new Set<string>(DISPLAY_ACTIONS), limits: LIMITS });
 const DISPLAY: DisplayCardArgs = { title: 'Report', blocks: [{ kind: 'text', text: 'hello' }, { kind: 'link', label: 'Run', url: 'https://example.com/r/1' }] };
 
 function context(over: Partial<TrustedTurnContext> = {}): TrustedTurnContext {
@@ -110,7 +110,7 @@ describe('handler contract (AC-010.1/.4)', () => {
 
   it('a card that cannot fit fails limit_exceeded with no reservation (AC-007.4)', async () => {
     const port = recordingPort();
-    const tiny = createExplicitDisplay({ capabilities: () => ({ elements: new Set(DISPLAY_ELEMENTS), limits: { ...LIMITS, maxPayloadBytes: 256 } }) });
+    const tiny = createExplicitDisplay({ capabilities: () => ({ ...FULL, limits: { ...LIMITS, maxPayloadBytes: 256 } }) });
     expect(await handle({ title: 'x'.repeat(150), blocks: [{ kind: 'text', text: 'y' }] }, context(), port, undefined, tiny))
       .toEqual({ status: 'error', error: { code: 'limit_exceeded', diagnostics: [{ path: '$', rule: 'card_too_large' }] } });
     expect(port.cards).toHaveLength(0);
@@ -126,7 +126,8 @@ describe('handler contract (AC-010.1/.4)', () => {
 
   it('no display capability means unavailable and no reservation', async () => {
     const port = recordingPort();
-    for (const caps of [undefined, { elements: new Set(['Container']), limits: LIMITS }]) {
+    for (const caps of [undefined, { elements: new Set(['Container']), actions: new Set<string>(DISPLAY_ACTIONS), limits: LIMITS },
+      { elements: new Set(DISPLAY_ELEMENTS), limits: LIMITS }]) {
       const h = createExplicitDisplay({ capabilities: () => caps });
       expect(await handle(DISPLAY, context(), port, undefined, h)).toEqual({ status: 'error',
         error: { code: 'unavailable', diagnostics: [{ path: '$', rule: 'display_capability' }] } });
@@ -174,6 +175,7 @@ describe('production registration (B5) and fail-closed live profile', () => {
 
   it('the production handler uses only the elements every enabled display profile guarantees', () => {
     expect([...BASELINE_DISPLAY_CAPABILITIES.elements]).toEqual(['TextBlock']);
+    expect(BASELINE_DISPLAY_CAPABILITIES.actions.size).toBe(0);
     expect(BASELINE_DISPLAY_CAPABILITIES.limits).toEqual(LIMITS);
   });
 

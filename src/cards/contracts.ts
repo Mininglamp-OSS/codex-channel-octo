@@ -195,7 +195,10 @@ export interface PolicySnapshot {
   readonly automatic: Readonly<{ state: CapabilityState; template?: PinnedTemplate; maxPayloadBytes: number }>;
   readonly display: Readonly<{
     state: CapabilityState; profile?: "octo/v1"; cardVersion?: CardVersion;
-    elements: ReadonlySet<string>; limits: Limits;
+    elements: ReadonlySet<string>;
+    /** Advertised local actions; a display card never carries any other action. */
+    actions: ReadonlySet<DisplayActionKind>;
+    limits: Limits;
   }>;
   readonly interaction: Readonly<{
     state: CapabilityState; profile?: "octo/v2"; cardVersion?: CardVersion;
@@ -380,6 +383,7 @@ export interface AcCopyToClipboardAction {
 
 /** Local/navigation actions only; they never call back into the Bot. */
 export type AcLocalAction = AcOpenUrlAction | AcToggleVisibilityAction | AcCopyToClipboardAction;
+export type DisplayActionKind = AcLocalAction["type"];
 
 export interface AcSubmitAction {
   readonly type: "Action.Submit";

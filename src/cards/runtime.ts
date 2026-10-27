@@ -210,14 +210,15 @@ export function classifyCardError(err: unknown): RuntimeErrorCategory {
 }
 
 /**
- * Display capabilities of one call: this Bot's negotiated elements and
- * effective limits, plus the snapshot they came from; undefined unless the
+ * Display capabilities of one call: this Bot's negotiated elements, advertised
+ * actions and effective limits, plus the snapshot they came from; undefined unless the
  * Bot's current policy allows display.
  */
 function displayCapabilities(policy: CardPolicy, botRef: BotRef): ExplicitDisplayCapabilities | undefined {
   const auth = policy.authorize("display", { botRef });
   if (!auth.allowed) return undefined;
-  return Object.freeze({ elements: auth.snapshot.display.elements, limits: auth.limits, snapshot: auth.snapshot });
+  return Object.freeze({ elements: auth.snapshot.display.elements, actions: auth.snapshot.display.actions, limits: auth.limits,
+    snapshot: auth.snapshot });
 }
 
 /**

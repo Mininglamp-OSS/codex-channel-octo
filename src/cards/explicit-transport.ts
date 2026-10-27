@@ -7,7 +7,8 @@
  * one send it is handed:
  * - `failed` is reported only when nothing can have been dispatched: the
  *   transport's own checks before calling `sendAuthored` (abort, pinned
- *   re-authorization, refitted envelope, current element set, origin gate),
+ *   re-authorization, refitted envelope, current element and action sets,
+ *   origin gate),
  *   or a definite contract/policy rejection (400/404/422, 401/403) of the
  *   request;
  * - `acked` only for a validated `SendAck`;
@@ -23,7 +24,7 @@ import {
   CARD_API_DEADLINE_MS, CARD_ENVELOPE_MAX_BYTES, CardRequestError, OctoApiError, classifySendFailure, serializeSendAuthored,
   type CardApi, type SendAuthoredRequest,
 } from "./api.js";
-import type { AcDisplayElement, Limits, MonotonicClock } from "./contracts.js";
+import type { AcDisplayElement, Limits, MonotonicClock, PolicySnapshot } from "./contracts.js";
 import type { DisplayExplicitCard } from "./explicit-display.js";
 import type { Pacer } from "./pacer.js";
 import type { CardPolicy } from "./policy.js";
@@ -52,15 +53,18 @@ function builtLimits(card: DisplayExplicitCard): Pick<Limits, "maxNodes" | "maxD
 
 /**
  * Whether every element of the display body, nested ones included, is in the
- * current display element set. Walks the closed `octo/v1` display union only:
- * any other type is unsupported, and a malformed child list throws (failed).
+ * current display element set and every ActionSet action is in the current
+ * advertised action set. Walks the closed `octo/v1` display union only: any
+ * other type is unsupported, and a malformed child list throws (failed).
  */
-function elementsSupported(body: readonly AcDisplayElement[], elements: ReadonlySet<string>): boolean {
+function bodySupported(body: readonly AcDisplayElement[], display: PolicySnapshot["display"]): boolean {
+  const { elements, actions } = display;
   const all = (items: readonly AcDisplayElement[]): boolean => items.every(one);
   const one = (e: AcDisplayElement): boolean => {
     if (!elements.has(e.type)) return false;
     switch (e.type) {
-      case "TextBlock": case "RichTextBlock": case "FactSet": case "ActionSet": return true;
+      case "TextBlock": case "RichTextBlock": case "FactSet": return true;
+      case "ActionSet": return Array.isArray(e.actions) && e.actions.every((a) => actions.has(a.type));
       case "Container": return all(e.items);
       case "ColumnSet": return e.columns.every((c) => all(c.items));
       case "Table": return e.rows.every((r) => r.cells.every((c) => all(c.items)));
@@ -91,8 +95,8 @@ export function createExplicitTransport(options: ExplicitTransportOptions): Expl
           maxEnvelopeBytes: Math.min(auth.limits.maxPayloadBytes, CARD_ENVELOPE_MAX_BYTES) }) as SendAuthoredRequest;
         // Refit against the current effective payload limit; throws before any fetch.
         serializeSendAuthored(request);
-        // Element-set shrink: the current set must still carry every element the card was built with.
-        if (!elementsSupported(card.authored.card.body, auth.snapshot.display.elements)) return FAILED;
+        // Element- or action-set shrink: the current sets must still carry everything the card was built with.
+        if (!bodySupported(card.authored.card.body, auth.snapshot.display)) return FAILED;
         if (!pacer.gate(api.origin).eligible) return FAILED;
       } catch {
         return FAILED;

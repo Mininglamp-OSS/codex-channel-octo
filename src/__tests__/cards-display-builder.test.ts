@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { serializeSendAuthored } from '../cards/api.js';
 import type { CardRoute, DisplayBlock, DisplayCardArgs, Limits } from '../cards/contracts.js';
 import {
-  DISPLAY_ELEMENTS, buildDisplayCard, measureDisplayCard, type DisplayCapabilities,
+  DISPLAY_ACTIONS, DISPLAY_ELEMENTS, buildDisplayCard, measureDisplayCard, type DisplayCapabilities,
 } from '../cards/display-builder.js';
 import { normalizeLimits } from '../cards/limits.js';
 import { omittedBlocksText } from '../cards/plain.js';
@@ -18,8 +18,9 @@ import { omittedBlocksText } from '../cards/plain.js';
 const ROUTE: CardRoute = { channelId: 'chan-1', channelType: 2 };
 const WORST_CLIENT_MSG_NO = '00000000-0000-0000-0000-000000000000';
 const DEFAULT_LIMITS: Limits = normalizeLimits(undefined).limits;
-const FULL: DisplayCapabilities = { elements: new Set(DISPLAY_ELEMENTS), limits: DEFAULT_LIMITS };
-const TEXT_ONLY: DisplayCapabilities = { elements: new Set(['TextBlock']), limits: DEFAULT_LIMITS };
+const ALL_ACTIONS: ReadonlySet<string> = new Set(DISPLAY_ACTIONS);
+const FULL: DisplayCapabilities = { elements: new Set(DISPLAY_ELEMENTS), actions: ALL_ACTIONS, limits: DEFAULT_LIMITS };
+const TEXT_ONLY: DisplayCapabilities = { elements: new Set(['TextBlock']), actions: ALL_ACTIONS, limits: DEFAULT_LIMITS };
 
 const text = (t: string): DisplayBlock => ({ kind: 'text', text: t });
 
@@ -114,19 +115,19 @@ describe('display card body (AC-010.3)', () => {
   });
 
   it('degrades per missing element independently', () => {
-    const noActions = built(KITCHEN_SINK, { elements: new Set(DISPLAY_ELEMENTS.filter((e) => e !== 'ActionSet')), limits: DEFAULT_LIMITS });
+    const noActions = built(KITCHEN_SINK, { elements: new Set(DISPLAY_ELEMENTS.filter((e) => e !== 'ActionSet')), actions: ALL_ACTIONS, limits: DEFAULT_LIMITS });
     expect(types(noActions.authored.card.body).has('ActionSet')).toBe(false);
     // Without a toggle the collapsible content is shown inline under its label.
     expect(JSON.stringify(noActions.authored.card.body)).toContain('"hidden"');
-    const noTable = built(KITCHEN_SINK, { elements: new Set(DISPLAY_ELEMENTS.filter((e) => e !== 'Table')), limits: DEFAULT_LIMITS });
+    const noTable = built(KITCHEN_SINK, { elements: new Set(DISPLAY_ELEMENTS.filter((e) => e !== 'Table')), actions: ALL_ACTIONS, limits: DEFAULT_LIMITS });
     expect(types(noTable.authored.card.body).has('Table')).toBe(false);
-    const noRich = built(KITCHEN_SINK, { elements: new Set(DISPLAY_ELEMENTS.filter((e) => e !== 'RichTextBlock')), limits: DEFAULT_LIMITS });
+    const noRich = built(KITCHEN_SINK, { elements: new Set(DISPLAY_ELEMENTS.filter((e) => e !== 'RichTextBlock')), actions: ALL_ACTIONS, limits: DEFAULT_LIMITS });
     expect(types(noRich.authored.card.body).has('RichTextBlock')).toBe(false);
     expect(JSON.stringify(noRich.authored.card.body)).toContain('**Note**');
   });
 
   it('refuses capabilities without TextBlock', () => {
-    const r = buildDisplayCard(KITCHEN_SINK, { caps: { elements: new Set(['Container']), limits: DEFAULT_LIMITS }, route: ROUTE });
+    const r = buildDisplayCard(KITCHEN_SINK, { caps: { elements: new Set(['Container']), actions: ALL_ACTIONS, limits: DEFAULT_LIMITS }, route: ROUTE });
     expect(r).toEqual({ ok: false, error: { code: 'unavailable', diagnostics: [{ path: '$', rule: 'display_capability' }] } });
   });
 
@@ -153,7 +154,7 @@ describe('fitting before transport (AC-007.4)', () => {
     let nested: DisplayBlock = text('deep');
     for (let i = 0; i < 4; i++) nested = { kind: 'group', blocks: [nested] };
     const args: DisplayCardArgs = { blocks: [text('a'), nested, ...Array.from({ length: 30 }, (_, i) => text(`t${i}`))] };
-    const r = built(args, { elements: new Set(DISPLAY_ELEMENTS), limits });
+    const r = built(args, { elements: new Set(DISPLAY_ELEMENTS), actions: ALL_ACTIONS, limits });
     const m = measureDisplayCard(r.authored.card);
     expect(m.nodes).toBeLessThanOrEqual(12);
     expect(m.depth).toBeLessThanOrEqual(3);
@@ -170,13 +171,13 @@ describe('fitting before transport (AC-007.4)', () => {
 
   it('fails limit_exceeded when not even the title and marker fit', () => {
     const r = buildDisplayCard({ title: 'x'.repeat(150), blocks: [text('y'.repeat(4000))] },
-      { caps: { elements: new Set(DISPLAY_ELEMENTS), limits: { ...DEFAULT_LIMITS, maxPayloadBytes: 300 } }, route: ROUTE });
+      { caps: { elements: new Set(DISPLAY_ELEMENTS), actions: ALL_ACTIONS, limits: { ...DEFAULT_LIMITS, maxPayloadBytes: 300 } }, route: ROUTE });
     expect(r).toEqual({ ok: false, error: { code: 'limit_exceeded', diagnostics: [{ path: '$', rule: 'card_too_large' }] } });
   });
 
   it('never exceeds the client envelope bound even when the server allows more', () => {
     const r = built({ blocks: Array.from({ length: 200 }, () => text('z'.repeat(3000))) },
-      { elements: new Set(DISPLAY_ELEMENTS), limits: { ...DEFAULT_LIMITS, maxPayloadBytes: 524_288 } });
+      { elements: new Set(DISPLAY_ELEMENTS), actions: ALL_ACTIONS, limits: { ...DEFAULT_LIMITS, maxPayloadBytes: 524_288 } });
     expect(wireBytes(r, 16_384)).toBeLessThanOrEqual(16_384);
   });
 });
@@ -305,5 +306,83 @@ describe('authored Markdown and autolinks are inert in every field (B1)', () => 
     const r = built({ blocks: [{ kind: 'copy', label: 'Copy', text: 'curl https://example.org/x' }] });
     expect(r.authored.card.body[1]).toEqual({ type: 'ActionSet', actions: [{ type: 'Action.CopyToClipboard', title: 'Copy', text: 'curl https://example.org/x' }] });
     expect((r.authored.card.body[0] as { text: string }).text).toBe('curl https\\[:\\]//example.org/x');
+  });
+});
+
+describe('only advertised actions are emitted (advertised action subset)', () => {
+  const OPEN_URL_ONLY: DisplayCapabilities = { elements: new Set(DISPLAY_ELEMENTS), actions: new Set(['Action.OpenUrl']), limits: DEFAULT_LIMITS };
+  const NO_ACTIONS: DisplayCapabilities = { elements: new Set(DISPLAY_ELEMENTS), actions: new Set(), limits: DEFAULT_LIMITS };
+  const NO_ACTION_SET: DisplayCapabilities = { elements: new Set(DISPLAY_ELEMENTS.filter((e) => e !== 'ActionSet')), actions: ALL_ACTIONS, limits: DEFAULT_LIMITS };
+  const NESTED: DisplayCardArgs = { blocks: [
+    { kind: 'group', blocks: [{ kind: 'collapsible', label: 'g', blocks: [text('in group')] }, { kind: 'copy', label: 'c1', text: 'x' }] },
+    { kind: 'columns', columns: [{ blocks: [{ kind: 'copy', label: 'c2', text: 'y' }] },
+      { blocks: [{ kind: 'collapsible', label: 'col', blocks: [{ kind: 'link', label: 'deep', url: 'https://example.com/d' }] }] }] },
+  ] };
+
+  it('the full kitchen sink under OpenUrl-only emits OpenUrl and no ToggleVisibility or CopyToClipboard', () => {
+    const r = built(KITCHEN_SINK, OPEN_URL_ONLY);
+    const t = types(r.authored.card.body);
+    expect(t.has('Action.OpenUrl')).toBe(true);
+    expect(t.has('Action.ToggleVisibility')).toBe(false);
+    expect(t.has('Action.CopyToClipboard')).toBe(false);
+    expect(wireBytes(r)).toBeGreaterThan(0);
+    expect(r.shownBlocks).toBe(KITCHEN_SINK.blocks.length);
+  });
+
+  it('nested collapsible and copy blocks degrade at every depth; nested links keep OpenUrl', () => {
+    const r = built(NESTED, OPEN_URL_ONLY);
+    const t = types(r.authored.card.body);
+    expect(t.has('Action.ToggleVisibility')).toBe(false);
+    expect(t.has('Action.CopyToClipboard')).toBe(false);
+    expect(t.has('Action.OpenUrl')).toBe(true);
+    expect(t.has('ColumnSet')).toBe(true);
+  });
+
+  it('each unadvertised control degrades to exactly its no-ActionSet rendering; plain text is unchanged', () => {
+    const blocks: DisplayCardArgs = { blocks: [
+      { kind: 'collapsible', label: 'Details', blocks: [text('hidden')] },
+      { kind: 'copy', label: 'Copy command', text: 'npm ci' },
+      { kind: 'link', label: 'Open run', url: 'https://example.com/runs/1' },
+    ] };
+    const open = built(blocks, OPEN_URL_ONLY);
+    const noSet = built(blocks, NO_ACTION_SET);
+    const full = built(blocks);
+    expect(open.authored.card.body.slice(0, -1)).toEqual(noSet.authored.card.body.slice(0, -1));
+    expect(open.authored.card.body.at(-1)).toEqual(full.authored.card.body.at(-1));
+    expect(open.plain).toBe(full.plain);
+    expect(open.plain).toBe(noSet.plain);
+  });
+
+  it('without OpenUrl a link is a Markdown link even when ActionSet is listed', () => {
+    const r = built({ blocks: [{ kind: 'link', label: 'Open run', url: 'https://example.com/runs/1' }] },
+      { ...FULL, actions: new Set(['Action.ToggleVisibility', 'Action.CopyToClipboard']) });
+    expect(r.authored.card.body).toEqual([{ type: 'TextBlock', text: '[Open run](https://example.com/runs/1)', wrap: true }]);
+  });
+
+  it('an empty advertised action set never emits an ActionSet and matches the no-ActionSet card', () => {
+    const r = built(KITCHEN_SINK, NO_ACTIONS);
+    expect(types(r.authored.card.body).has('ActionSet')).toBe(false);
+    expect(r.authored.card).toEqual(built(KITCHEN_SINK, NO_ACTION_SET).authored.card);
+    expect(r.plain).toBe(built(KITCHEN_SINK).plain);
+  });
+
+  it('all three actions advertised gives the unchanged full card', () => {
+    expect(JSON.stringify(built(KITCHEN_SINK, { ...FULL, actions: new Set([...DISPLAY_ACTIONS, 'Action.Submit']) })))
+      .toBe(JSON.stringify(built(KITCHEN_SINK)));
+    expect([...DISPLAY_ACTIONS].sort()).toEqual(['Action.CopyToClipboard', 'Action.OpenUrl', 'Action.ToggleVisibility']);
+  });
+
+  it('missing or malformed action capabilities are unavailable, never a full action set', () => {
+    for (const actions of [undefined, null, ['Action.OpenUrl'], {}]) {
+      const r = buildDisplayCard(KITCHEN_SINK, { caps: { ...FULL, actions } as unknown as DisplayCapabilities, route: ROUTE });
+      expect(r).toEqual({ ok: false, error: { code: 'unavailable', diagnostics: [{ path: '$', rule: 'display_capability' }] } });
+    }
+  });
+
+  it('omission fitting under OpenUrl-only still never emits an unadvertised action', () => {
+    const many: DisplayCardArgs = { blocks: Array.from({ length: 60 }, (_, i) => ({ kind: 'copy' as const, label: `c${i}`, text: 'z'.repeat(200) })) };
+    const r = built(many, { ...OPEN_URL_ONLY, limits: { ...DEFAULT_LIMITS, maxPayloadBytes: 4096 } });
+    expect(r.omittedBlocks).toBeGreaterThan(0);
+    expect(types(r.authored.card.body).has('Action.CopyToClipboard')).toBe(false);
   });
 });

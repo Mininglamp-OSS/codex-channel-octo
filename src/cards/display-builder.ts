@@ -3,13 +3,14 @@
  * `octo/v1` Adaptive Card 1.5 body plus its deterministic plain text.
  *
  * Pure and deterministic.
- * - Only elements in the negotiated set are emitted. Each block kind
- *   degrades on its own to the elements that remain, down to TextBlock,
- *   which every enabled display profile lists.
- * - Links are `Action.OpenUrl` (or a Markdown link without ActionSet);
- *   collapsible sections are a ToggleVisibility button over a hidden
- *   container with a deterministic id; copy blocks are CopyToClipboard.
- *   None of these call back into the Bot.
+ * - Only elements in the negotiated set and actions the Bot advertised are
+ *   emitted. Each block kind degrades on its own to the elements that
+ *   remain, down to TextBlock, which every enabled display profile lists.
+ * - Links are `Action.OpenUrl`; collapsible sections are a ToggleVisibility
+ *   button over a hidden container with a deterministic id; copy blocks are
+ *   CopyToClipboard. Each needs ActionSet and its own action; without them
+ *   it takes the same TextBlock form as without ActionSet. None of these
+ *   call back into the Bot.
  * - Fitting before transport (AC-007.4): the longest prefix of source
  *   blocks whose card satisfies the negotiated node, depth and payload
  *   limits (never above the client bounds) and whose exact send envelope
@@ -19,17 +20,22 @@
  */
 import { CARD_ENVELOPE_MAX_BYTES, CARD_MAX_DEPTH, CARD_MAX_NODES, serializeSendAuthored } from "./api.js";
 import type {
-  AcDisplayElement, AcTextBlock, AcTextRun, CardRoute, Diag, DisplayAdaptiveCard, DisplayBlock, DisplayCardArgs, Limits, RichRun,
+  AcDisplayElement, AcTextBlock, AcTextRun, CardRoute, Diag, DisplayActionKind, DisplayAdaptiveCard, DisplayBlock, DisplayCardArgs, Limits,
+  RichRun,
 } from "./contracts.js";
 import { inertText, markdownText, neutralizeUrls } from "./display-schema.js";
 import { omittedBlocksText, renderDisplayPlain } from "./plain.js";
 
 /** The closed `octo/v1` display element set the client can emit. */
 export const DISPLAY_ELEMENTS: readonly string[] = Object.freeze(["TextBlock", "RichTextBlock", "FactSet", "Container", "ColumnSet", "Table", "ActionSet"]);
+/** The closed set of local actions a display card can carry. */
+export const DISPLAY_ACTIONS: readonly DisplayActionKind[] = Object.freeze(["Action.OpenUrl", "Action.ToggleVisibility", "Action.CopyToClipboard"]);
 
 export interface DisplayCapabilities {
   /** Negotiated profile elements; anything outside {@link DISPLAY_ELEMENTS} is ignored. */
   readonly elements: ReadonlySet<string>;
+  /** Advertised profile actions; anything outside {@link DISPLAY_ACTIONS} is ignored. */
+  readonly actions: ReadonlySet<string>;
   readonly limits: Limits;
 }
 
@@ -115,9 +121,12 @@ function markdownRun(run: RichRun): string {
 
 class Renderer {
   private ids = 0;
-  constructor(private readonly elements: ReadonlySet<string>) {}
+  constructor(private readonly elements: ReadonlySet<string>, private readonly actions: ReadonlySet<DisplayActionKind>) {}
 
   private has(type: string): boolean { return this.elements.has(type); }
+
+  /** An ActionSet carrying `action`: both must be negotiated. */
+  private can(action: DisplayActionKind): boolean { return this.has("ActionSet") && this.actions.has(action); }
 
   /** Container if supported, else the items inline. */
   private wrap(items: AcDisplayElement[]): AcDisplayElement[] {
@@ -161,14 +170,14 @@ class Renderer {
         }
         return [tb(block.headers.map(markdownText).join(" | "), { weight: "Bolder" }), ...block.rows.map((row) => tb(row.map(markdownText).join(" | ")))];
       case "link":
-        return this.has("ActionSet")
+        return this.can("Action.OpenUrl")
           ? [{ type: "ActionSet", actions: [{ type: "Action.OpenUrl", title: inertText(block.label), url: block.url }] }]
           : [tb(markdownLink(block.label, block.url))];
       case "group":
         return this.wrap(this.blocks(block.blocks));
       case "collapsible": {
         const items = this.blocks(block.blocks);
-        if (this.has("ActionSet") && this.has("Container")) {
+        if (this.can("Action.ToggleVisibility") && this.has("Container")) {
           const id = `d${++this.ids}`;
           return [
             { type: "ActionSet", actions: [{ type: "Action.ToggleVisibility", title: inertText(block.label), targetElements: [{ elementId: id, isVisible: true }] }] },
@@ -178,7 +187,7 @@ class Renderer {
         return [atb(block.label, { weight: "Bolder" }), ...this.wrap(items)];
       }
       case "copy":
-        return this.has("ActionSet")
+        return this.can("Action.CopyToClipboard")
           // The clipboard payload is never rendered, so it keeps the exact (redacted) authored text.
           ? [atb(block.text), { type: "ActionSet", actions: [{ type: "Action.CopyToClipboard", title: inertText(block.label), text: block.text }] }]
           : [tb(`${markdownText(block.label)}: ${markdownText(block.text)}`)];
@@ -232,14 +241,15 @@ export function buildDisplayCard(args: DisplayCardArgs, opts: DisplayBuildOption
   const caps = opts.caps;
   const limits = caps?.limits;
   if (caps === null || typeof caps !== "object" || typeof caps.elements?.has !== "function" || !caps.elements.has("TextBlock")
-    || limits === null || typeof limits !== "object" || !validLimit(limits.maxNodes) || !validLimit(limits.maxDepth)
+    || typeof caps.actions?.has !== "function" || limits === null || typeof limits !== "object" || !validLimit(limits.maxNodes) || !validLimit(limits.maxDepth)
     || !validLimit(limits.maxPayloadBytes)) return CAPABILITY_ERROR;
   const elements = new Set(DISPLAY_ELEMENTS.filter((e) => caps.elements.has(e)));
+  const actions = new Set(DISPLAY_ACTIONS.filter((a) => caps.actions.has(a)));
   const maxNodes = Math.min(limits.maxNodes, CARD_MAX_NODES);
   const maxDepth = Math.min(limits.maxDepth, CARD_MAX_DEPTH);
   const maxBytes = Math.min(limits.maxPayloadBytes, CARD_ENVELOPE_MAX_BYTES);
 
-  const renderer = new Renderer(elements);
+  const renderer = new Renderer(elements, actions);
   const head: AcDisplayElement[] = args.title === undefined ? [] : [atb(args.title, { weight: "Bolder", size: "Large" })];
   // Render every block once, in order, so collapsible ids do not depend on the cut.
   const rendered = args.blocks.map((b) => renderer.block(b));

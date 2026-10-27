@@ -53,6 +53,7 @@ export interface ExplicitDisplayOptions {
  *
  * - Elements: TextBlock only, which every enabled display profile lists
  *   (`profile-parse.ts` requires it), so this part is a safe lower bound.
+ * - Actions: none, so no ActionSet control is ever emitted from here.
  * - Limits: the client defaults, which are the client *maxima*, not a
  *   guaranteed lower bound. Negotiated limits are `min(server, default)`,
  *   so a server advertising smaller limits would be exceeded. Before any
@@ -63,6 +64,7 @@ export interface ExplicitDisplayOptions {
  */
 export const BASELINE_DISPLAY_CAPABILITIES: DisplayCapabilities = Object.freeze({
   elements: readonlySet(["TextBlock"]),
+  actions: readonlySet<string>([]),
   limits: normalizeLimits(undefined).limits,
 });
 

@@ -72,7 +72,8 @@ function unitRig(initial: () => unknown = () => profile()) {
     let card: ExplicitCard | undefined;
     const handler = createExplicitDisplay({ capabilities: () => {
       const auth = policy.authorize('display', { botRef });
-      return auth.allowed ? { elements: auth.snapshot.display.elements, limits: auth.limits, snapshot: auth.snapshot } : undefined;
+      return auth.allowed ? { elements: auth.snapshot.display.elements, actions: auth.snapshot.display.actions, limits: auth.limits,
+        snapshot: auth.snapshot } : undefined;
     } });
     await handler.handle(args, { ctx, requestId: 'r'.repeat(32) },
       { reserveAndSend: async (c) => { card = c; return { status: 'error', error: { code: 'send_unconfirmed' } }; } }, new AbortController().signal);
@@ -349,6 +350,100 @@ describe('every emitted element is rechecked against the current display element
   });
 });
 
+describe('every emitted action is rechecked against the current advertised action set', () => {
+  const ALL_LOCAL = ['Action.OpenUrl', 'Action.ToggleVisibility', 'Action.CopyToClipboard', 'Action.Submit'];
+  /** Refresh the same Bot's profile to a different action list; display stays enabled with every element. */
+  const actionsTo = async (r: ReturnType<typeof unitRig>, actions: string[]) => {
+    r.setProfile(() => profile({ actions }));
+    await r.time.advance(60_001);
+    await r.policy.snapshot();
+    const auth = r.policy.authorize('display', { botRef: r.botRef });
+    expect(auth.allowed).toBe(true);
+    expect(auth.allowed && [...auth.snapshot.display.elements]).toContain('ActionSet');
+  };
+  const json = (card: DisplayExplicitCard) => JSON.stringify(card.authored.card);
+  const MIXED: DisplayCardArgs = { title: 'Mixed', blocks: [
+    { kind: 'link', label: 'site', url: 'https://example.com/a' },
+    { kind: 'collapsible', label: 'more', blocks: [{ kind: 'text', text: 'hidden' }] },
+    { kind: 'copy', label: 'copy', text: 'abc' },
+  ] };
+
+  it('an OpenUrl-only Bot builds and sends a card with no ToggleVisibility or CopyToClipboard', async () => {
+    const r = unitRig(() => profile({ actions: ['Action.OpenUrl'] }));
+    const card = await r.build(MIXED);
+    expect(json(card)).toContain('"Action.OpenUrl"');
+    expect(json(card)).not.toContain('Action.ToggleVisibility');
+    expect(json(card)).not.toContain('Action.CopyToClipboard');
+    expect(await r.send(card)).toEqual({ kind: 'acked', messageId: expect.stringMatching(/^9\d+$/) });
+    const wire = r.net.sends()[0].body;
+    expect(wire).not.toContain('Action.ToggleVisibility');
+    expect(wire).not.toContain('Action.CopyToClipboard');
+  });
+
+  it.each<[string, DisplayCardArgs, string]>([
+    ['a top-level ToggleVisibility', { blocks: [{ kind: 'collapsible', label: 'more', blocks: [{ kind: 'text', text: 'h' }] }] }, 'Action.ToggleVisibility'],
+    ['a top-level CopyToClipboard', { blocks: [{ kind: 'copy', label: 'copy', text: 'abc' }] }, 'Action.CopyToClipboard'],
+    ['a CopyToClipboard nested in a Container', { blocks: [{ kind: 'group', blocks: [{ kind: 'copy', label: 'c', text: 'x' }] }] }, 'Action.CopyToClipboard'],
+    ['a ToggleVisibility nested in a ColumnSet column', { blocks: [{ kind: 'columns', columns: [{ blocks: [
+      { kind: 'collapsible', label: 'more', blocks: [{ kind: 'text', text: 'h' }] }] }] }] }, 'Action.ToggleVisibility'],
+    ['the full mixed card', MIXED, 'Action.CopyToClipboard'],
+  ])('%s built under all actions fails closed with zero fetches after a shrink to OpenUrl-only', async (_name, args, dropped) => {
+    const r = unitRig();
+    const card = await r.build(args);
+    expect(json(card)).toContain(`"type":"${dropped}"`);
+    await actionsTo(r, ['Action.OpenUrl', 'Action.Submit']);
+    expect(r.policy.authorize('display', { botRef: r.botRef }, card.snapshot).allowed).toBe(true);
+    expect(await r.send(card)).toEqual({ kind: 'failed' });
+    expect(r.net.sends()).toHaveLength(0);
+    expect(r.pacer.gate).not.toHaveBeenCalled();
+  });
+
+  it('a shrink that drops only actions the card does not use still sends exactly once', async () => {
+    const r = unitRig();
+    const card = await r.build({ blocks: [{ kind: 'link', label: 'site', url: 'https://example.com/a' }] });
+    await actionsTo(r, ['Action.OpenUrl', 'Action.Submit']);
+    expect(await r.send(card)).toEqual({ kind: 'acked', messageId: expect.stringMatching(/^9\d+$/) });
+    expect(r.net.sends()).toHaveLength(1);
+  });
+
+  it('an unchanged action set after a refresh still sends exactly once', async () => {
+    const r = unitRig();
+    const card = await r.build(MIXED);
+    await actionsTo(r, ALL_LOCAL);
+    expect(await r.send(card)).toEqual({ kind: 'acked', messageId: expect.stringMatching(/^9\d+$/) });
+    expect(r.net.sends()).toHaveLength(1);
+  });
+
+  it('a forged unadvertised action is never sent, at any depth', async () => {
+    const r = unitRig(() => profile({ actions: ['Action.OpenUrl'] }));
+    const card = await r.build();
+    const forge = (body: unknown) => ({ ...card, authored: { ...card.authored, card: { ...card.authored.card, body } } }) as unknown as ExplicitCard;
+    const copy = { type: 'ActionSet', actions: [{ type: 'Action.CopyToClipboard', title: 'c', text: 'x' }] };
+    for (const body of [[copy], [{ type: 'Container', items: [copy] }],
+      [{ type: 'ColumnSet', columns: [{ type: 'Column', width: 'stretch', items: [{ type: 'Container', items: [copy] }] }] }],
+      [{ type: 'Table', firstRowAsHeader: true, columns: [{ width: 1 }], rows: [{ type: 'TableRow', cells: [{ type: 'TableCell', items: [copy] }] }] }],
+      [{ type: 'ActionSet', actions: [{ type: 'Action.Submit', title: 's' }] }],
+      [{ type: 'ActionSet', actions: [{ type: 'Action.Execute', title: 'e' }] }],
+      [{ type: 'ActionSet', actions: 'nope' }]]) {
+      expect(await r.send(forge(body))).toEqual({ kind: 'failed' });
+    }
+    expect(r.net.sends()).toHaveLength(0);
+  });
+
+  it('two Bots: only the Bot whose action set shrank refuses its card; the other still sends once', async () => {
+    const a = unitRig();
+    const b = unitRig();
+    const cardA = await a.build(MIXED);
+    const cardB = await b.build(MIXED);
+    await actionsTo(a, ['Action.OpenUrl', 'Action.Submit']);
+    await actionsTo(b, ALL_LOCAL);
+    expect(await a.send(cardA)).toEqual({ kind: 'failed' });
+    expect(await b.send(cardB)).toEqual({ kind: 'acked', messageId: expect.stringMatching(/^9\d+$/) });
+    expect(a.net.sends()).toHaveLength(0);
+    expect(b.net.sends()).toHaveLength(1);
+  });
+});
+
 // ─── [INT-SYNTH] the real runtime with the production table ─────────────────
 
 const THREAD = 'thr-1';
@@ -474,6 +569,28 @@ describe.runIf(CERTIFIED)('runtime wiring: one real send through the production 
 });
 
 describe.runIf(CERTIFIED)('per-Bot capabilities: elements and limits come from each Bot\'s own policy (C4/C5)', () => {
+  it('an OpenUrl-only Bot and a full Bot in one process each emit only their own advertised actions', async () => {
+    const time = manualTime();
+    const openOnly = await runtimeRig(() => profile({ actions: ['Action.OpenUrl', 'Action.Submit'] }), { token: 'token-a', time });
+    const full = await runtimeRig(() => profile(), { token: 'token-b', time });
+    const args: DisplayCardArgs = { title: 'Report', blocks: [{ kind: 'link', label: 'site', url: 'https://example.com/a' },
+      { kind: 'collapsible', label: 'more', blocks: [{ kind: 'text', text: 'hidden' }] }, { kind: 'copy', label: 'copy', text: 'abc' }] };
+    const a = openOnly.attempt();
+    const b = full.attempt();
+    a.call(1, 'c1', args);
+    b.call(1, 'c1', args);
+    await time.advance(0);
+    expect(result(a.replies[0]).status).toBe('sent');
+    expect(result(b.replies[0]).status).toBe('sent');
+    const [oa] = openOnly.displaySends();
+    const [fu] = full.displaySends();
+    expect(oa.body).toContain('Action.OpenUrl');
+    expect(oa.body).not.toContain('Action.ToggleVisibility');
+    expect(oa.body).not.toContain('Action.CopyToClipboard');
+    expect(fu.body).toContain('Action.ToggleVisibility');
+    expect(fu.body).toContain('Action.CopyToClipboard');
+  });
+
   it('a TextBlock-only Bot with a smaller payload limit and a full Bot in one process each use their own snapshot', async () => {
     const time = manualTime();
     const narrow = await runtimeRig(() => profile({ elements: ['TextBlock'], limits: { max_payload_bytes: 2048 } }), { token: 'token-a', time });
