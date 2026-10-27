@@ -42,9 +42,17 @@ export interface ExplicitDisplayOptions {
 }
 
 /**
- * What every enabled display profile guarantees (`profile-parse.ts`
- * requires TextBlock) at the client-default limits. The host's per-call
- * policy check still decides whether display is allowed at all.
+ * Fallback capabilities until per-Bot negotiation is wired in.
+ *
+ * - Elements: TextBlock only, which every enabled display profile lists
+ *   (`profile-parse.ts` requires it), so this part is a safe lower bound.
+ * - Limits: the client defaults, which are the client *maxima*, not a
+ *   guaranteed lower bound. Negotiated limits are `min(server, default)`,
+ *   so a server advertising smaller limits would be exceeded. Before any
+ *   transport is wired, the caller must supply the negotiated per-Bot limits
+ *   (and elements); these defaults must not be relied on for a real send.
+ *
+ * The host's per-call policy check still decides whether display is allowed.
  */
 export const BASELINE_DISPLAY_CAPABILITIES: DisplayCapabilities = Object.freeze({
   elements: readonlySet(["TextBlock"]),

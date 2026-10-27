@@ -57,6 +57,49 @@ export function neutralizeMentions(text: string): string {
   return text.replace(/@/g, "＠");
 }
 
+const URL_SCHEME = /([A-Za-z][A-Za-z0-9+.-]*):(?=\/\/)/g;
+const BARE_SCHEME = /\b(javascript|vbscript|data|file|blob|about|mailto|tel|sms|intent|octo|ftp):(?=\S)/gi;
+const WWW = /\bwww\./gi;
+
+/**
+ * Defang URLs in authored text so no renderer can autolink them: `x://`
+ * becomes `x[:]//`, script-like and other non-web schemes become `x[:]`,
+ * and `www.` becomes `www[.]`. Only structured, `safeLinkUrl`-validated
+ * links are ever live; authored text never is.
+ */
+export function neutralizeUrls(text: string): string {
+  return text.replace(URL_SCHEME, "$1[:]").replace(BARE_SCHEME, "$1[:]").replace(WWW, "www[.]");
+}
+
+const MD_INLINE = /[\\`*_[\]()<>~|]/g;
+const MD_LINE_START = /^([ \t]*)([#+=-]|\d+[.)])/gm;
+
+/**
+ * Backslash-escape every Markdown-significant character of authored text
+ * placed in a TextBlock, so authored text can carry no link, image,
+ * autolink, emphasis, code, heading, list or table syntax. Builder-generated
+ * syntax around escaped text is the only Markdown that stays live.
+ */
+export function escapeMarkdown(text: string): string {
+  return text.replace(MD_INLINE, "\\$&").replace(MD_LINE_START, (_m, lead: string, mark: string) =>
+    `${lead}${mark.length > 1 ? `${mark.slice(0, -1)}\\${mark.slice(-1)}` : `\\${mark}`}`);
+}
+
+/** Authored text for a TextBlock (Markdown) surface. */
+export function markdownText(text: string): string {
+  return escapeMarkdown(neutralizeUrls(text));
+}
+
+/**
+ * Authored text for a surface that is not specified as Markdown (TextRun,
+ * action titles). Escapes would show literally there, so instead URLs are
+ * defanged and link and angle-autolink syntax is broken without assuming
+ * any renderer behaviour.
+ */
+export function inertText(text: string): string {
+  return neutralizeUrls(text).replace(/\]\(/g, "] (").replace(/\]\[/g, "] [").replace(/</g, "\u2039").replace(/>/g, "\u203A");
+}
+
 /**
  * Replace secret-shaped spans with {@link REDACTED}: private-key blocks and
  * `Bearer`/`Basic` credentials first, then every whitespace-delimited token

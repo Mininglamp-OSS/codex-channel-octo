@@ -234,8 +234,9 @@ function renderedStrings(value: unknown, out: string[] = []): string[] {
 }
 
 /** Markdown constructs that would be live in a TextBlock: unescaped `[`, `]`, `(`, `<`, `>`, `!`. */
-const UNESCAPED_MD = /(?<!\\)(?:\\\\)*[[\]()<>]/;
-const BUILDER_LINK = /\[[^\]]*\]\(https:\/\/example\.com\/safe\)/g;
+/** True when `t` has a `[ ] ( ) < >` not consumed by a backslash escape. */
+const hasUnescapedMd = (t: string): boolean => /[[\]()<>]/.test(t.replace(/\\./g, ''));
+const BUILDER_LINK = /\[(?:\\.|[^\\\]])*\]\(https:\/\/example\.com\/safe\)/g;
 
 describe('authored Markdown and autolinks are inert in every field (B1)', () => {
   const capsCases: [string, DisplayCapabilities][] = [['full', FULL], ['TextBlock-only', TEXT_ONLY]];
@@ -258,7 +259,7 @@ describe('authored Markdown and autolinks are inert in every field (B1)', () => 
         }
       };
       walk(r.authored.card.body);
-      for (const t of blocks) expect(t.replace(BUILDER_LINK, '')).not.toMatch(UNESCAPED_MD);
+      for (const t of blocks) expect(hasUnescapedMd(t.replace(BUILDER_LINK, '')), t).toBe(false);
     });
   }
 

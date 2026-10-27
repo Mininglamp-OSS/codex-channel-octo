@@ -9,7 +9,7 @@
  * schema-normalized card; mentions are neutralized again defensively.
  */
 import type { DisplayBlock, DisplayCardArgs, RichRun } from "./contracts.js";
-import { neutralizeMentions } from "./display-schema.js";
+import { neutralizeMentions, neutralizeUrls as u } from "./display-schema.js";
 
 /** Plain-text cap; the envelope fit in the builder still applies on top. */
 export const PLAIN_MAX_BYTES = 4096;
@@ -69,31 +69,32 @@ export function fitPlain(text: string, maxBytes: number): string {
 
 function runText(run: RichRun): string {
   switch (run.kind) {
-    case "code": return `\`${run.text}\``;
-    case "link": return `${run.label} (${run.url})`;
-    default: return run.text;
+    case "code": return `\`${u(run.text)}\``;
+    case "link": return `${u(run.label)} (${run.url})`;
+    default: return u(run.text);
   }
 }
 
 function blockLines(block: DisplayBlock): string[] {
   switch (block.kind) {
-    case "heading": return [block.text];
-    case "text": return block.text.split("\n");
+    // Authored text is URL-defanged; only validated structured link URLs stay as written.
+    case "heading": return [u(block.text)];
+    case "text": return u(block.text).split("\n");
     case "rich_text": return block.runs.map(runText).join("").split("\n");
-    case "facts": return block.items.flatMap((f) => `${f.label}: ${f.value}`.split("\n"));
+    case "facts": return block.items.flatMap((f) => `${u(f.label)}: ${u(f.value)}`.split("\n"));
     case "columns": return block.columns.flatMap((c) => c.blocks.flatMap(blockLines));
-    case "table": return [block.headers, ...block.rows].flatMap((row) => row.join(" | ").split("\n"));
-    case "link": return [`${block.label}: ${block.url}`];
+    case "table": return [block.headers, ...block.rows].flatMap((row) => row.map(u).join(" | ").split("\n"));
+    case "link": return [`${u(block.label)}: ${block.url}`];
     case "group": return block.blocks.flatMap(blockLines);
-    case "collapsible": return [block.label, ...block.blocks.flatMap(blockLines).map((l) => INDENT + l)];
-    case "copy": return `${block.label}: ${block.text}`.split("\n");
+    case "collapsible": return [u(block.label), ...block.blocks.flatMap(blockLines).map((l) => INDENT + l)];
+    case "copy": return `${u(block.label)}: ${u(block.text)}`.split("\n");
   }
 }
 
 /** Plain text of a (fitted) display card: title, blank line, blocks, omission marker. */
 export function renderDisplayPlain(args: DisplayCardArgs, opts: { readonly omittedBlocks?: number; readonly maxBytes?: number } = {}): string {
   const lines: string[] = [];
-  if (args.title !== undefined) lines.push(args.title, "");
+  if (args.title !== undefined) lines.push(u(args.title), "");
   for (const block of args.blocks) lines.push(...blockLines(block));
   const maxBytes = opts.maxBytes ?? PLAIN_MAX_BYTES;
   const text = neutralizeMentions(lines.join("\n"));

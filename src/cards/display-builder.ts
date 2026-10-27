@@ -21,6 +21,7 @@ import { CARD_ENVELOPE_MAX_BYTES, CARD_MAX_DEPTH, CARD_MAX_NODES, serializeSendA
 import type {
   AcDisplayElement, AcTextBlock, AcTextRun, CardRoute, Diag, DisplayAdaptiveCard, DisplayBlock, DisplayCardArgs, Limits, RichRun,
 } from "./contracts.js";
+import { inertText, markdownText, neutralizeUrls } from "./display-schema.js";
 import { omittedBlocksText, renderDisplayPlain } from "./plain.js";
 
 /** The closed `octo/v1` display element set the client can emit. */
@@ -62,9 +63,18 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
+/** TextBlock over builder-generated Markdown; authored parts must already be {@link markdownText}. */
 function tb(text: string, extra: Partial<Pick<AcTextBlock, "weight" | "size">> = {}): AcTextBlock {
   return { type: "TextBlock", text, wrap: true, ...extra };
 }
+
+/** TextBlock over authored text: escaped and URL-defanged. */
+function atb(text: string, extra: Partial<Pick<AcTextBlock, "weight" | "size">> = {}): AcTextBlock {
+  return tb(markdownText(text), extra);
+}
+
+/** A code span is literal, so it may carry defanged text only when it cannot be broken out of. */
+const CODE_SPAN_SAFE = /^[^`\n[\]()<>\\]*$/;
 
 /** Wrap the non-blank core of `text` in a Markdown mark, keeping outer spaces. */
 function mark(text: string, m: string): string {
@@ -72,26 +82,31 @@ function mark(text: string, m: string): string {
   return match[2] === "" ? text : `${match[1]}${m}${match[2]}${m}${match[3]}`;
 }
 
+/** The only live Markdown link: escaped authored label, validated URL. */
 function markdownLink(label: string, url: string): string {
-  return `[${label.replace(/([[\]\\])/g, "\\$1")}](${url.replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
+  return `[${markdownText(label)}](${url.replace(/\(/g, "%28").replace(/\)/g, "%29")})`;
 }
 
 function textRun(run: RichRun): AcTextRun {
   switch (run.kind) {
-    case "text": return { type: "TextRun", text: run.text };
-    case "emphasis": return { type: "TextRun", text: run.text, isSubtle: true };
-    case "strong": return { type: "TextRun", text: run.text, weight: "Bolder" };
-    case "code": return { type: "TextRun", text: run.text, fontType: "Monospace" };
-    case "link": return { type: "TextRun", text: `${run.label} (${run.url})`, color: "accent" };
+    case "text": return { type: "TextRun", text: inertText(run.text) };
+    case "emphasis": return { type: "TextRun", text: inertText(run.text), isSubtle: true };
+    case "strong": return { type: "TextRun", text: inertText(run.text), weight: "Bolder" };
+    case "code": return { type: "TextRun", text: inertText(run.text), fontType: "Monospace" };
+    case "link": return { type: "TextRun", text: `${inertText(run.label)} (${run.url})`, color: "accent" };
   }
 }
 
 function markdownRun(run: RichRun): string {
   switch (run.kind) {
-    case "text": return run.text;
-    case "emphasis": return mark(run.text, "_");
-    case "strong": return mark(run.text, "**");
-    case "code": return mark(run.text, "`");
+    // Authored run text is escaped first; only the builder's marks stay live.
+    case "text": return markdownText(run.text);
+    case "emphasis": return mark(markdownText(run.text), "_");
+    case "strong": return mark(markdownText(run.text), "**");
+    case "code": {
+      const code = neutralizeUrls(run.text);
+      return CODE_SPAN_SAFE.test(code) ? mark(code, "`") : markdownText(run.text);
+    }
     case "link": return markdownLink(run.label, run.url);
   }
 }
@@ -115,18 +130,18 @@ class Renderer {
     switch (block.kind) {
       case "heading": {
         const level = block.level ?? 2;
-        return [tb(block.text, level === 1 ? { weight: "Bolder", size: "Large" } : level === 2 ? { weight: "Bolder", size: "Medium" } : { weight: "Bolder" })];
+        return [atb(block.text, level === 1 ? { weight: "Bolder", size: "Large" } : level === 2 ? { weight: "Bolder", size: "Medium" } : { weight: "Bolder" })];
       }
       case "text":
-        return [tb(block.text)];
+        return [atb(block.text)];
       case "rich_text":
         return this.has("RichTextBlock")
           ? [{ type: "RichTextBlock", inlines: block.runs.map(textRun) }]
           : [tb(block.runs.map(markdownRun).join(""))];
       case "facts":
         return this.has("FactSet")
-          ? [{ type: "FactSet", facts: block.items.map((f) => ({ title: f.label, value: f.value })) }]
-          : block.items.map((f) => tb(`${f.label}: ${f.value}`));
+          ? [{ type: "FactSet", facts: block.items.map((f) => ({ title: inertText(f.label), value: inertText(f.value) })) }]
+          : block.items.map((f) => tb(`${markdownText(f.label)}: ${markdownText(f.value)}`));
       case "columns":
         if (this.has("ColumnSet")) {
           return [{ type: "ColumnSet", columns: block.columns.map((c) => ({ type: "Column", width: "stretch", items: this.blocks(c.blocks) })) }];
@@ -137,14 +152,14 @@ class Renderer {
           return [{
             type: "Table", firstRowAsHeader: true, columns: block.headers.map(() => ({ width: 1 })),
             rows: [block.headers, ...block.rows].map((row, r) => ({
-              type: "TableRow", cells: row.map((cell) => ({ type: "TableCell", items: [r === 0 ? tb(cell, { weight: "Bolder" }) : tb(cell)] })),
+              type: "TableRow", cells: row.map((cell) => ({ type: "TableCell", items: [r === 0 ? atb(cell, { weight: "Bolder" }) : atb(cell)] })),
             })),
           }];
         }
-        return [tb(block.headers.join(" | "), { weight: "Bolder" }), ...block.rows.map((row) => tb(row.join(" | ")))];
+        return [tb(block.headers.map(markdownText).join(" | "), { weight: "Bolder" }), ...block.rows.map((row) => tb(row.map(markdownText).join(" | ")))];
       case "link":
         return this.has("ActionSet")
-          ? [{ type: "ActionSet", actions: [{ type: "Action.OpenUrl", title: block.label, url: block.url }] }]
+          ? [{ type: "ActionSet", actions: [{ type: "Action.OpenUrl", title: inertText(block.label), url: block.url }] }]
           : [tb(markdownLink(block.label, block.url))];
       case "group":
         return this.wrap(this.blocks(block.blocks));
@@ -153,16 +168,17 @@ class Renderer {
         if (this.has("ActionSet") && this.has("Container")) {
           const id = `d${++this.ids}`;
           return [
-            { type: "ActionSet", actions: [{ type: "Action.ToggleVisibility", title: block.label, targetElements: [{ elementId: id, isVisible: true }] }] },
+            { type: "ActionSet", actions: [{ type: "Action.ToggleVisibility", title: inertText(block.label), targetElements: [{ elementId: id, isVisible: true }] }] },
             { type: "Container", id, isVisible: block.expanded === true, items },
           ];
         }
-        return [tb(block.label, { weight: "Bolder" }), ...this.wrap(items)];
+        return [atb(block.label, { weight: "Bolder" }), ...this.wrap(items)];
       }
       case "copy":
         return this.has("ActionSet")
-          ? [tb(block.text), { type: "ActionSet", actions: [{ type: "Action.CopyToClipboard", title: block.label, text: block.text }] }]
-          : [tb(`${block.label}: ${block.text}`)];
+          // The clipboard payload is never rendered, so it keeps the exact (redacted) authored text.
+          ? [atb(block.text), { type: "ActionSet", actions: [{ type: "Action.CopyToClipboard", title: inertText(block.label), text: block.text }] }]
+          : [tb(`${markdownText(block.label)}: ${markdownText(block.text)}`)];
     }
   }
 }
@@ -221,7 +237,7 @@ export function buildDisplayCard(args: DisplayCardArgs, opts: DisplayBuildOption
   const maxBytes = Math.min(limits.maxPayloadBytes, CARD_ENVELOPE_MAX_BYTES);
 
   const renderer = new Renderer(elements);
-  const head: AcDisplayElement[] = args.title === undefined ? [] : [tb(args.title, { weight: "Bolder", size: "Large" })];
+  const head: AcDisplayElement[] = args.title === undefined ? [] : [atb(args.title, { weight: "Bolder", size: "Large" })];
   // Render every block once, in order, so collapsible ids do not depend on the cut.
   const rendered = args.blocks.map((b) => renderer.block(b));
   const total = args.blocks.length;
