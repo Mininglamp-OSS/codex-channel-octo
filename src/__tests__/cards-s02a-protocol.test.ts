@@ -95,7 +95,7 @@ async function runtimeRig(over: { ops?: boolean; prof?: () => unknown; exposure?
   }
   const runtime = (await openCardRuntime({ adapter, dataDir, apiUrl: "https://test.invalid", botToken: "token-a",
     clock: time.clock, wall: time.wall, timers: time.timers, fetchImpl, bootstrapExcludedRoots: [],
-    ...(over.ops === false ? {} : { explicitOpsForTest: TEST_OPS }) }))!;
+    explicitOpsForTest: over.ops === false ? new Map() : TEST_OPS }))!;
   await runtime.idle();
   cleanups.push(async () => { await runtime.close("shutdown"); adapter.close(); });
   const cwd = tempDir("wp08-cwd-", "/tmp");
@@ -112,7 +112,7 @@ function handlers(adapter: DbAdapter) {
 }
 
 describe("injection gate G-a…G-g at beginTurn (AM-08 v4 §7.2; AC-011.3/.11)", () => {
-  it("production (empty op table, G-b) never injects: no host, no bootstrap directory, no ledger rows", async () => {
+  it("an empty op table (G-b) never injects: no host, no bootstrap directory, no ledger rows", async () => {
     const r = await runtimeRig({ ops: false });
     const begun = r.runtime.beginTurn(r.input())!;
     expect(begun.coordinator).toBeDefined();

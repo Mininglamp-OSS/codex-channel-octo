@@ -134,8 +134,8 @@ describe('toolset (T0/T2a) and production inertness', () => {
     expect(TOOLSET.digest).toMatch(/^v1:[0-9a-f]{64}$/);
   });
 
-  it('the production op table stays empty', () => {
-    expect(PRODUCTION_EXPLICIT_OPS.size).toBe(0);
+  it('the production op table holds the display handler only', () => {
+    expect([...PRODUCTION_EXPLICIT_OPS.keys()]).toEqual(['display']);
   });
 
   it('no attempt opens when the generation has no ops', async () => {
