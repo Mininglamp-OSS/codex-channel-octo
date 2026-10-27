@@ -126,12 +126,15 @@ export interface CardTurnInput {
   /** Authenticated in-process cron fire. */
   readonly cron: boolean;
   /**
-   * Router-verified on-behalf-of fact. `undefined` means unknown: no trusted
-   * upstream contract names it yet (D-W1(b)), and an unknown or `true` fact
-   * offers no explicit op. Never guessed `false`.
+   * On-behalf-of fact about the Bot's outbound identity (G-e reading (a)):
+   * `true` for a delivery carrying a server-reserved OBO key, `false` only for
+   * the adapter-owned WS IM origin with the Bot's own send identity, and
+   * `undefined` (unknown) otherwise. An unknown or `true` fact offers no
+   * explicit op (D-W1(b)); it is never guessed `false`. Derived by
+   * `inbound-route-facts.ts`; requester attribution is a separate contract.
    */
   readonly obo: boolean | undefined;
-  /** Router-verified document-task fact; same rules as {@link CardTurnInput.obo}. */
+  /** Document-task fact: `false` only for the WS IM origin, otherwise unknown; same offer rules as {@link CardTurnInput.obo}. */
   readonly docTask: boolean | undefined;
   /** Monotonic dispatch deadline (`TurnContext.deadline`); bounds explicit authority. */
   readonly deadlineMono?: number;

@@ -10,6 +10,7 @@ import type { AutomaticTurn } from './cards/lifecycle.js';
 import { classifyCardError, openCardRuntime, type CardRuntime } from './cards/runtime.js';
 import { bootstrapExcludedRoots, hasCodexAuthEnvMarker, registerGatewayExposure, type CardInjectionLaunch } from './cards/tool-host.js';
 import { isAuthenticCronFire } from './cron-fire-marker.js';
+import { WS_IM_ORIGIN, deriveOutboundIdentity, deriveRouteFacts, type InboundOrigin, type OutboundIdentity } from './inbound-route-facts.js';
 import { performance } from 'node:perf_hooks';
 /**
  * codex-channel-octo — Entry point.
@@ -175,6 +176,8 @@ export type BotStack = ManagedBot;
 export async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean): Promise<BotStack> {
   const label = multi ? `[${config.botId}] ` : '';
   const cwdBase = config.cwdBase ?? config.cwd;
+  // The Bot's own send identity, from this Bot's merged config (explicit-card route facts).
+  const outboundIdentity = deriveOutboundIdentity(config);
   console.log(
     `[codex-channel-octo] ${label}Config loaded: apiUrl=${config.apiUrl}, cwdBase=${cwdBase}, ` +
     `dataDir=${config.dataDir}, sdk.model=${config.sdk.model ?? 'default'}, ` +
@@ -303,7 +306,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       // authored as this bot must reach the router to invalidate its cache.
       if (msg.from_uid === gateway.botId && msg.payload.event?.type !== 'mention_pref_updated'
         && !isConversationMdEvent(msg.payload.event?.type)) return;
-      const p = handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId, () => gateway.ownerUid, cardRuntime)
+      const p = handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId, () => gateway.ownerUid, cardRuntime, WS_IM_ORIGIN, outboundIdentity)
         .catch((err) => {
           console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, summarizeAgentError(err));
         })
@@ -363,7 +366,8 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
 /**
  * Process a single inbound message through the full pipeline: route → context →
  * agent query → stream → persist. Exported so tests can drive the real pipeline
- * (not a replica) — `main()` is the only production caller.
+ * (not a replica) — `main()` is the only production caller. `origin` is passed
+ * only by the WS IM handler; without it both explicit-card route facts stay unknown.
  */
 export async function handleMessage(
   msg: BotMessage,
@@ -375,6 +379,8 @@ export async function handleMessage(
   botId: string,
   currentOwner: () => string = () => '',
   cardRuntime?: CardRuntime,
+  origin?: InboundOrigin,
+  outboundIdentity: OutboundIdentity = 'unknown',
 ): Promise<void> {
   const channelId = msg.channel_id ?? '';
   const channelType = msg.channel_type ?? ChannelType.DM;
@@ -489,8 +495,8 @@ export async function handleMessage(
         const begun = cardRuntime.beginTurn({
           dispatchId: turn.turnId, sessionKey, channelId, channelType, requesterUid: msg.from_uid,
           resetEpoch: typeof barrier === 'number' ? barrier : 0, cron: isAuthenticCronFire(msg.payload),
-          // No trusted inbound field marks OBO or document-task deliveries yet, so both stay unknown and no explicit op is offered.
-          obo: undefined, docTask: undefined,
+          // Facts only: proven false solely for the WS IM origin with this Bot's own identity; every other gate still applies.
+          ...deriveRouteFacts({ origin, payload: msg.payload, outboundIdentity }),
           deadlineMono: turn.deadline, sessionCwd: () => resolveSessionCwd(config.cwdBase ?? config.cwd, sessionCtx),
           currentResetEpoch: () => { const b = store.getResetBarrier(sessionKey); return typeof b === 'number' ? b : 0; },
         });
