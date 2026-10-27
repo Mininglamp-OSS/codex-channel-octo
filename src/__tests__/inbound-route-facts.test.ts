@@ -11,7 +11,8 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCardApi } from "../cards/api.js";
@@ -21,7 +22,7 @@ import { WS_IM_ORIGIN, deriveOutboundIdentity, deriveRouteFacts, type InboundOri
 import * as octoApi from "../octo/api.js";
 import { ChannelType, MessageType, type BotMessage } from "../octo/types.js";
 import { SessionRouter } from "../session-router.js";
-import type { Config } from "../config.js";
+import { loadConfig, resolveBotConfigs, type Config } from "../config.js";
 import { serverSendAck, SERVER_EDIT_ACK } from "./fixtures/octo-server-acks.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -224,6 +225,39 @@ describe("T5: deriveOutboundIdentity over the merged per-Bot Config", () => {
 });
 
 // ─── T6: string tripwire ────────────────────────────────────────────────────
+
+describe("K2: configuration projection retains suppression without retaining raw values", () => {
+  const roots: string[] = [];
+  afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+
+  function fixture(layer: string, marker: Record<string, unknown>) {
+    const root = mkdtempSync(join(tmpdir(), "route-config-"));
+    roots.push(root);
+    mkdirSync(join(root, "test"));
+    writeFileSync(join(root, "config.json"), JSON.stringify({ apiUrl: "https://a.invalid",
+      bots: [{ id: "test", ...(layer === "inline" ? marker : {}) }], ...(layer === "global" ? marker : {}) }), { mode: 0o600 });
+    writeFileSync(join(root, "test", "config.json"), JSON.stringify({ botToken: "fixture-token", ...(layer === "per-file" ? marker : {}) }), { mode: 0o600 });
+    const loaded = loadConfig(join(root, "config.json"));
+    return { loaded, resolved: resolveBotConfigs(loaded)[0] };
+  }
+
+  it.each(["global", "inline", "per-file"])("%s raw keys suppress through all projections and clean later layers", (layer) => {
+    for (const key of ["onBehalfOf", "on_behalf_of"]) {
+      for (const marker of [{ [key]: "fixture-sensitive-value" }, { discarded: [{ [key]: "fixture-sensitive-value" }] }]) {
+        const { loaded, resolved } = fixture(layer, marker);
+        expect(deriveOutboundIdentity(resolved)).toBe("unknown");
+        expect(deriveOutboundIdentity(resolveBotConfigs(loaded)[0])).toBe("unknown");
+        expect(JSON.stringify(resolved)).not.toContain("fixture-sensitive-value");
+        expect(Object.keys(resolved)).not.toContain(key);
+      }
+    }
+  });
+
+  it("a clean resolved config remains self", () => {
+    const { resolved } = fixture("per-file", {});
+    expect(deriveOutboundIdentity(resolved)).toBe("self");
+  });
+});
 
 describe("T6: OBO strings appear in non-test source only inside inbound-route-facts.ts", () => {
   it("on_behalf_of / onBehalfOf", () => {

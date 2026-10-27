@@ -109,10 +109,10 @@ import { cardSubsystemPaths } from "../cards/recovery.js";
 import { reduceItem } from "../cards/redact.js";
 import { openCardRuntime, type CardRuntime, type CardTurnInput } from "../cards/runtime.js";
 import { explicitPlatformCertified, registerGatewayExposure, type ExplicitTransport } from "../cards/tool-host.js";
-import type { Config } from "../config.js";
+import { loadConfig, type Config } from "../config.js";
 import { createAdapter, type DbAdapter } from "../db-adapter.js";
 import { GroupContext } from "../group-context.js";
-import { handleMessage, startBot } from "../index.js";
+import { handleMessage, resolveBotConfigById, startBot } from "../index.js";
 import { WS_IM_ORIGIN, deriveRouteFacts, type InboundOrigin, type OutboundIdentity } from "../inbound-route-facts.js";
 import { CRON_FIRE_NONCE_KEY } from "../cron-fire-marker.js";
 import { OctoGateway } from "../gateway.js";
@@ -877,14 +877,14 @@ describe("route facts reach beginTurn from the WS IM origin only (T1, T2, T4, T5
     });
     afterEach(() => { vi.restoreAllMocks(); });
 
-    async function inbound(extra: Record<string, unknown>, payload: Record<string, unknown> = {}): Promise<Facts> {
+    async function inbound(extra: Record<string, unknown>, payload: Record<string, unknown> = {}, resolved?: Config): Promise<Facts> {
       let handler: ((m: BotMessage) => void) | undefined;
       const set = OctoGateway.prototype.setMessageHandler;
       vi.spyOn(OctoGateway.prototype, "setMessageHandler").mockImplementation(function (this: OctoGateway, fn: (m: BotMessage) => void) {
         handler = fn; return set.call(this, fn);
       });
       agentScript.events = answerEvents("ok", false);
-      const stack = await startBot({ botId: "test", apiUrl: API, botToken: "test-token", baseDir: root,
+      const stack = await startBot(resolved ?? { botId: "test", apiUrl: API, botToken: "test-token", baseDir: root,
         cards: { disable: false, eventTransport: "off", reasoningSummary: "off" }, cwd: join(root, "workspace"), dataDir: join(root, "data"),
         sdk: { toolProgress: true }, rateLimit: { maxPerMinute: 100 }, context: { maxContextChars: 6000, historyLimit: 40 },
         maxResponseChars: 524288, dispatchTimeoutMs: 300000, ...extra } as Parameters<typeof startBot>[0], true);
@@ -907,6 +907,19 @@ describe("route facts reach beginTurn from the WS IM origin only (T1, T2, T4, T5
       expect(await inbound({ onBehalfOf: "u_admin" })).toEqual({ obo: undefined, docTask: false, cron: false });
       beginSpy.inputs = [];
       expect(await inbound({ bots: [{ id: "test", persona: { on_behalf_of: "u_admin" } }] })).toEqual({ obo: undefined, docTask: false, cron: false });
+    });
+
+    it.each(["clean", "global", "inline", "per-file"])("K2: raw %s configuration survives resolution to the real inbound handler", async (layer) => {
+      mkdirSync(join(root, "test"));
+      const marker = { onBehalfOf: "fixture-user" };
+      writeFileSync(join(root, "config.json"), JSON.stringify({ apiUrl: API, sdk: { toolProgress: true }, bots: [{ id: "test", ...(layer === "inline" ? marker : {}) }],
+        ...(layer === "global" ? marker : {}) }), { mode: 0o600 });
+      writeFileSync(join(root, "test", "config.json"), JSON.stringify({ botToken: "fixture-token", ...(layer === "per-file" ? marker : {}) }), { mode: 0o600 });
+      const resolved = resolveBotConfigById(loadConfig(join(root, "config.json")), "test");
+      mkdirSync(resolved.dataDir, { recursive: true });
+      provision(resolved.dataDir);
+      // Pass the exact resolver object: provenance may intentionally be non-enumerable.
+      expect(await inbound({}, {}, resolved)).toEqual({ obo: layer === "clean" ? false : undefined, docTask: false, cron: false });
     });
 
     it("a reserved inbound key → obo true", async () => {
@@ -952,6 +965,25 @@ describe("T1: derived facts offer an explicit op only when every other gate hold
     const begun = r.runtime.beginTurn(r.input())!;
     expect(begun.injection).toBeDefined();
     expect(begun.coordinator.context.routeEligibility).toEqual({ kind: "dm", obo: false, docTask: false, cron: false });
+  });
+
+  it.runIf(CERTIFIED).each([1000, 77_999, 78_000, 78_001])("G4a: advertisement with %i ms remaining uses call admission", async (remaining) => {
+    const r = await rig();
+    const begun = r.runtime.beginTurn(r.input({ deadlineMono: r.time.now() + remaining }))!;
+    expect(begun.injection !== undefined).toBe(remaining >= 78_000);
+  });
+
+  it.runIf(CERTIFIED).each([NaN, Infinity, -Infinity])("G4a: a nonfinite deadline %s fails closed", async (deadlineMono) => {
+    const r = await rig();
+    expect(r.runtime.beginTurn(r.input({ deadlineMono }))!.injection).toBeUndefined();
+  });
+
+  it.runIf(CERTIFIED).each([NaN, Infinity, -Infinity])("G4a: a nonfinite monotonic clock %s fails closed", async (now) => {
+    const r = await rig();
+    const input = r.input();
+    const clock = vi.spyOn(r.time.clock, "nowMono").mockReturnValue(now);
+    try { expect(r.runtime.beginTurn(input)!.injection).toBeUndefined(); }
+    finally { clock.mockRestore(); }
   });
 
   it("any single other gate false → no offer", async () => {
