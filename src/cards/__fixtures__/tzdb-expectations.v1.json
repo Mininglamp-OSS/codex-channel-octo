@@ -13,6 +13,20 @@
       { "zone": "UTC", "date": "2024-01-01", "time": "24:00", "valid": false }
     ]
   },
+  "2026c": {
+    "tz": "2026c",
+    "observedOn": ["v22.23.3"],
+    "outcomes": [
+      { "zone": "UTC", "date": "2024-02-29", "time": "00:00", "valid": true },
+      { "zone": "America/New_York", "date": "2024-11-03", "time": "01:30", "valid": true },
+      { "zone": "Asia/Shanghai", "date": "2024-03-10", "time": "02:30", "valid": true },
+      { "zone": "Asia/Kathmandu", "date": "2024-12-31", "time": "23:59", "valid": true },
+      { "zone": "Not/A_Zone", "date": "2024-01-01", "time": "12:00", "valid": false },
+      { "zone": "+05:30", "date": "2024-01-01", "time": "12:00", "valid": false },
+      { "zone": "UTC", "date": "2023-02-29", "time": "12:00", "valid": false },
+      { "zone": "UTC", "date": "2024-01-01", "time": "24:00", "valid": false }
+    ]
+  },
   "2026e": {
     "tz": "2026e",
     "observedOn": ["v22.23.4"],

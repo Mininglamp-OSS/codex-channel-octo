@@ -2,6 +2,6 @@
 import { readonlySet } from './profile-parse.js';
 
 export type TzVersionReader = () => string | undefined;
-export const SUPPORTED_TZ_VERSIONS: ReadonlySet<string> = readonlySet(['2025b', '2026e']);
+export const SUPPORTED_TZ_VERSIONS: ReadonlySet<string> = readonlySet(['2025b', '2026c', '2026e']);
 /** Sole production read of the runtime version. */
 export const runtimeTzVersion: TzVersionReader = () => process.versions.tz;
