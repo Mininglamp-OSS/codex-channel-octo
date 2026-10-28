@@ -1244,7 +1244,7 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
 
   /** D6: the dynamic tool reply carrying the bounded card result. */
   function toolReply(result: CardToolResult): { contentItems: { type: "inputText"; text: string }[]; success: boolean } {
-    return { contentItems: [{ type: "inputText", text: JSON.stringify(result) }], success: result.status === "sent" };
+    return { contentItems: [{ type: "inputText", text: JSON.stringify(result) }], success: result.status === "sent" || result.status === "degraded" };
   }
 
   function refusalReply(text: string): { contentItems: { type: "inputText"; text: string }[]; success: false } {

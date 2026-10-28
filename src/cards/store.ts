@@ -1640,8 +1640,9 @@ export class CardStore {
       }
       const slot = g.logical_send_count + 1;
       const clientMsgNo = this.newId();
-      // Informational sends retain a display-kind message ledger row for reconciliation, never a session.
-      const cardId = this.insertMessage(card.informational === true ? 'display' : card.opcode, card.binding, card.bodyDigest, clientMsgNo, card, now);
+      // Kind records the invocation, including informational degradation. Only
+      // an actionable interactive send gets a session; kind alone never admits.
+      const cardId = this.insertMessage(card.opcode, card.binding, card.bodyDigest, clientMsgNo, card, now);
       if (cardId === null) throw new CardStoreError('storage_failure');
       const sessionId = card.opcode === 'interactive' && card.informational !== true ? this.insertSession(cardId, card.binding, card.contract, now).sessionId : null;
       this.run(

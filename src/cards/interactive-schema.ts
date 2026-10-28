@@ -1,6 +1,6 @@
 /** Semantic validation of the closed C.1 interactive grammar. No decision fitting. */
 import type { ButtonData, CardError, Diag, InputSpec, InteractiveCardArgs, JsonValue } from './contracts.js';
-import { neutralizeMentions, redactAuthored } from './display-schema.js';
+import { inertText, neutralizeMentions, neutralizeUrls, redactAuthored } from './display-schema.js';
 import { canonicalJson, isReservedAuthorKey, parseRequestFrame } from './protocol.js';
 import { SUPPORTED_TZ_VERSIONS, runtimeTzVersion, type TzVersionReader } from './tz-support.js';
 
@@ -87,13 +87,16 @@ export function validateInteractiveArgs(args: InteractiveCardArgs, options: { re
         if (spec.options.length < 1 || spec.options.length > 20) fail(`${p}.options`, 'choice_count', true);
         if (spec.min < 0 || spec.min > spec.max || spec.max > spec.options.length || (!spec.multiple && spec.max !== 1)
           || (spec.required ? spec.min < 1 : spec.min !== 0)) fail(p, 'range_order');
-        const ids = new Set<string>(), labels = new Set<string>();
+        const ids = new Set<string>(), controlLabels = new Set<string>(), plainLabels = new Set<string>();
         const options = spec.options.map((o, j) => {
           const q = `${p}.options[${j}]`;
           id(o.id, `${q}.id`, ids);
           const label = text(o.label, `${q}.label`, true);
-          if (labels.has(label)) fail(`${q}.label`, 'label_duplicate');
-          labels.add(label);
+          // Both visible surfaces must distinguish the submitted IDs after
+          // their final sanitation, not just after author normalization.
+          const controlLabel = inertText(label), plainLabel = neutralizeUrls(label);
+          if (controlLabels.has(controlLabel) || plainLabels.has(plainLabel)) fail(`${q}.label`, 'label_duplicate');
+          controlLabels.add(controlLabel); plainLabels.add(plainLabel);
           return { id: o.id, label };
         });
         return { ...spec, label, options };

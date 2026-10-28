@@ -78,8 +78,11 @@ async function rig(profileBody: () => unknown = () => profile(), transportOverri
   const gen = host.openGeneration({ ctx, binding, expiresAtMono: time.now() + 300_000, currentResetEpoch: () => 0, ops: ['interactive', 'display'], admit: gateway.admit });
   if (!gen) throw new Error('generation');
   const replies: CardToolResult[] = [], refusals: string[] = [];
+  const responses: { success: boolean; contentItems: { text: string }[] }[] = [];
   const cards = gen.launch.prepareAppServerAttempt({ respond: (_id, result) => {
-    const text = (result as { contentItems: { text: string }[] }).contentItems[0].text;
+    const response = result as { success: boolean; contentItems: { text: string }[] };
+    responses.push(response);
+    const text = response.contentItems[0].text;
     try { replies.push(JSON.parse(text)); } catch { refusals.push(text); }
     return true;
   } });
@@ -88,10 +91,27 @@ async function rig(profileBody: () => unknown = () => profile(), transportOverri
   cards.turnStartEnqueued(); cards.bindTurn('turn');
   const call = (id: number, tool = 'interactive', input: unknown = args) => cards.onToolCall(id, { threadId: 'thread', turnId: 'turn', callId: `c${id}`, namespace: null, tool, arguments: input });
   const counters = () => adapter.prepare('SELECT invocation_count AS inv, logical_send_count AS sends FROM card_handler_generations WHERE generation = ?').get(ctx.turnGeneration);
-  return { adapter, store: sub.store, net, time, host, cards, call, replies, refusals, ctx, binding, policy, counters };
+  const reopen = async () => {
+    const second = createAdapter(join(dataDir, 'cc-octo.db'));
+    cleanup.push(() => second.close());
+    const reopened = await openCardSubsystem({ adapter: second, dataDir, clock: time.wall, runtimeIncarnation: randomUUID() });
+    if (reopened.state === 'ready') cleanup.push(() => reopened.store.retire());
+    return { reopened, second };
+  };
+  return { adapter, store: sub.store, net, time, host, cards, call, replies, responses, refusals, ctx, binding, policy, counters, reopen };
 }
 
 describe('atomic interactive sends', () => {
+  it.each(['display', 'interactive'])('reports acknowledged %s as outer app-server success', async op => {
+    const r = await rig();
+    r.net.reply({ status: 200, body: { message_id: '9100' } });
+    r.call(1, op, op === 'display' ? { blocks: [{ kind: 'text', text: 'report' }] } : args);
+    await r.time.advance(0);
+    expect(r.responses).toHaveLength(1);
+    expect(r.replies).toHaveLength(1);
+    expect(r.replies[0]).toMatchObject({ status: 'sent', message_id: '9100' });
+    expect(r.responses[0].success).toBe(true);
+  });
   it('reserves before transport and only binds the acknowledged message and session', async () => {
     let acknowledge!: (value: { kind: 'acked'; messageId: string }) => void;
     const r = await rig(undefined, { send: async () => new Promise(resolve => { acknowledge = resolve; }) });
@@ -102,6 +122,7 @@ describe('atomic interactive sends', () => {
     expect(r.adapter.prepare('SELECT message_id FROM card_messages').get()).toEqual({ message_id: null });
     acknowledge({ kind: 'acked', messageId: '9101' }); await r.time.advance(0);
     expect(r.replies[0]).toMatchObject({ status: 'sent', message_id: '9101', session_id: expect.any(String), route: { kind: 'group' } });
+    expect(r.responses).toHaveLength(1); expect(r.responses[0].success).toBe(true);
     expect(r.adapter.prepare('SELECT status, requester_uid, authored_contract_json FROM card_sessions').get()).toMatchObject({ status: 'pending', requester_uid: 'requester', authored_contract_json: expect.stringContaining('"kind":"toggle"') });
     expect(r.adapter.prepare('SELECT message_id FROM card_messages').get()).toEqual({ message_id: '9101' });
     r.call(1); await r.time.advance(0);
@@ -111,6 +132,7 @@ describe('atomic interactive sends', () => {
     const r = await rig(); r.net.reply({ status: 200, body: { message_id: '9102' } });
     r.call(1); await r.time.advance(0);
     expect(r.replies[0]).toMatchObject({ status: 'sent', session_id: expect.any(String) });
+    expect(r.responses).toHaveLength(1); expect(r.responses[0].success).toBe(true);
     const wire = JSON.parse(r.net.sends()[0].body);
     expect(wire).toMatchObject({ channel_id: 'chan', payload: { type: 17, profile: 'octo/v2', card: { actions: [{ type: 'Action.Submit', data: { decision: 'proceed' } }] } } });
   });
@@ -133,6 +155,7 @@ describe('atomic interactive sends', () => {
     denied = true; r.policy.invalidate('bot_setting'); await r.policy.snapshot();
     acknowledge({ kind: 'acked', messageId: '9301' }); await r.time.advance(0);
     expect(r.replies[0]).toMatchObject({ status: 'error', error: { code: 'policy_denied' } });
+    expect(r.responses).toHaveLength(1); expect(r.responses[0].success).toBe(false);
     expect(r.adapter.prepare('SELECT status FROM card_sessions').get()).toEqual({ status: 'failed' });
     expect(r.adapter.prepare('SELECT message_id FROM card_messages').get()).toEqual({ message_id: '9301' });
     expect(r.counters()).toEqual({ inv: 1, sends: 1 });
@@ -165,6 +188,50 @@ describe('atomic interactive sends', () => {
 });
 
 describe('budgeted informational degradation', () => {
+  it.each(['reserved', 'acked', 'failed', 'ambiguous'] as const)('preserves invariants and reopens a session-free %s degradation', async state => {
+    let settle!: (value: { kind: 'ambiguous' }) => void;
+    let sends = 0;
+    const r = await rig(() => { throw new TypeError('offline'); }, { send: async () => {
+      sends++;
+      if (state === 'reserved') return new Promise(resolve => { settle = resolve; });
+      return state === 'acked' ? { kind: 'acked', messageId: '9202' } : { kind: state };
+    } });
+    r.call(1); await r.time.advance(0);
+    expect(r.adapter.prepare('SELECT state, opcode FROM card_explicit_requests').get()).toEqual({ state, opcode: 'interactive' });
+    expect(r.adapter.prepare('SELECT kind FROM card_messages').get()).toEqual({ kind: 'interactive' });
+    const invariants = r.store.checkInvariants();
+    const { reopened, second } = await r.reopen();
+    // Collect the in-flight result even when startup assertions fail.
+    if (state === 'reserved') { settle({ kind: 'ambiguous' }); await r.time.advance(0); }
+    expect.soft(invariants).toEqual([]);
+    expect(reopened).toMatchObject({ state: 'ready', provenance: 'reopened', ledger: { violations: [], closedGenerations: 1 } });
+    if (reopened.state !== 'ready') return;
+    expect(reopened.store.checkInvariants()).toEqual([]);
+    expect(second.prepare('SELECT state, opcode FROM card_explicit_requests').get()).toEqual({ state: state === 'reserved' ? 'ambiguous' : state, opcode: 'interactive' });
+    expect(reopened.store.findSessionByMessageId('9202')).toBeNull();
+    expect(second.prepare('SELECT count(*) AS n FROM card_sessions').get()).toEqual({ n: 0 });
+    expect(second.prepare('SELECT count(*) AS n FROM card_admissions').get()).toEqual({ n: 0 });
+    expect(second.prepare('SELECT invocation_count AS inv, logical_send_count AS sends FROM card_handler_generations').get()).toEqual({ inv: 1, sends: 1 });
+    r.call(1); await r.time.advance(0);
+    expect(sends).toBe(1);
+  });
+  it('still detects a corrupted request/message relationship', async () => {
+    const r = await rig(() => profile({ actions: [] }), { send: async () => ({ kind: 'acked', messageId: '9204' }) });
+    r.call(1); await r.time.advance(0);
+    expect(r.store.checkInvariants()).toEqual([]);
+    r.adapter.prepare("UPDATE card_messages SET kind = 'display'").run();
+    expect(r.store.checkInvariants()).toEqual(['request_card_mismatch']);
+    const { reopened } = await r.reopen();
+    expect(reopened).toMatchObject({ state: 'disabled', reason: 'invariant_failed', violations: ['request_card_mismatch'] });
+  });
+  it('reports acknowledged degraded text as outer app-server success', async () => {
+    const r = await rig(() => { throw new TypeError('offline'); });
+    r.net.reply({ status: 200, body: { message_id: '9203' } });
+    r.call(1); await r.time.advance(0);
+    expect(r.responses).toHaveLength(1);
+    expect(r.replies).toEqual([{ status: 'degraded', message_id: '9203', interaction_available: false, reason: 'profile_unavailable' }]);
+    expect(r.responses[0].success).toBe(true);
+  });
   it.each([
     [{ status: 200, body: {} }, 'send_unconfirmed'],
     [{ status: 403 }, 'unavailable'],
@@ -175,6 +242,7 @@ describe('budgeted informational degradation', () => {
     const r = await rig(() => { throw new TypeError('offline'); });
     r.net.reply(response); r.call(1); await r.time.advance(0);
     expect(r.replies[0]).toMatchObject({ status: 'error', error: { code } });
+    expect(r.responses).toHaveLength(1); expect(r.responses[0].success).toBe(false);
     expect(r.net.sends()).toHaveLength(1); expect(r.store.activeSessions()).toBe(0);
     expect(r.counters()).toEqual({ inv: 1, sends: 1 });
     r.call(1); await r.time.advance(0); expect(r.net.sends()).toHaveLength(1);
@@ -184,12 +252,24 @@ describe('budgeted informational degradation', () => {
     r.net.reply({ status: 200, body: { message_id: '9201' } });
     r.call(1); await r.time.advance(0);
     expect(r.replies[0]).toEqual({ status: 'degraded', message_id: '9201', interaction_available: false, reason: mode === 'throw' ? 'profile_unavailable' : 'profile_incompatible' });
+    expect(r.responses).toHaveLength(1); expect(r.responses[0].success).toBe(true);
     const wire = JSON.parse(r.net.sends()[0].body);
     expect(wire.payload).toMatchObject({ type: 1, content: expect.stringMatching(/^Interaction unavailable\./) });
     expect(wire.payload.card).toBeUndefined();
     expect(r.store.activeSessions()).toBe(0); expect(r.adapter.prepare('SELECT count(*) AS n FROM card_sessions').get()).toEqual({ n: 0 });
     expect(r.counters()).toEqual({ inv: 1, sends: 1 });
     r.call(1); await r.time.advance(0); expect(r.net.sends()).toHaveLength(1);
+  });
+  it.each(['enabled', 'throw', 'incompatible'])('rejects final visible-label collisions before reservation under %s capability', async mode => {
+    const r = await rig(() => { if (mode === 'throw') throw new TypeError('offline'); return mode === 'incompatible' ? profile({ actions: [] }) : profile(); });
+    r.call(1, 'interactive', { ...args, inputs: [{ id: 'pick', kind: 'choice', label: 'Pick', required: true, multiple: false, min: 1, max: 1,
+      options: [{ id: 'a', label: 'www.example.com' }, { id: 'b', label: 'www[.]example.com' }] }] });
+    await r.time.advance(0);
+    expect(r.responses).toHaveLength(1); expect(r.responses[0].success).toBe(false);
+    expect(r.replies).toEqual([{ status: 'error', error: { code: 'validation_failed', diagnostics: [{ path: '$.inputs[0].options[1].label', rule: 'label_duplicate' }] } }]);
+    expect(r.counters()).toEqual({ inv: 1, sends: 0 });
+    expect(r.adapter.prepare('SELECT count(*) AS n FROM card_messages').get()).toEqual({ n: 0 });
+    expect(r.store.activeSessions()).toBe(0); expect(r.net.sends()).toHaveLength(0);
   });
   it('retains all degraded send slots after ambiguous results and never creates sessions', async () => {
     const r = await rig(() => { throw new TypeError('offline'); }, { send: async () => ({ kind: 'ambiguous' }) });

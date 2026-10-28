@@ -3,6 +3,24 @@ import { validateInteractiveArgs } from '../cards/interactive-schema.js';
 
 const base = { title: 'Decide', buttons: [{ id: 'ok', label: 'Continue' }] };
 describe('interactive author grammar', () => {
+  it.each([
+    ['www.example.com', 'www[.]example.com'],
+    ['https://example.com', 'https[:]//example.com'],
+    ['x](y)', 'x] (y)'],
+    ['x][y]', 'x] [y]'],
+    ['e\u0301', 'é'],
+    ['A\u200b', 'A'],
+    ['@all', '＠all'],
+  ])('rejects choice labels that collide after visible sanitation: %j / %j', (first, second) => {
+    const r = validateInteractiveArgs({ ...base, inputs: [{ id: 'pick', kind: 'choice', label: 'Pick', required: true, multiple: false, min: 1, max: 1,
+      options: [{ id: 'a', label: first }, { id: 'b', label: second }] }] });
+    expect(r).toEqual({ ok: false, error: { code: 'validation_failed', diagnostics: [{ path: '$.inputs[0].options[1].label', rule: 'label_duplicate' }] } });
+  });
+  it('keeps label uniqueness scoped to each choice input', () => {
+    const choice = { kind: 'choice' as const, label: 'Pick', required: true, multiple: false, min: 1, max: 1,
+      options: [{ id: 'a', label: 'www.example.com' }, { id: 'b', label: 'www.other.com' }] };
+    expect(validateInteractiveArgs({ ...base, inputs: [{ ...choice, id: 'first' }, { ...choice, id: 'second' }] }).ok).toBe(true);
+  });
   it('normalizes and freezes literal labels without losing decisions', () => {
     const r = validateInteractiveArgs({ ...base, title: '  Cafe\u0301 @all  ' });
     expect(r).toMatchObject({ ok: true, value: { title: 'Café ＠all' } });
