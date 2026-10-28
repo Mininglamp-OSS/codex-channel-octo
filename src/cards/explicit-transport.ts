@@ -21,19 +21,21 @@
  * reserved slot stays consumed (32/10, no refund).
  */
 import {
-  CARD_API_DEADLINE_MS, CARD_ENVELOPE_MAX_BYTES, CardRequestError, OctoApiError, classifySendFailure, serializeSendAuthored,
-  type CardApi, type SendAuthoredRequest,
+  CARD_API_DEADLINE_MS, CARD_ENVELOPE_MAX_BYTES, CardRequestError, OctoApiError, classifySendFailure, serializeSendAuthored, serializeSendInformational,
+  type CardApi, type SendAuthoredRequest, type SendInformationalRequest,
 } from "./api.js";
 import type { AcDisplayElement, Limits, MonotonicClock, PolicySnapshot } from "./contracts.js";
 import type { DisplayExplicitCard } from "./explicit-display.js";
+import { interactionDegradation, type InteractiveExplicitCard } from './explicit-interactive.js';
+import type { AcInteractiveElement, InputKind } from './contracts.js';
 import type { Pacer } from "./pacer.js";
 import type { CardPolicy } from "./policy.js";
 import type { ExplicitTransport, ExplicitTransportOutcome } from "./tool-host.js";
 
 export interface ExplicitTransportOptions {
-  readonly api: Pick<CardApi, "origin" | "sendAuthored">;
+  readonly api: Pick<CardApi, "origin" | "sendAuthored"> & Partial<Pick<CardApi, 'sendInformational'>>;
   readonly pacer: Pick<Pacer, "gate" | "observe429" | "observeSuccess">;
-  readonly policy: Pick<CardPolicy, "authorize">;
+  readonly policy: Pick<CardPolicy, "authorize"> & Partial<Pick<CardPolicy, 'snapshot'>>;
   readonly clock: MonotonicClock;
 }
 
@@ -41,7 +43,7 @@ const FAILED: ExplicitTransportOutcome = Object.freeze({ kind: "failed" });
 const AMBIGUOUS: ExplicitTransportOutcome = Object.freeze({ kind: "ambiguous" });
 
 /** The layout limits the card was fitted under; undefined when unreadable. */
-function builtLimits(card: DisplayExplicitCard): Pick<Limits, "maxNodes" | "maxDepth"> | undefined {
+function builtLimits(card: DisplayExplicitCard | InteractiveExplicitCard): Pick<Limits, "maxNodes" | "maxDepth"> | undefined {
   try {
     const l = JSON.parse(card.pinnedLimitsJson ?? "") as Partial<Limits>;
     return Number.isSafeInteger(l.maxNodes) && Number.isSafeInteger(l.maxDepth)
@@ -49,6 +51,15 @@ function builtLimits(card: DisplayExplicitCard): Pick<Limits, "maxNodes" | "maxD
   } catch {
     return undefined;
   }
+}
+
+function inputsSupported(body: readonly AcInteractiveElement[], inputs: ReadonlySet<InputKind>): boolean {
+  const kinds: Record<string, InputKind> = { 'Input.Text': 'text', 'Input.Number': 'number', 'Input.Date': 'date', 'Input.Time': 'time', 'Input.Toggle': 'toggle', 'Input.ChoiceSet': 'choice' };
+  return body.every(e => {
+    if (e.type === 'Container') return inputsSupported(e.items, inputs);
+    if (e.type === 'TextBlock' || e.type === 'FactSet') return true;
+    return inputs.has(kinds[e.type]);
+  });
 }
 
 /**
@@ -80,12 +91,24 @@ export function createExplicitTransport(options: ExplicitTransportOptions): Expl
     async send(input: Parameters<ExplicitTransport["send"]>[0]): Promise<ExplicitTransportOutcome> {
       // ── pre-request: nothing below can have reached the server ──
       let request: SendAuthoredRequest;
+      let informational: SendInformationalRequest | undefined;
       try {
-        const card = input.card as DisplayExplicitCard;
-        if (card.opcode !== "display" || card.snapshot === undefined || card.authored === undefined || typeof card.plain !== "string") return FAILED;
         if (input.signal.aborted) return FAILED;
+        if (input.card.informational === true) {
+          const card = input.card;
+          if (card.opcode !== 'interactive') return FAILED;
+          const snapshot = await policy.snapshot?.();
+          if (snapshot === undefined || snapshot.botRef.originKey !== input.ctx.botRef.originKey || snapshot.botRef.credentialRef !== input.ctx.botRef.credentialRef
+            || interactionDegradation(snapshot) !== card.reason || api.sendInformational === undefined || input.signal.aborted) return FAILED;
+          informational = { route: { channelId: card.binding.channelId, channelType: card.binding.channelType }, clientMsgNo: input.clientMsgNo, plain: card.plain,
+            maxEnvelopeBytes: Math.min(snapshot.interaction.limits.maxPayloadBytes, CARD_ENVELOPE_MAX_BYTES) };
+          serializeSendInformational(informational);
+        } else {
+        const card = input.card as DisplayExplicitCard | InteractiveExplicitCard;
+        if (card.snapshot === undefined || card.authored === undefined || typeof card.plain !== 'string') return FAILED;
+        if (card.opcode !== 'display' && (card.opcode !== 'interactive' || card.authored.profile !== 'octo/v2' || !card.contract || card.contract.requesterUid !== input.ctx.requesterUid)) return FAILED;
         // The snapshot the card was built from, re-authorized pinned: a revoked or refreshed-away policy is no send.
-        const auth = policy.authorize("display", { botRef: input.ctx.botRef }, card.snapshot);
+        const auth = policy.authorize(card.opcode === 'display' ? 'display' : 'interaction', { botRef: input.ctx.botRef }, card.snapshot);
         if (!auth.allowed) return FAILED;
         const built = builtLimits(card);
         if (built === undefined || auth.limits.maxNodes < built.maxNodes || auth.limits.maxDepth < built.maxDepth) return FAILED;
@@ -96,7 +119,10 @@ export function createExplicitTransport(options: ExplicitTransportOptions): Expl
         // Refit against the current effective payload limit; throws before any fetch.
         serializeSendAuthored(request);
         // Element- or action-set shrink: the current sets must still carry everything the card was built with.
-        if (!bodySupported(card.authored.card.body, auth.snapshot.display)) return FAILED;
+        if (card.opcode === 'display') {
+          if (!bodySupported(card.authored.card.body, auth.snapshot.display)) return FAILED;
+        } else if (!inputsSupported(card.authored.card.body, auth.snapshot.interaction.inputs)) return FAILED;
+        }
         if (!pacer.gate(api.origin).eligible) return FAILED;
       } catch {
         return FAILED;
@@ -105,7 +131,9 @@ export function createExplicitTransport(options: ExplicitTransportOptions): Expl
       // ── the one request ──
       let messageId: string;
       try {
-        const ack = await api.sendAuthored(request, { signal: input.signal, deadlineMs: CARD_API_DEADLINE_MS });
+        const ack = informational !== undefined
+          ? await api.sendInformational!(informational, { signal: input.signal, deadlineMs: CARD_API_DEADLINE_MS })
+          : await api.sendAuthored(request!, { signal: input.signal, deadlineMs: CARD_API_DEADLINE_MS });
         messageId = ack.messageId;
       } catch (err) {
         if (err instanceof OctoApiError && err.transport === "response" && err.status === 429) {

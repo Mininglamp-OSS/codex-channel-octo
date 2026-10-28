@@ -554,8 +554,10 @@ export type ChargeResult =
   | { readonly kind: 'rejected'; readonly reason: HandlerRejection };
 
 export type ExplicitCard =
-  | ({ readonly opcode: 'display'; readonly binding: CardBinding; readonly bodyDigest: string } & CardPresentation)
-  | ({ readonly opcode: 'interactive'; readonly binding: CardBinding; readonly bodyDigest: string; readonly contract: SessionContract } & CardPresentation);
+  | ({ readonly opcode: 'display'; readonly informational?: false; readonly binding: CardBinding; readonly bodyDigest: string } & CardPresentation)
+  | ({ readonly opcode: 'interactive'; readonly informational?: false; readonly binding: CardBinding; readonly bodyDigest: string; readonly contract: SessionContract } & CardPresentation)
+  | ({ readonly opcode: 'interactive'; readonly informational: true; readonly binding: CardBinding; readonly bodyDigest: string;
+      readonly plain: string; readonly reason: 'profile_unavailable' | 'profile_incompatible' } & CardPresentation);
 
 export type ReserveExplicitResult =
   | { readonly kind: 'reserved'; readonly slot: number; readonly clientMsgNo: string; readonly cardId: string; readonly sessionId: string | null }
@@ -1611,7 +1613,11 @@ export class CardStore {
     checkBinding(card.binding);
     text(card.bodyDigest);
     this.checkPresentation(card);
-    if (card.opcode === 'interactive') this.checkContract(card.contract);
+    if (card.opcode === 'interactive' && card.informational !== true) this.checkContract(card.contract);
+    else if (card.opcode === 'interactive' && card.informational === true) {
+      text(card.plain, 16_384);
+      if (card.reason !== 'profile_unavailable' && card.reason !== 'profile_incompatible') throw new CardStoreError('invalid_input');
+    }
     else if (card.opcode !== 'display') throw new CardStoreError('invalid_input');
     return this.tx<ReserveExplicitResult>(() => {
       const now = this.now();
@@ -1628,15 +1634,16 @@ export class CardStore {
         this.finishCharged(req, EXHAUSTED_JSON, now);
         return { kind: 'exhausted' };
       }
-      if (card.opcode === 'interactive' && this.activeSessionCount() >= this.capacity) {
+      if (card.opcode === 'interactive' && card.informational !== true && this.activeSessionCount() >= this.capacity) {
         this.finishCharged(req, CAPACITY_FULL_JSON, now);
         return { kind: 'capacity_full' };
       }
       const slot = g.logical_send_count + 1;
       const clientMsgNo = this.newId();
-      const cardId = this.insertMessage(card.opcode, card.binding, card.bodyDigest, clientMsgNo, card, now);
+      // Informational sends retain a display-kind message ledger row for reconciliation, never a session.
+      const cardId = this.insertMessage(card.informational === true ? 'display' : card.opcode, card.binding, card.bodyDigest, clientMsgNo, card, now);
       if (cardId === null) throw new CardStoreError('storage_failure');
-      const sessionId = card.opcode === 'interactive' ? this.insertSession(cardId, card.binding, card.contract, now).sessionId : null;
+      const sessionId = card.opcode === 'interactive' && card.informational !== true ? this.insertSession(cardId, card.binding, card.contract, now).sessionId : null;
       this.run(
         `UPDATE card_handler_generations SET logical_send_count = logical_send_count + 1
          WHERE generation = ? AND logical_send_count = ?`,

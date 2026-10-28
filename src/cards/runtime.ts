@@ -67,6 +67,7 @@ import {
 } from "./recovery.js";
 import { createResourceRegistry, type CardDrainResult } from "./resource-registry.js";
 import { createExplicitDisplay, type ExplicitDisplayCapabilities } from "./explicit-display.js";
+import { createExplicitInteractive, interactionDegradation, type InteractiveCapability } from "./explicit-interactive.js";
 import { createExplicitTransport } from "./explicit-transport.js";
 import type { CardBinding } from "./store.js";
 import {
@@ -230,10 +231,12 @@ function displayCapabilities(policy: CardPolicy, botRef: BotRef): ExplicitDispla
  * handler bound to this Bot's capabilities. An op with no per-runtime
  * handler here is left out.
  */
-function runtimeExplicitOps(registered: ExplicitOpTable, capabilities: () => ExplicitDisplayCapabilities | undefined): ExplicitOpTable {
+function runtimeExplicitOps(registered: ExplicitOpTable, capabilities: () => ExplicitDisplayCapabilities | undefined,
+  interaction: () => Promise<InteractiveCapability>): ExplicitOpTable {
   const table = new Map<ToolOpcode, ExplicitOpHandler>();
   for (const op of registered.keys()) {
     if (op === "display") table.set(op, createExplicitDisplay({ capabilities }) as ExplicitOpHandler);
+    if (op === "interactive") table.set(op, createExplicitInteractive({ capabilities: interaction }) as ExplicitOpHandler);
   }
   return Object.freeze(table);
 }
@@ -366,7 +369,13 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
   // Explicit tools. G-b: with no op there is no host, listener or bootstrap
   // directory at all; G-g: the host also refuses a store whose ledger was not
   // recovered first. Only the production entry point supplies the data dir.
-  const explicitOps = options.explicitOpsForTest ?? runtimeExplicitOps(PRODUCTION_EXPLICIT_OPS, () => displayCapabilities(policy, botRef));
+  const explicitOps = options.explicitOpsForTest ?? runtimeExplicitOps(PRODUCTION_EXPLICIT_OPS, () => displayCapabilities(policy, botRef), async () => {
+    const snapshot = await policy.snapshot();
+    const auth = policy.authorize('interaction', { botRef });
+    if (auth.allowed) return { kind: 'enabled', caps: { inputs: auth.snapshot.interaction.inputs, limits: auth.limits }, snapshot: auth.snapshot };
+    const reason = interactionDegradation(snapshot);
+    return reason === undefined ? { kind: 'denied' } : { kind: 'degrade', reason };
+  });
   let transport: ExplicitTransport | undefined;
   try {
     transport = options.explicitTransportForTest === null ? undefined
@@ -436,6 +445,8 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
     if (!gatewayAdmitsInjection(cwd)) return none; // G-d
     const offered: ToolOpcode[] = [];
     for (const op of explicitOps.keys()) {
+      // WP11/12 topology/authenticity/admission proofs do not exist yet. Registration never opens this gate.
+      if (op === 'interactive') continue;
       try { if (policy.authorize(op === "display" ? "display" : "interaction", { botRef }).allowed) offered.push(op); } // G-a
       catch { /* not offered */ }
     }

@@ -82,7 +82,7 @@ describe("package contract", () => {
     const entry = mod.defaultPackagedEntry();
     expect(entry.nodePath).toBe(process.execPath);
     expect(entry.serverPath).toBe(join(out, "cards", "mcp-server.js"));
-    expect([...mod.PRODUCTION_EXPLICIT_OPS.keys()]).toEqual(["display"]);
+    expect([...mod.PRODUCTION_EXPLICIT_OPS.keys()]).toEqual(["display", "interactive"]);
   });
 });
 

@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { CardRequestError, createCardApi, type CardApi } from '../cards/api.js';
 import type { CardToolResult, DisplayCardArgs, PolicySnapshot, TrustedTurnContext } from '../cards/contracts.js';
 import { createExplicitDisplay, type DisplayExplicitCard } from '../cards/explicit-display.js';
+import { createExplicitInteractive } from '../cards/explicit-interactive.js';
 import { createExplicitTransport } from '../cards/explicit-transport.js';
 import { provisionFirstInstallMarker } from '../cards/migrations.js';
 import { createPacer } from '../cards/pacer.js';
@@ -235,13 +236,31 @@ describe('the built snapshot is re-authorized, pinned, just before the send (C4)
     expect(r.net.sends()).toHaveLength(0);
   });
 
-  it('a card without its snapshot, or an interactive card, is never sent', async () => {
+  it('a card without its snapshot, or a display body relabeled interactive, is never sent', async () => {
     const r = unitRig();
     const card = await r.build();
     const bare: Record<string, unknown> = { ...card };
     delete bare.snapshot;
     expect(await r.send(Object.freeze(bare) as unknown as ExplicitCard)).toEqual({ kind: 'failed' });
     expect(await r.send({ ...card, opcode: 'interactive' } as unknown as ExplicitCard)).toEqual({ kind: 'failed' });
+    expect(r.net.sends()).toHaveLength(0);
+  });
+});
+
+describe('interactive opcode-specific transport authorization', () => {
+  it.each(['deny', 'inputs', 'limits'] as const)('blocks %s drift before transport without treating v2 as display', async change => {
+    const r = unitRig(); await r.policy.snapshot();
+    const auth = r.policy.authorize('interaction', { botRef: r.botRef });
+    if (!auth.allowed) throw new Error('initial interaction policy');
+    let card: ExplicitCard | undefined;
+    const handler = createExplicitInteractive({ capabilities: () => ({ kind: 'enabled', caps: { inputs: auth.snapshot.interaction.inputs, limits: auth.limits }, snapshot: auth.snapshot }) });
+    await handler.handle({ title: 'Decide', inputs: [{ id: 'ok', kind: 'toggle', label: 'Approve', required: true }], buttons: [{ id: 'submit', label: 'Continue' }] },
+      { ctx: r.ctx, requestId: '0'.repeat(32) }, { reserveAndSend: async c => { card = c; return { status: 'error', error: { code: 'send_unconfirmed' } }; } }, new AbortController().signal);
+    expect(card).toBeDefined();
+    r.setProfile(() => change === 'deny' ? profile({ config: { ...profile().config!, interaction_enabled: false } })
+      : change === 'inputs' ? profile({ inputs: [] }) : profile({ limits: { max_nodes: 1 } }));
+    await r.time.advance(60_001); await r.policy.snapshot();
+    expect(await r.send(card!)).toEqual({ kind: 'failed' });
     expect(r.net.sends()).toHaveLength(0);
   });
 });
@@ -499,7 +518,7 @@ async function runtimeRig(profileBody: () => unknown, over: { token?: string; ti
     cards.bindTurn(TURN);
     const call = (id: number, callId: string, args: unknown = DISPLAY) =>
       cards.onToolCall(id, { threadId: THREAD, turnId: TURN, callId, namespace: null, tool: 'display', arguments: args });
-    return { generation: begun.coordinator.generation, replies, call };
+    return { generation: begun.coordinator.generation, replies, call, cards };
   };
   const displaySends = () => net.sends().filter((s) => 'card' in (JSON.parse(s.body) as { payload: object }).payload);
   const rows = (generation: string) => adapter.prepare('SELECT state, client_msg_no FROM card_explicit_requests WHERE generation = ?').all(generation) as
@@ -510,6 +529,15 @@ async function runtimeRig(profileBody: () => unknown, over: { token?: string; ti
 const result = (rep: Reply | undefined): CardToolResult => JSON.parse(rep!.result.contentItems[0].text) as CardToolResult;
 
 describe.runIf(CERTIFIED)('runtime wiring: one real send through the production table (C1/C2)', () => {
+  it('keeps interaction unavailable without topology/admission proof even under an enabled synthetic profile', async () => {
+    const r = await runtimeRig(() => profile());
+    const a = r.attempt();
+    a.cards.onToolCall(1, { threadId: THREAD, turnId: TURN, callId: 'interactive-1', namespace: null, tool: 'interactive', arguments: { title: 'Decide', buttons: [{ id: 'ok', label: 'Continue' }] } });
+    await r.time.advance(0);
+    expect(result(a.replies[0])).toEqual({ status: 'error', error: { code: 'unavailable', diagnostics: [{ path: '$.op', rule: 'explicit_op_unavailable' }] } });
+    expect(r.net.sends()).toHaveLength(0);
+    expect(r.adapter.prepare('SELECT count(*) AS n FROM card_sessions').get()).toEqual({ n: 0 });
+  });
   it('an acked display reaches sendAuthored exactly once with the reserved client_msg_no and is answered sent', async () => {
     const r = await runtimeRig(() => liveProfileJson());
     const a = r.attempt();

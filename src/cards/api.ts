@@ -78,7 +78,7 @@ const ENDPOINTS = Object.freeze({
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
 export type ApiOperation =
-  | "get_profile" | "send_registry" | "send_authored" | "edit_registry" | "edit_authored"
+  | "get_profile" | "send_registry" | "send_authored" | "send_informational" | "edit_registry" | "edit_authored"
   | "poll_owned" | "ack" | "get_fresh_members";
 
 export type ApiTransport = "response" | "timeout" | "network" | "abort";
@@ -915,6 +915,21 @@ function checkPlain(plain: string): string {
   return wireString(plain, "plain", "invalid_request");
 }
 
+export interface SendInformationalRequest {
+  readonly route: CardRoute;
+  readonly clientMsgNo: string;
+  readonly plain: string;
+  readonly maxEnvelopeBytes?: number;
+}
+
+/** Ordinary type-1 text, using the same stable reservation identity and bounded ACK parser. */
+export function serializeSendInformational(req: SendInformationalRequest): FrozenRequest {
+  const route = checkRoute(req.route);
+  const content = nonEmptyWireString(req.plain, 'plain', 'invalid_request');
+  return freeze(ENDPOINTS.send, { channel_id: route.channel_id, channel_type: route.channel_type,
+    payload: { type: 1, content }, client_msg_no: checkClientMsgNo(req.clientMsgNo) }, req.maxEnvelopeBytes);
+}
+
 export function serializeSendRegistry(req: SendRegistryRequest): FrozenRequest {
   const route = checkRoute(req.route);
   return freeze(ENDPOINTS.send, {
@@ -1057,6 +1072,7 @@ export interface CardApi {
   getProfile(opts?: ApiCallOptions): Promise<CardProfileWire>;
   sendRegistry(req: SendRegistryRequest, opts?: ApiCallOptions): Promise<SendAck>;
   sendAuthored(req: SendAuthoredRequest, opts?: ApiCallOptions): Promise<SendAck>;
+  sendInformational(req: SendInformationalRequest, opts?: ApiCallOptions): Promise<SendAck>;
   editRegistry(req: EditRegistryRequest, opts?: ApiCallOptions): Promise<EditAck>;
   editAuthored(req: EditAuthoredRequest, opts?: ApiCallOptions): Promise<EditAck>;
   pollOwned(poll?: PollOptions, opts?: ApiCallOptions): Promise<readonly PolledEvent[]>;
@@ -1262,6 +1278,10 @@ export function createCardApi(config: CardApiConfig): CardApi {
     sendAuthored(req, opts) {
       const request = serializeSendAuthored(req);
       return send("send_authored", request, req.clientMsgNo, opts);
+    },
+
+    sendInformational(req, opts) {
+      return send('send_informational', serializeSendInformational(req), req.clientMsgNo, opts);
     },
 
     editRegistry(req, opts) {

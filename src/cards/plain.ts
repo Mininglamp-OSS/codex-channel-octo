@@ -8,11 +8,29 @@
  * lines (stating how many) and never splits a Unicode scalar. Input is the
  * schema-normalized card; mentions are neutralized again defensively.
  */
-import type { DisplayBlock, DisplayCardArgs, RichRun } from "./contracts.js";
+import type { DisplayBlock, DisplayCardArgs, InteractiveCardArgs, RichRun } from "./contracts.js";
 import { neutralizeMentions, neutralizeUrls as u } from "./display-schema.js";
 
 /** Plain-text cap; the envelope fit in the builder still applies on top. */
 export const PLAIN_MAX_BYTES = 4096;
+
+/** Interaction is never actionable from its plain representation. No decision is omitted. */
+export function renderInteractivePlain(args: InteractiveCardArgs, shared = false, degraded = false): string {
+  const lines = [...(degraded ? ['Interaction unavailable.'] : []), args.title,
+    ...(shared ? ['For the original requester'] : []), ...(args.text === undefined ? [] : [args.text]),
+    ...(args.sections ?? []).map(s => s.text)];
+  for (const input of args.inputs ?? []) {
+    lines.push(`${input.label} (${input.kind}, ${input.required ? 'Required' : 'Optional'})`);
+    switch (input.kind) {
+      case 'text': lines.push(`Length: ${Math.max(input.required ? 1 : 0, input.minLength ?? 0)}–${input.maxLength ?? 4096}`); break;
+      case 'number': lines.push(`Range: ${input.min}–${input.max}`); break;
+      case 'date': case 'time': lines.push(input.timezone === undefined ? 'Timezone unspecified' : `Timezone: ${input.timezone}`); break;
+      case 'choice': lines.push(`Selections: ${input.min}–${input.max}`, ...input.options.map(o => o.label)); break;
+    }
+  }
+  lines.push(...args.buttons.map(b => b.label), 'Respond using a card-capable client; this text does not submit a response.');
+  return neutralizeMentions(lines.map(u).join('\n'));
+}
 const ELLIPSIS = "…";
 const INDENT = "  ";
 

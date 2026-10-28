@@ -165,12 +165,12 @@ describe('route guards (WP09-PF N2 / E-G7)', () => {
 });
 
 describe('production registration (B5) and fail-closed live profile', () => {
-  it('the production op table holds exactly the display handler', () => {
-    expect([...PRODUCTION_EXPLICIT_OPS.keys()]).toEqual(['display']);
+  it('the production op table holds exactly display and interactive handlers', () => {
+    expect([...PRODUCTION_EXPLICIT_OPS.keys()]).toEqual(['display', 'interactive']);
     expect(PRODUCTION_EXPLICIT_OPS.get('display')).toBe(EXPLICIT_DISPLAY);
     expect(EXPLICIT_DISPLAY.op).toBe('display');
     expect(Object.isFrozen(PRODUCTION_EXPLICIT_OPS)).toBe(true);
-    expect(PRODUCTION_EXPLICIT_OPS.has('interactive')).toBe(false);
+    expect(PRODUCTION_EXPLICIT_OPS.get('interactive')?.op).toBe('interactive');
   });
 
   it('the production handler uses only the elements every enabled display profile guarantees', () => {

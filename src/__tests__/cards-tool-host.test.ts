@@ -315,8 +315,8 @@ const until = (assertion: () => void) => vi.waitFor(assertion, { timeout: 2_000,
 // ─── contract constants ─────────────────────────────────────────────────────
 
 describe("contract constants (AM-08 v4 §7.1)", () => {
-  it("the production op table is frozen with the display handler only and the unavailable result is exact", () => {
-    expect([...PRODUCTION_EXPLICIT_OPS.keys()]).toEqual(["display"]);
+  it("the production op table is frozen with both closed handlers and the unavailable result is exact", () => {
+    expect([...PRODUCTION_EXPLICIT_OPS.keys()]).toEqual(["display", "interactive"]);
     expect(Object.isFrozen(PRODUCTION_EXPLICIT_OPS)).toBe(true);
     expect(EXPLICIT_OP_UNAVAILABLE).toEqual({ status: "error", error: { code: "unavailable", diagnostics: [{ path: "$.op", rule: "explicit_op_unavailable" }] } });
   });

@@ -76,6 +76,7 @@ import {
   type ToolRequestFrame,
 } from "./protocol.js";
 import { EXPLICIT_DISPLAY } from "./explicit-display.js";
+import { EXPLICIT_INTERACTIVE, interactionDegradation } from "./explicit-interactive.js";
 import { ledgerRecovered } from "./recovery.js";
 import { EXPLICIT_BUDGET_EXHAUSTED, MAX_EXPLICIT_INVOCATIONS, type CardBinding, type CardStore, type ExplicitCard, type ExplicitFinish, type FinishExplicitInput } from "./store.js";
 
@@ -184,8 +185,10 @@ export interface ExplicitOpHandler<O extends ToolOpcode = ToolOpcode> {
 
 export type ExplicitOpTable = ReadonlyMap<ToolOpcode, ExplicitOpHandler>;
 
-/** WP-09: the display handler only; `interactive` stays unregistered until WP-10. */
-export const PRODUCTION_EXPLICIT_OPS: ExplicitOpTable = Object.freeze(new Map<ToolOpcode, ExplicitOpHandler>([["display", EXPLICIT_DISPLAY as ExplicitOpHandler]]));
+/** Closed operation registry; registration does not enable runtime discovery. */
+export const PRODUCTION_EXPLICIT_OPS: ExplicitOpTable = Object.freeze(new Map<ToolOpcode, ExplicitOpHandler>([
+  ["display", EXPLICIT_DISPLAY as ExplicitOpHandler], ["interactive", EXPLICIT_INTERACTIVE as ExplicitOpHandler],
+]));
 
 export const EXPLICIT_OP_UNAVAILABLE = Object.freeze({
   status: "error",
@@ -725,7 +728,7 @@ export interface ToolHostOptions {
   readonly timers: HostTimers;
   readonly entry?: PackagedEntry;
   readonly transport?: ExplicitTransport;
-  readonly policy?: Pick<CardPolicy, "authorize">;
+  readonly policy?: Pick<CardPolicy, "authorize"> & Partial<Pick<CardPolicy, "snapshot">>;
 }
 
 export interface GenerationInput {
@@ -1144,9 +1147,17 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
     }
     if (options.policy !== undefined) {
       let allowed = false;
-      try { allowed = options.policy.authorize(op === "display" ? "display" : "interaction", { botRef: gen.input.ctx.botRef }).allowed; } catch { allowed = false; }
+      try {
+        if (card.informational === true) {
+          const snapshot = await options.policy.snapshot?.();
+          allowed = snapshot !== undefined && snapshot.botRef.originKey === gen.input.ctx.botRef.originKey
+            && snapshot.botRef.credentialRef === gen.input.ctx.botRef.credentialRef && interactionDegradation(snapshot) === card.reason;
+        } else allowed = options.policy.authorize(op === "display" ? "display" : "interaction", { botRef: gen.input.ctx.botRef }).allowed;
+      } catch { allowed = false; }
       if (!allowed) return settled("failed", POLICY_DENIED);
     }
+    // Policy probing can await: recheck closure immediately before the atomic store fence.
+    if (req.abort.signal.aborted || !req.live()) throw new Closed();
     const r = store.reserveExplicitSend({ ...fence(gen), requestId: req.requestId, card });
     switch (r.kind) {
       case "reserved": break;
@@ -1176,12 +1187,19 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
       return req.result ?? SEND_UNCONFIRMED;
     }
     if (outcome.kind === "acked") {
-      const result: CardToolResult = { status: "sent", message_id: outcome.messageId,
+      let policyAllows = true;
+      if (op === 'interactive' && card.informational !== true && options.policy !== undefined) {
+        try { policyAllows = options.policy.authorize('interaction', { botRef: gen.input.ctx.botRef }).allowed; }
+        catch { policyAllows = false; }
+      }
+      const result: CardToolResult = !policyAllows ? POLICY_DENIED : card.informational === true
+        ? { status: "degraded", message_id: outcome.messageId, interaction_available: false, reason: card.reason }
+        : { status: "sent", message_id: outcome.messageId,
         route: { kind: gen.input.ctx.routeEligibility.kind, ref: r.cardId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) || "card" },
         ...(r.sessionId !== null ? { session_id: r.sessionId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64) } : {}) };
       const valid = parseCardToolResult(result as unknown as JsonValue);
       if (valid !== null && finish(gen, req.requestId, "acked", valid,
-        { kind: "ack", messageId: outcome.messageId, currentResetEpoch: gen.input.currentResetEpoch(), policyAllows: true }, req.settledBy)) {
+        { kind: "ack", messageId: outcome.messageId, currentResetEpoch: gen.input.currentResetEpoch(), policyAllows }, req.settledBy)) {
         req.finished = true; req.result = valid;
         return valid;
       }
