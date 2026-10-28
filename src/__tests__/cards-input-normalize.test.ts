@@ -29,6 +29,19 @@ describe('strict input normalization', () => {
     expect(normalize([], { unknown: 'sensitive' })).toMatchObject({ ok: false, error: { diagnostics: [{ path: '$', rule: 'unknown_input' }] } });
     expect(normalize([{ id: 's', kind: 'text', label: 's', required: true }], { s: '界'.repeat(1400) }).ok).toBe(false);
   });
+  it.each(['Bearer AbCdEf1234567890', 'password=private-value', 'ghp_AbCdEf1234567890', 'postgres://user:pass@example.test/db', '\u202esubmitted', '\ud800'])('rejects unsafe submitted text with content-free metadata (AC-019.1)', value => {
+    const result = normalize([{ id: 's', kind: 'text', label: 'Response', required: true }], { s: value });
+    expect(result).toEqual({ ok: false, error: { code: 'validation_failed', diagnostics: [{ path: '$.inputs[0]', rule: 'input_unsafe' }] } });
+    expect(JSON.stringify(result)).not.toContain(value);
+  });
+  it('narrows submitted byte caps independently of scalar lengths and rejects aggregate overflow', () => {
+    const specs: InputSpec[] = Array.from({ length: 5 }, (_, i) => ({ id: `s${i}`, kind: 'text', label: 'Response', required: true }));
+    expect(normalize(specs, Object.fromEntries(specs.map(s => [s.id, 'x'.repeat(3500)])))).toMatchObject({ ok: false, error: { code: 'limit_exceeded', diagnostics: [{ rule: 'inputs_bytes' }] } });
+    const narrow = createInputNormalizer({ limits: { maxNodes: 200, maxDepth: 12, maxPayloadBytes: 16384, maxInputTextBytes: 5, maxInputsBytes: 16384 } });
+    expect(narrow([specs[0]], { s0: '12345' }).ok).toBe(true);
+    expect(narrow([specs[0]], { s0: '界界' })).toMatchObject({ ok: false, error: { code: 'limit_exceeded' } });
+    expect(normalize([specs[0]], { s0: '   ' })).toMatchObject({ ok: false, error: { code: 'validation_failed' } });
+  });
 });
 
 describe('tz version contract on every runtime', () => {
