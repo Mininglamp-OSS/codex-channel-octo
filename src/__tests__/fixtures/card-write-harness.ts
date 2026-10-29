@@ -4,6 +4,7 @@
  */
 
 import type { TimerPort } from "../../cards/pacer.js";
+import { SERVER_EDIT_ACK, serverSendAck } from "./octo-server-acks.js";
 
 interface ManualTimer {
   readonly id: number;
@@ -87,11 +88,14 @@ export type ScriptedReply =
 
 /**
  * Scripted fetch for `createCardApi`. Replies are consumed in order; when the
- * script is empty, sends and edits are acknowledged with the expected
- * identity. A `hold` reply stays pending until `release()` or the request
- * signal aborts (an `ignoreAbort` transport never settles on abort).
+ * script is empty, sends and edits are acknowledged the way the real Bot API
+ * does (`ack: "server"`, the default: int64 `message_id` number with a
+ * server-assigned `client_msg_no`, edits `{"status":200}`), or with a full
+ * request echo (`ack: "echo"`). A `hold` reply stays pending until `release()`
+ * or the request signal aborts (an `ignoreAbort` transport never settles on abort).
  */
-export function scriptedFetch(time: ManualTime, options: { ignoreAbort?: boolean } = {}) {
+export function scriptedFetch(time: ManualTime, options: { ignoreAbort?: boolean; ack?: "server" | "echo" } = {}) {
+  const echo = options.ack === "echo";
   const requests: RecordedRequest[] = [];
   const script: ScriptedReply[] = [];
   const held: { resolve: (r: Response) => void; record: RecordedRequest }[] = [];
@@ -101,8 +105,11 @@ export function scriptedFetch(time: ManualTime, options: { ignoreAbort?: boolean
     const parsed = JSON.parse(body) as Record<string, unknown>;
     if (path.endsWith("/v1/bot/sendMessage")) {
       messageNo++;
-      return json(200, { message_id: `9${String(messageNo).padStart(17, "0")}`, client_msg_no: parsed.client_msg_no });
+      const id = `9${String(messageNo).padStart(17, "0")}`;
+      if (!echo) return rawJson(200, serverSendAck(id, `srv${String(messageNo).padStart(29, "0")}`, messageNo));
+      return json(200, { message_id: id, client_msg_no: parsed.client_msg_no });
     }
+    if (!echo) return rawJson(200, SERVER_EDIT_ACK);
     const seq = typeof parsed.card_seq === "number" ? parsed.card_seq
       : (JSON.parse(parsed.content_edit as string) as { card_seq: number }).card_seq;
     return json(200, { message_id: parsed.message_id, card_seq: seq });
@@ -147,6 +154,10 @@ export function scriptedFetch(time: ManualTime, options: { ignoreAbort?: boolean
 
 export function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
+}
+
+function rawJson(status: number, body: string): Response {
+  return new Response(body, { status, headers: { "content-type": "application/json" } });
 }
 
 /** card_seq carried by a recorded registry or authored edit body. */

@@ -241,6 +241,18 @@ export class SessionStore {
         `session-store: messages column migration failed — database is in an unknown state. Underlying error: ${String(err)}`,
       );
     }
+    // T0 (app-server runtime): the explicit-card toolset digest the stored
+    // thread was started with. NULL means none (every exec-era thread).
+    try {
+      const cols = this.adapter.prepare('PRAGMA table_info(sdk_sessions)').all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === 'thread_toolset_digest')) {
+        this.adapter.exec('ALTER TABLE sdk_sessions ADD COLUMN thread_toolset_digest TEXT');
+      }
+    } catch (err) {
+      throw new Error(
+        `session-store: sdk_sessions column migration failed — database is in an unknown state. Underlying error: ${String(err)}`,
+      );
+    }
 
     this.selectSession = this.adapter.prepare('SELECT * FROM sessions WHERE id = ?');
     this.insertSession = this.adapter.prepare(
@@ -408,10 +420,17 @@ export class SessionStore {
   /**
    * v0.3 persistent sessions: record the SDK session UUID for a sessionKey so a
    * later turn can resume it. Upserts (latest wins).
+   *
+   * `toolsetDigest` is the explicit-card toolset the thread was started with
+   * (app-server runtime only). A new thread id always resets it, to the given
+   * digest or to none; omitting it for the same thread keeps the stored one.
    */
-  setSdkSessionId(sessionId: string, sdkSessionId: string): void {
+  setSdkSessionId(sessionId: string, sdkSessionId: string, toolsetDigest?: string | null): void {
     const changed = this.getSdkSessionId(sessionId) !== sdkSessionId;
     this.upsertSdkSession.run(sessionId, sdkSessionId, Date.now());
+    if (changed || toolsetDigest !== undefined) {
+      this.adapter.prepare('UPDATE sdk_sessions SET thread_toolset_digest = ? WHERE session_id = ?').run(toolsetDigest ?? null, sessionId);
+    }
     if (changed) {
       this.adapter.prepare('INSERT INTO conversation_document_state (session_id, sdk_session_id, signature) VALUES (?, ?, NULL) ON CONFLICT(session_id) DO UPDATE SET sdk_session_id = excluded.sdk_session_id, signature = NULL')
         .run(sessionId, sdkSessionId);
@@ -424,6 +443,14 @@ export class SessionStore {
       | { sdk_session_id: string }
       | undefined;
     return row?.sdk_session_id;
+  }
+
+  /** The explicit-card toolset digest of the stored thread; null when it has none or no thread is stored. */
+  getThreadToolsetDigest(sessionId: string): string | null {
+    const row = this.adapter.prepare('SELECT thread_toolset_digest FROM sdk_sessions WHERE session_id = ?').get(sessionId) as
+      | { thread_toolset_digest: string | null }
+      | undefined;
+    return row?.thread_toolset_digest ?? null;
   }
 
   /** Forget the SDK session mapping (e.g. on /reset or a resume failure). */
