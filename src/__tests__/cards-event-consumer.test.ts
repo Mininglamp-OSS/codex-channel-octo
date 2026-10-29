@@ -123,14 +123,28 @@ describe('serial fake event intake', () => {
     await c.pump(); expect(trace).toEqual(['read:null', 'fence']);
   });
   it('replays from confirmed ACK after remote success/local mark loss without redispatch', async () => {
-    queue = [settings()];
+    queue = [settings(), settings('13', '11')];
     const mark = vi.spyOn(store, 'recordAck').mockReturnValueOnce(false);
     const first = consumer(); expect((await first.pump()).kind).toBe('held');
     expect(store.readCursor(first.scope!)).toMatchObject({ cursor: '11', ackedThrough: null });
+    expect(replay('13').kind).toBe('absent');
     first.close(fence()); await first.drain(fence());
+    store.retire(); db.close(); db = createAdapter(join(root, 'events.db'));
+    store = new CardStore(db, { clock: { nowUtcMs: () => now } }); opts = { ...opts, store }; queue = [settings()];
+    const nextMark = vi.spyOn(store, 'recordAck');
     const next = consumer(); expect((await next.pump()).kind).toBe('processed');
     expect(trace).toEqual(['read:null', 'invalidate', 'ack:11', 'read:null', 'invalidate', 'ack:11']);
-    expect(mark).toHaveBeenCalledTimes(2);
+    expect(mark).toHaveBeenCalledTimes(1); expect(nextMark).toHaveBeenCalledTimes(1);
+  });
+  it.each(['tenant', 'bot', 'environment', 'stream'])('halts a delivered wrong %s scope before any invalidation', async (key) => {
+    queue = [{ ...settings(), binding: { ...binding, [key]: 'foreign' } }];
+    expect(await consumer().pump()).toMatchObject({ kind: 'halted', persisted: true });
+    expect(trace).toEqual(['read:null', 'fence']); expect(replay().kind).toBe('absent');
+  });
+  it('halts wrong settings scope even when source ownership is claimed', async () => {
+    queue = [{ ...settings(), payload: { scope: 'channel_setting' } }, settings('12', '11')];
+    expect(await consumer().pump()).toMatchObject({ kind: 'halted', persisted: true });
+    expect(trace).toEqual(['read:null', 'fence']);
   });
   it('ACK failure holds every later event and replays only the final', async () => {
     queue = [settings(), settings('13', '11')];
@@ -184,6 +198,21 @@ describe('serial fake event intake', () => {
 });
 
 describe('attempt ownership and trust order', () => {
+  it('uses the authenticated actor rather than a forged requester/operator payload', async () => {
+    queue = [action()]; opts.source.verifyOwned = () => ({ owned: true, actorUid: 'v' });
+    const member = vi.fn(), handler = vi.fn(); await consumer({ freshMember: member, handler: () => handler }).pump();
+    expect(member).not.toHaveBeenCalled(); expect(handler).not.toHaveBeenCalled();
+    expect(replay()).toMatchObject({ final: { outcome: 'unauthorized' } });
+  });
+  it('does not turn an unproven action into a poison disposition', async () => {
+    queue = [{ ...action(), payload: {} }]; opts.source.verifyOwned = () => ({ owned: false });
+    expect(await consumer().pump()).toMatchObject({ kind: 'halted', persisted: true });
+    expect(replay().kind).toBe('absent'); expect(trace).toEqual(['read:null', 'fence']);
+  });
+  it('retains an owned malformed control identity without inventing message or session authority', async () => {
+    queue = [{ ...settings(), eventClass: 'card_control', payload: {} }]; await consumer().pump();
+    expect(replay()).toMatchObject({ kind: 'retained', identity: { sessionId: null, messageId: 'null' }, final: { outcome: 'invalid' } });
+  });
   it('persists T0 before asynchronous checks and dead-letters only the third eligible failure', async () => {
     queue = [action(), settings('12', '11')];
     const member = vi.fn(async () => { expect(replay()).toMatchObject({ attempt: { phase: 'started' } }); return 'member' as const; });

@@ -661,6 +661,21 @@ describe('WP11 settings replay ledger', () => {
     s.retire();
     try { s.getEventReplay('e'); throw new Error('expected failure'); } catch (error) { expect(error).toMatchObject({ code: 'closed' }); }
   });
+  it('restores settings success and terminal action identity from a real online SQLite backup', async () => {
+    store.initCursor('scope-a', 'T-PART'); store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') });
+    store.recordAck('scope-a', 'p11');
+    const identity = { ...ev('action', null), messageId: 'message', positionRef: 'p12', previousPositionRef: 'p11', envelopeDigest: 'digest' };
+    store.recordSendWait(identity); store.recordDisposition({ ...identity, disposition: 'invalid', cursor: cursor('p11', 'p12') });
+    const path = join(root, 'online-backup.db'); await adapter.backup(path);
+    const restored = createAdapter(path);
+    try {
+      const copy = new CardStore(restored, { clock });
+      expect(copy.getEventReplay(settings.eventId)).toEqual(store.getEventReplay(settings.eventId));
+      expect(copy.getEventReplay(identity.eventId)).toEqual(store.getEventReplay(identity.eventId));
+      expect(compareProtectedGraph(readProtectedGraph(restored), readProtectedGraph(adapter))).toEqual([]);
+      expect(manifestProtectedGraph(readProtectedGraph(restored))).toEqual(manifestProtectedGraph(readProtectedGraph(adapter)));
+    } finally { restored.close(); }
+  });
 });
 
 describe('retention cleanup', () => {
