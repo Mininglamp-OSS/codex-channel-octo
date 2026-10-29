@@ -35,7 +35,7 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { AgentFailure, TurnFailure, classifyFailure } from "../agent-failure.js";
 import type { DbAdapter } from "../db-adapter.js";
-import { createCardApi, type CardApi } from "./api.js";
+import { createCardApi, OctoApiError, type CardApi } from "./api.js";
 import type {
   BotRef,
   CardChannelType,
@@ -71,6 +71,10 @@ import { createExplicitInteractive, interactionDegradation, type InteractiveCapa
 import { createExplicitTransport } from "./explicit-transport.js";
 import type { CardBinding } from "./store.js";
 import { createFakeEventConsumer, type FakeConsumerOptions, type FakeEventConsumer } from './event-consumer.js';
+import { createActionAdmission, type ActionAdmissionOptions } from './action-admission.js';
+import { getContinuation, settleContinuation, type TrustedContinuation } from './continuation.js';
+import { validateTopology } from './topology.js';
+import { buildInteractiveCard } from './interactive-builder.js';
 import {
   CALL_ADMISSION_MS,
   PRODUCTION_EXPLICIT_OPS,
@@ -149,6 +153,8 @@ export interface CardTurnInput {
   readonly sessionCwd?: () => string;
   /** Current durable reset epoch; a /reset fences explicit authority. */
   readonly currentResetEpoch?: () => number;
+  /** In-process capability obtained from the router's marked message only. */
+  readonly continuation?: TrustedContinuation;
 }
 
 /** One processed turn: its automatic coordinator and, only when every gate holds, the explicit launch. */
@@ -189,6 +195,8 @@ export interface CardRuntimeOptions {
   readonly explicitTransportForTest?: ExplicitTransport | null;
   /** No production caller supplies a source, proof or stable registered Bot identity. */
   readonly fakeEventsForTest?: Omit<FakeConsumerOptions, 'store' | 'invalidate' | 'pacing' | 'checkPolicy'>;
+  /** Optional synthetic admission wiring; never supplied by the production entrypoint. */
+  readonly actionAdmissionForTest?: Pick<ActionAdmissionOptions, 'context' | 'withSession'>;
 }
 
 export interface OpenCardRuntimeOptions extends CardRuntimeOptions {
@@ -436,19 +444,60 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
   let eventsForTest: FakeEventConsumer | undefined;
   if (options.fakeEventsForTest !== undefined) {
     const seam = options.fakeEventsForTest;
+    const checkPolicy: ActionAdmissionOptions['policy'] = async signal => {
+      if (closing || signal.aborted || !pacer.gate(api.origin).eligible) return 'unavailable';
+      await policy.snapshot();
+      if (closing || signal.aborted) return 'unavailable';
+      return policy.authorize('interaction', { botRef }).allowed ? 'allowed' : 'denied';
+    };
+    const freshMember: ActionAdmissionOptions['freshMember'] = seam.freshMember ?? (async (event, actor, signal) => {
+      const channel = (event.payload as { channelId?: unknown })?.channelId;
+      if (typeof channel !== 'string') return 'unavailable';
+      try {
+        const members = await api.getFreshMembers(channel, { signal });
+        return members.some(m => m.uid === actor) ? 'member' : 'not_member';
+      } catch (error) {
+        if (error instanceof OctoApiError && error.status === 429) pacer.observe429(api.origin, error.retryAfterMs, clock.nowMono());
+        return 'unavailable';
+      }
+    });
+    const admission = options.actionAdmissionForTest === undefined ? undefined : createActionAdmission({
+      ...options.actionAdmissionForTest, store: subsystem.store, binding: seam.binding, now: seam.now,
+      scope: () => eventsForTest?.scope, authenticate: event => seam.source.verifyOwned(event),
+      authority: () => {
+        const proof = seam.proof();
+        return !closing && proof !== undefined && validateTopology(seam.binding, proof, seam.verifyProof, seam.now())?.scope === eventsForTest?.scope;
+      }, freshMember, policy: checkPolicy,
+      currentPolicy: () => !closing && pacer.gate(api.origin).eligible && policy.authorize('interaction', { botRef }).allowed,
+      limits: () => { const auth = policy.authorize('interaction', { botRef }); return auth.allowed ? auth.limits : undefined; },
+      edit: async edit => {
+        if (closing || edit.signal.aborted || !pacer.gate(api.origin).eligible || !edit.current()) return;
+        const auth = policy.authorize('interaction', { botRef });
+        if (!auth.allowed) return;
+        const built = buildInteractiveCard({ title: edit.status, inputs: edit.controls ? edit.contract.inputs : [], buttons: edit.controls ? edit.contract.buttons : [] },
+          { caps: { inputs: auth.snapshot.interaction.inputs, limits: auth.limits }, route: { channelId: edit.session.channelId, channelType: edit.session.channelType as 1 | 2 | 5 } });
+        if (!built.ok) return;
+        const seq = subsystem.store.reserveSequence(edit.session.cardId);
+        if (seq.kind !== 'reserved') return;
+        try {
+          const ack = await api.editAuthored({ route: { channelId: edit.session.channelId, channelType: edit.session.channelType as 1 | 2 | 5 },
+            messageId: edit.messageId, ...built.authored, plain: built.plain, seq: seq.seq, transient: false }, { signal: edit.signal });
+          if (!closing && !edit.signal.aborted && edit.current() && ack.messageId === edit.messageId && ack.seq === seq.seq) subsystem.store.ackSequence(edit.session.cardId, seq.seq);
+        } catch (error) {
+          if (error instanceof OctoApiError && error.status === 429) pacer.observe429(api.origin, error.retryAfterMs, clock.nowMono());
+        }
+      },
+    });
     eventsForTest = createFakeEventConsumer({ ...seam, store: subsystem.store,
+      handler: () => admission ?? seam.handler(), freshMember,
+      ...(admission ? { statusObserver: admission.statusObserver } : {}),
       invalidate: () => {
         policy.invalidate('bot_setting');
         try { options.telemetry?.sink.emit('policy_invalidation_total',
           { bot_ref: options.telemetry.botRef, code: 'bot_setting_updated' }, 1); } catch { /* telemetry grants no authority */ }
       },
       pacing: { pacer, origin: api.origin, clock },
-      checkPolicy: async (signal) => {
-        if (closing || signal.aborted || !pacer.gate(api.origin).eligible) return 'unavailable';
-        await policy.snapshot();
-        if (closing || signal.aborted) return 'unavailable';
-        return policy.authorize('interaction', { botRef }).allowed ? 'allowed' : 'denied';
-      } });
+      checkPolicy });
     registry.register(eventsForTest);
   }
 
@@ -489,7 +538,12 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
       try {
         if (closing || !isCardChannel(input.channelType) || typeof input.dispatchId !== "string" || input.dispatchId.length === 0) return undefined;
         const kind = ROUTE_KINDS[input.channelType];
-        const turnGeneration = newId();
+        const continuation = getContinuation(input.continuation);
+        if (input.continuation !== undefined && (!continuation || !continuation.current()
+          || continuation.turn.sessionKey !== input.sessionKey || continuation.turn.requesterUid !== input.requesterUid
+          || continuation.turn.route.channelId !== input.channelId || continuation.turn.route.channelType !== input.channelType
+          || continuation.resetEpoch !== input.resetEpoch)) return undefined;
+        const turnGeneration = continuation?.generation ?? newId();
         const resetEpoch = Number.isSafeInteger(input.resetEpoch) && input.resetEpoch >= 0 ? input.resetEpoch : 0;
         const ctx: TrustedTurnContext = Object.freeze({
           botRef,
@@ -503,7 +557,7 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
           runtimeIncarnation: RUNTIME_INCARNATION,
           // Only a fact proven false is false; an unknown one counts as ineligible (D-W1(b)).
           routeEligibility: Object.freeze({ kind, obo: input.obo !== false, docTask: input.docTask !== false, cron: input.cron === true }),
-          origin: Object.freeze({ kind: "user" as const }),
+          origin: Object.freeze(continuation ? { kind: 'card_continuation' as const, admissionId: continuation.turn.admissionId } : { kind: "user" as const }),
         });
         const binding: CardBinding = Object.freeze({ sessionKey: input.sessionKey, channelId: input.channelId,
           channelType: input.channelType, topicScope: kind === "topic" ? input.channelId : null, generation: turnGeneration, resetEpoch });
@@ -548,7 +602,7 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
         byDispatch.set(dispatchId, turn);
         if (explicit !== undefined) { explicitByDispatch.set(dispatchId, explicit); explicitBySession.set(input.sessionKey, explicit); }
         if (timedOut.delete(dispatchId)) { closeExplicit(); turn.signal({ t: "dispatch_timeout" }); }
-        if (explicit === undefined) return Object.freeze({ coordinator: turn });
+        if (explicit === undefined && continuation === undefined) return Object.freeze({ coordinator: turn });
         // Settle, timeout, shutdown and supersede fence the explicit generation first.
         const coordinator: AutomaticTurn = Object.freeze({
           generation: turn.generation,
@@ -557,13 +611,15 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
           signal: (sig: TurnSignal) => {
             if (sig !== null && typeof sig === "object" && (sig.t === "settle" || sig.t === "dispatch_timeout" || sig.t === "shutdown")) closeExplicit();
             turn.signal(sig);
+            if (continuation && sig.t === 'settle') settleContinuation(continuation, turn);
+            else if (continuation && (sig.t === 'dispatch_timeout' || sig.t === 'shutdown')) continuation.settle('ambiguous');
           },
-          settle: () => { closeExplicit(); turn.settle(); },
+          settle: () => { closeExplicit(); turn.settle(); if (continuation) settleContinuation(continuation, turn); },
           claimsNotices: () => turn.claimsNotices(),
           supersede: () => { closeExplicit(); turn.supersede(); },
           inspect: () => turn.inspect(),
         });
-        return Object.freeze({ coordinator, injection: explicit.launch });
+        return Object.freeze({ coordinator, ...(explicit ? { injection: explicit.launch } : {}) });
       } catch {
         return undefined;
       }

@@ -10,6 +10,7 @@ import type { AutomaticTurn } from './cards/lifecycle.js';
 import { classifyCardError, openCardRuntime, type CardRuntime } from './cards/runtime.js';
 import { bootstrapExcludedRoots, hasCodexAuthEnvMarker, registerGatewayExposure, type CardInjectionLaunch } from './cards/tool-host.js';
 import { isAuthenticCronFire } from './cron-fire-marker.js';
+import { getContinuation } from './cards/continuation.js';
 import { WS_IM_ORIGIN, deriveOutboundIdentity, deriveRouteFacts, type InboundOrigin, type OutboundIdentity } from './inbound-route-facts.js';
 import { performance } from 'node:perf_hooks';
 /**
@@ -291,6 +292,8 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // --- Session router ---
     const router = new SessionRouter(config, gateway.botId, () => gateway.ownerUid, store);
     if (cardRuntime) router.setDispatchObserver(cardRuntime);
+    router.setContinuationHandler(message => handleMessage(message, config, store, router, groupContext, streamRelay,
+      gateway.botId, () => gateway.ownerUid, cardRuntime));
     console.warn('[codex-channel-octo] Online reconciliation requires the exact registered owner_uid. The Bot API provides no scoped-alias binding; rewritten owner UIDs require the offline maintenance procedure.');
 
     // --- Active handler tracking (Q6: in-flight drain on shutdown) ---
@@ -490,13 +493,15 @@ export async function handleMessage(
       }
 
       // Commands never create cards. The context comes from router-verified fields only.
-      if (cardRuntime && config.sdk.toolProgress === true) {
+      const continuation = getContinuation(msg);
+      if (cardRuntime && (config.sdk.toolProgress === true || continuation !== undefined)) {
         const barrier = store.getResetBarrier(sessionKey);
         const begun = cardRuntime.beginTurn({
           dispatchId: turn.turnId, sessionKey, channelId, channelType, requesterUid: msg.from_uid,
           resetEpoch: typeof barrier === 'number' ? barrier : 0, cron: isAuthenticCronFire(msg.payload),
           // Facts only: proven false solely for the WS IM origin with this Bot's own identity; every other gate still applies.
           ...deriveRouteFacts({ origin, payload: msg.payload, outboundIdentity }),
+          ...(continuation !== undefined ? { continuation, obo: false, docTask: false } : {}),
           deadlineMono: turn.deadline, sessionCwd: () => resolveSessionCwd(config.cwdBase ?? config.cwd, sessionCtx),
           currentResetEpoch: () => { const b = store.getResetBarrier(sessionKey); return typeof b === 'number' ? b : 0; },
         });
@@ -523,7 +528,7 @@ export async function handleMessage(
         }
         // Cache the current message AFTER reading the delta so it is not echoed in
         // the group-context block this turn.
-        const contextSummary = renderMessageForContext(msg, config.apiUrl);
+        const contextSummary = continuation === undefined ? renderMessageForContext(msg, config.apiUrl) : undefined;
         if (contextSummary) {
           turnGroupContext.pushMessage(
             channelId,
@@ -747,7 +752,8 @@ export async function handleMessage(
         }
       }
 
-      turnStore.appendUser(sessionKey, userContent, msg.message_seq, msg.from_name ?? msg.from_uid);
+      // Callback values are turn-local: the durable admission retains only their digest.
+      if (continuation === undefined) turnStore.appendUser(sessionKey, userContent, msg.message_seq, msg.from_name ?? msg.from_uid);
 
       // --- Session resume + first-turn history injection ---
       // The SDK session is the source of truth for conversation history: on every

@@ -16,7 +16,8 @@ import { normalizeInboundMention, normalizeMessageId } from './inbound-mention.j
 import { MentionPreferences } from './mention-prefs.js';
 import { summarizeAgentError } from './agent-errors.js';
 import { ConversationMarkdown, type ConversationTurnContext } from './conversation-md.js';
-import type { DispatchObserver } from './cards/contracts.js';
+import type { AdmissionReservation, ContinuationPort, ContinuationTurn, DispatchObserver, ReservationResult } from './cards/contracts.js';
+import { continuationMessage, getContinuation } from './cards/continuation.js';
 
 export interface RouteResult {
   sessionKey: string;
@@ -87,6 +88,10 @@ export class SessionRouter {
   private readonly ledger?: TurnLedger;
   private readonly conversationMarkdown: ConversationMarkdown;
   private dispatchObserver?: DispatchObserver;
+  private readonly continuationReservations = new WeakMap<AdmissionReservation, { turn: ContinuationTurn; release: () => void }>();
+  private readonly lockedContinuations = new WeakSet<ContinuationTurn>();
+  private readonly continuationDispatches = new WeakMap<BotMessage, { result: RouteResult; turn: TurnContext; used: boolean }>();
+  private continuationHandler?: (message: BotMessage) => Promise<void>;
 
   constructor(config: Config, robotId: string, ownerUid: string | (() => string) = '', documentStore?: import('./conversation-md.js').ConversationDocumentStore) {
     if (documentStore && 'beginTurn' in documentStore) this.ledger = documentStore as typeof documentStore & TurnLedger;
@@ -104,6 +109,78 @@ export class SessionRouter {
    */
   setDispatchObserver(observer: DispatchObserver | undefined): void {
     this.dispatchObserver = observer;
+  }
+
+  /** Internal pipeline adapter; no event payload or serialized nonce is trusted. */
+  setContinuationHandler(handler: ((message: BotMessage) => Promise<void>) | undefined): void {
+    this.continuationHandler = handler;
+  }
+
+  preflightContinuation(turn: ContinuationTurn): ReservationResult {
+    const detail = getContinuation(turn);
+    if (!this.lockedContinuations.has(turn) || this.stopping || !this.continuationHandler || !detail || !detail.current()
+      || this.ledger?.getQuarantinedTurnId(turn.sessionKey) || this.quarantined.has(turn.sessionKey)) return { accepted: false, reason: 'closing' };
+    if (!this.isSupportedChannel(turn.route.channelType)) return { accepted: false, reason: 'unsupported_channel' };
+    const message = { from_uid: turn.requesterUid, channel_id: turn.route.channelId, channel_type: turn.route.channelType } as BotMessage;
+    if (this.sessionKey(message) !== turn.sessionKey) return { accepted: false, reason: 'unsupported_channel' };
+    if (this.checkAllRateLimits(turn.sessionKey, turn.requesterUid)) return { accepted: false, reason: 'rate_limited' };
+    const max = this.config.rateLimit.maxPerMinute;
+    const buckets = [this.globalBucket!, this.userBuckets.get(turn.requesterUid)!, this.tokenBuckets.get(`${turn.sessionKey}\n${turn.requesterUid}`)!];
+    let released = false;
+    const reservation = Object.freeze({}) as AdmissionReservation;
+    this.continuationReservations.set(reservation, { turn, release: () => {
+      if (released) return; released = true;
+      buckets.forEach((b, i) => { b.tokens = Math.min(max * (i === 0 ? GLOBAL_RATE_MULTIPLIER : 1), b.tokens + 1); });
+    } });
+    return { accepted: true, reservation };
+  }
+
+  releaseContinuation(reservation: AdmissionReservation): void {
+    const held = this.continuationReservations.get(reservation);
+    this.continuationReservations.delete(reservation); held?.release();
+  }
+
+  /** Admission uses this port so preflight, T2 and execution cannot interleave a reset. */
+  withContinuationLock<T>(turn: ContinuationTurn, fn: (port: ContinuationPort) => Promise<T>): Promise<T> {
+    return this.withSessionLock(turn.sessionKey, async () => {
+      this.lockedContinuations.add(turn);
+      const reservations: AdmissionReservation[] = [];
+      const port: ContinuationPort = {
+        preflightContinuation: candidate => {
+          if (candidate !== turn) return { accepted: false, reason: 'closing' };
+          const result = this.preflightContinuation(candidate);
+          if (result.accepted) reservations.push(result.reservation);
+          return result;
+        },
+        dispatchContinuation: (candidate, reservation) => this.dispatchContinuationLocked(candidate, reservation),
+      };
+      try { return await fn(port); }
+      finally {
+        this.lockedContinuations.delete(turn);
+        reservations.forEach(r => this.releaseContinuation(r));
+      }
+    });
+  }
+
+  dispatchContinuation(turn: ContinuationTurn, reservation: AdmissionReservation): Promise<void> {
+    return this.withSessionLock(turn.sessionKey, () => this.dispatchContinuationLocked(turn, reservation));
+  }
+
+  private async dispatchContinuationLocked(turn: ContinuationTurn, reservation: AdmissionReservation): Promise<void> {
+    const held = this.continuationReservations.get(reservation);
+    const detail = getContinuation(turn);
+    if (!held || held.turn !== turn || !detail || !turn.admissionId) return;
+    if (this.stopping || !this.continuationHandler || !await detail.authorize() || !detail.current()
+      || this.stopping || !this.continuationHandler || this.continuationReservations.get(reservation) !== held) return;
+    this.continuationReservations.delete(reservation); // consumed once; no refund after dispatch
+    const message = continuationMessage(turn);
+    const result: RouteResult = { sessionKey: turn.sessionKey, shouldProcess: true, message, cleanContent: detail.prompt,
+      interruptedTurn: this.ledger?.getInterruption(turn.sessionKey) };
+    await this.runHandlerWithTimeout(result, async (_result, context) => {
+      this.continuationDispatches.set(message, { result, turn: context, used: false });
+      try { await this.continuationHandler!(message); }
+      finally { this.continuationDispatches.delete(message); }
+    });
   }
 
   /** G14: register another known bot uid (future multi-bot support). */
@@ -181,6 +258,14 @@ export class SessionRouter {
     msg: BotMessage,
     handler: (result: RouteResult, turn: TurnContext) => Promise<void>,
   ): Promise<RouteResult | null> {
+    const continuation = this.continuationDispatches.get(msg);
+    if (continuation) {
+      const detail = getContinuation(msg);
+      if (continuation.used || !detail || !detail.current()) return null;
+      continuation.used = true;
+      await handler(continuation.result, continuation.turn);
+      return continuation.result;
+    }
     const key = this.sessionKey(msg);
     return this.withSessionLock(key, async () => {
       if (this.stopping) return { sessionKey: key, shouldProcess: false, message: msg, rejectionReason: 'stopping' };

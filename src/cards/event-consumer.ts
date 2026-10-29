@@ -31,6 +31,9 @@ export type FakeActionResult =
   | { readonly kind: 'retry' }
   | { readonly kind: 'hold' };
 export type FakeActionHandler = (event: FakeEvent, signal: AbortSignal) => Promise<FakeActionResult>;
+/** Presentation only, after the durable failure; never grants dispatch or ACK authority. */
+export type FakeStatusObserver = (event: FakeEvent, status: 'Retrying' | 'Failed', signal: AbortSignal,
+  current: () => boolean) => Promise<void>;
 
 export interface FakeConsumerOptions {
   readonly store: CardStore;
@@ -46,6 +49,7 @@ export interface FakeConsumerOptions {
   readonly fence: () => void;
   readonly freshMember?: (event: FakeEvent, actorUid: string, signal: AbortSignal) => Promise<'member' | 'not_member' | 'unavailable'>;
   readonly checkPolicy?: (signal: AbortSignal) => Promise<'allowed' | 'denied' | 'unavailable'>;
+  readonly statusObserver?: FakeStatusObserver;
   /** Trusted fixture witness must fence the prior incarnation before saying retired. */
   readonly startedOwner?: (identity: AttemptStartInput) => 'live' | 'retired' | 'unknown';
   /** Structural subset of the existing shared origin pacer; owns no timers. */
@@ -136,6 +140,13 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
     } catch (error) { observe(error); return { kind: 'held' }; }
   }
 
+  async function status(event: FakeEvent, state: 'retry_wait' | 'dead_letter'): Promise<PumpResult | undefined> {
+    let wait = authority(); if (wait) return wait;
+    try { await options.statusObserver?.(event, state === 'retry_wait' ? 'Retrying' : 'Failed', controller.signal,
+      () => authority() === undefined); } catch (error) { observe(error); }
+    wait = authority(); return wait;
+  }
+
   async function handle(event: FakeEvent): Promise<PumpResult | undefined> {
     let wait = authority(); if (wait) return wait;
     if (!topology) return { kind: 'held' };
@@ -208,6 +219,8 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
       }
       else if (session.status === 'admitted' || session.status === 'ambiguous' || store.getAdmissionForSession(session.sessionId)) return { kind: 'held' };
     }
+    // Controls have no admission/retry semantics and never mutate the session.
+    if (!rejection && event.eventClass === 'card_control') rejection = 'unsupported_control';
     if (rejection) {
       wait = authority(); if (wait) return wait;
       const retained = store.recordSendWait(action);
@@ -224,6 +237,9 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
       if (options.startedOwner?.(action) !== 'retired') return { kind: 'held' };
       wait = authority(); if (wait) return wait;
       const recovered = store.recordAttemptFailure({ eventId, reasonCode: 'interrupted', cursor: advance });
+      if (recovered.kind === 'retry_wait' || recovered.kind === 'dead_letter') {
+        wait = await status(event, recovered.kind); if (wait) return wait;
+      }
       if (recovered.kind === 'dead_letter') return ack(event);
       if (recovered.kind !== 'retry_wait') return halt('interruption_conflict');
       return { kind: 'held' };
@@ -258,6 +274,9 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
     }
     if (result.kind === 'retry') {
       const failure = store.recordAttemptFailure({ eventId, reasonCode: 'pre_admission', cursor: advance });
+      if (failure.kind === 'retry_wait' || failure.kind === 'dead_letter') {
+        wait = await status(event, failure.kind); if (wait) return wait;
+      }
       if (failure.kind === 'retry_wait') return { kind: 'held' };
       if (failure.kind !== 'dead_letter') return halt('failure_commit_conflict');
     } else {
