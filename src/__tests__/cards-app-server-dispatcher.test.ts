@@ -110,7 +110,7 @@ function attempt(r: Rig, over: { ttl?: number; threadDigest?: string | null; ops
   const replies: Reply[] = [];
   const cards = gen.launch.prepareAppServerAttempt({ respond: (id, result, o) => { replies.push({ id, result: result as Reply['result'], uncharged: o?.uncharged === true }); return true; } });
   if (cards === undefined) throw new Error('no attempt');
-  cards.setThread(THREAD, over.threadDigest === undefined ? TOOLSET.digest : over.threadDigest);
+  cards.setThread(THREAD, over.threadDigest === undefined ? cards.toolsetDigest : over.threadDigest);
   return { gen, ctx, cards, replies };
 }
 
@@ -127,11 +127,46 @@ function bound(r: Rig, over: Parameters<typeof attempt>[1] = {}) {
 }
 
 describe('toolset (T0/T2a) and production inertness', () => {
-  it('declares the full versioned toolset with a stable digest', () => {
-    expect(TOOLSET.tools.map((t) => t.name)).toEqual(['display', 'interactive']);
+  it('declares the current production thread toolset with a stable digest', () => {
+    expect(TOOLSET.tools.map((t) => t.name)).toEqual(['display']);
     expect(TOOLSET.tools.every((t) => t.type === 'function')).toBe(true);
     expect(appServerToolset().digest).toBe(TOOLSET.digest);
     expect(TOOLSET.digest).toMatch(/^v1:[0-9a-f]{64}$/);
+  });
+
+  it('derives discovery and thread identity from the admitted generation, including synthetic interactive controls', async () => {
+    const r = await rig({ ops: new Map([['display', sendingOp('display')], ['interactive', sendingOp('interactive')]]) });
+    const display = bound(r, { ops: ['display'] });
+    // Explicit internal synthetic control only: production runtime never offers interaction.
+    const both = bound(r, { ops: ['interactive', 'display'] });
+    const interactive = bound(r, { ops: ['interactive'] });
+    expect(display.cards.dynamicTools.map((t) => t.name)).toEqual(['display']);
+    expect(both.cards.dynamicTools.map((t) => t.name)).toEqual(['display', 'interactive']);
+    expect(interactive.cards.dynamicTools.map((t) => t.name)).toEqual(['interactive']);
+    expect(new Set([display.cards.toolsetDigest, both.cards.toolsetDigest, interactive.cards.toolsetDigest]).size).toBe(3);
+    expect(display.cards.toolsetDigest).toBe(TOOLSET.digest);
+    // A wider previous thread cannot widen the next turn, even with its old digest.
+    display.cards.setThread(THREAD, both.cards.toolsetDigest);
+    display.cards.onToolCall(1, call('old-tools', { tool: 'interactive' }));
+    await r.time.advance(0);
+    expect(display.replies).toHaveLength(1);
+    expect(display.replies[0]).toMatchObject({ uncharged: true, result: { success: false } });
+    expect(counters(r, display.ctx.turnGeneration)).toEqual({ inv: 0, sends: 0 });
+  });
+
+  it('freezes the offered operations for every surface', async () => {
+    const r = await rig();
+    const ctx = { ...attempt(r).ctx, turnGeneration: randomUUID(), sessionKey: 'frozen' };
+    const ops: ToolOpcode[] = ['display', 'display'];
+    const gen = r.host.openGeneration({ ctx,
+      binding: bindingOf(ctx), expiresAtMono: r.time.now() + 300_000,
+      currentResetEpoch: () => 0, ops, admit: r.admit });
+    expect(gen).toBeDefined();
+    ops.splice(0, ops.length, 'interactive');
+    const app = gen!.launch.prepareAppServerAttempt({ respond: () => true })!;
+    expect(app.dynamicTools.map((t) => t.name)).toEqual(['display']);
+    const mcp = await gen!.launch.prepareAttempt();
+    expect(mcp?.mcpEntry.enabled_tools).toEqual(['display']);
   });
 
   it('the production op table holds both closed handlers', () => {
@@ -288,9 +323,9 @@ describe('admission, toolset boundary and call-time policy', () => {
     expect(r.host.stats()).toMatchObject({ appOldThreadCalls: 2 });
   });
 
-  it('T2a/T3: a declared tool the Bot profile does not allow is charged 1, sends 0', async () => {
+  it('T2a/T3 internal synthetic control: a declared tool without a handler is charged 1, sends 0', async () => {
     const r = await rig();
-    const a = bound(r, { ops: ['display'] });
+    const a = bound(r, { ops: ['display', 'interactive'] });
     a.cards.onToolCall(1, call('c1', { tool: 'interactive', arguments: DISPLAY }));
     await r.time.advance(0);
     expect(a.replies[0].uncharged).toBe(false);

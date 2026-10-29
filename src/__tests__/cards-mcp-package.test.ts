@@ -26,6 +26,7 @@ import { createAdapter } from "../db-adapter.js";
 import { SessionStore } from "../session-store.js";
 import { manualTime } from "./fixtures/card-write-harness.js";
 import { admissibleGateway } from "./fixtures/gd-admit.js";
+import { liveProfileJson } from "./fixtures/card-profile-live.js";
 
 const repo = process.cwd();
 // Inside the repository so emitted modules resolve the installed dependencies.
@@ -159,6 +160,62 @@ function child(command: string, args: readonly string[]) {
 const INIT = { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "codex", version: "0.163.0" } };
 
 describe.skipIf(process.platform === "win32")("compiled proxy as a real child", () => {
+  it.runIf(process.platform === "darwin")("production runtime offers only display on app-server and packaged MCP while interaction stays denied", async () => {
+    const hostMod = await import(join(out, "cards", "tool-host.js")) as typeof import("../cards/tool-host.js");
+    const runtimeMod = await import(join(out, "cards", "runtime.js")) as typeof import("../cards/runtime.js");
+    const root = mkdtempSync(join(tmpdir(), "wp10-pkg-runtime-"));
+    roots.push(root);
+    const dataDir = join(root, "data");
+    const paths = cardSubsystemPaths(dataDir);
+    mkdirSync(paths.cardsDir, { recursive: true, mode: 0o700 });
+    writeFileSync(paths.installationRefPath, "install-runtime\n", { mode: 0o600 });
+    provisionFirstInstallMarker(paths.markerPath, "install-runtime", Date.UTC(2026, 9, 22));
+    const adapter = createAdapter(join(dataDir, "cc-octo.db"));
+    new SessionStore(adapter).init();
+    const time = manualTime();
+    const gateway = admissibleGateway();
+    const unregister = hostMod.registerGatewayExposure({ sandboxMode: "read-only", codexHome: gateway.codexHome,
+      apiKeyConfigured: true, sdkEnvAuthMarkers: false });
+    const runtime = await runtimeMod.openCardRuntime({ adapter, dataDir, apiUrl: "https://test.invalid", botToken: "offline-only",
+      clock: time.clock, wall: time.wall, timers: time.timers, bootstrapExcludedRoots: [],
+      fetchImpl: (async (url, init) => new URL(String(url)).pathname.endsWith("/v1/bot/card/profile")
+        ? new Response(JSON.stringify(liveProfileJson()))
+        : new Response(JSON.stringify({ message_id: "901234", client_msg_no: JSON.parse(init!.body as string).client_msg_no }))) as typeof fetch });
+    let proc: ReturnType<typeof child> | undefined;
+    try {
+      expect(runtime).toBeDefined();
+      await runtime!.idle();
+      const turn = () => runtime!.beginTurn({ dispatchId: randomUUID(), sessionKey: randomUUID(), channelId: "c", channelType: 1,
+        requesterUid: "u", resetEpoch: 0, cron: false, obo: false, docTask: false, deadlineMono: time.now() + 300_000,
+        sessionCwd: () => gateway.cwd, currentResetEpoch: () => 0 })!;
+      const app = turn().injection!.prepareAppServerAttempt({ respond: () => true })!;
+      expect(app.dynamicTools.map((t) => t.name)).toEqual(["display"]);
+      const mcp = await turn().injection!.prepareAttempt();
+      expect(mcp?.mcpEntry.enabled_tools).toEqual(["display"]);
+      expect(Object.keys(mcp!.mcpEntry.tools as object)).toEqual(["display"]);
+      proc = child(mcp!.mcpEntry.command as string, mcp!.mcpEntry.args as string[]);
+      await proc.request("initialize", INIT);
+      expect((await proc.request("tools/list")).result).toMatchObject({ tools: [{ name: "display" }] });
+      const denied = await proc.request("tools/call", { name: "interactive", arguments: {} });
+      expect(denied.result).toMatchObject({ isError: true, structuredContent: { status: "error", error: { code: "unavailable" } } });
+      expect(adapter.prepare("SELECT COUNT(*) AS n FROM card_explicit_requests").get()).toEqual({ n: 0 });
+      const sent = await proc.request("tools/call", { name: "display", arguments: { blocks: [{ kind: "text", text: "Control" }] } });
+      expect(sent.result).toMatchObject({ isError: false, structuredContent: { status: "sent", message_id: "901234" } });
+      expect(adapter.prepare("SELECT invocation_count AS inv, logical_send_count AS sends FROM card_handler_generations ORDER BY invocation_count").all())
+        .toEqual([{ inv: 0, sends: 0 }, { inv: 1, sends: 1 }]);
+      proc.end();
+      expect(await proc.exited).toBe(0);
+      expect(proc.err()).toBe("");
+    } finally {
+      proc?.kill();
+      if (proc) await proc.exited;
+      await runtime?.close();
+      adapter.close();
+      unregister();
+      gateway.release();
+    }
+  }, 20_000);
+
   it("redeems before initialize, forwards a call, writes protocol-only stdout and nothing to stderr", async () => {
     const r = await liveHost();
     try {
@@ -171,6 +228,9 @@ describe.skipIf(process.platform === "win32")("compiled proxy as a real child", 
       expect(existsSync(args[2] as string)).toBe(false);
       const tools = await c.request("tools/list");
       expect((tools.result as { tools: { name: string }[] }).tools.map((t) => t.name)).toEqual(["display"]);
+      const denied = await c.request("tools/call", { name: "interactive", arguments: { buttons: [{ id: "ok", label: "Continue" }] } });
+      expect(denied.result).toMatchObject({ isError: true, structuredContent: { status: "error", error: { code: "unavailable" } } });
+      expect(r.adapter.prepare("SELECT COUNT(*) AS n FROM card_explicit_requests").get()).toEqual({ n: 0 });
       const call = await c.request("tools/call", { name: "display", arguments: { blocks: [{ kind: "text", text: "hi" }] } });
       expect(call.result).toMatchObject({ isError: false, structuredContent: { status: "sent" } });
       c.end();

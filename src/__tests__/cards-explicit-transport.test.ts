@@ -532,11 +532,22 @@ describe.runIf(CERTIFIED)('runtime wiring: one real send through the production 
   it('keeps interaction unavailable without topology/admission proof even under an enabled synthetic profile', async () => {
     const r = await runtimeRig(() => profile());
     const a = r.attempt();
+    expect(a.cards.dynamicTools.map((t) => t.name)).toEqual(['display']);
     a.cards.onToolCall(1, { threadId: THREAD, turnId: TURN, callId: 'interactive-1', namespace: null, tool: 'interactive', arguments: { title: 'Decide', buttons: [{ id: 'ok', label: 'Continue' }] } });
     await r.time.advance(0);
-    expect(result(a.replies[0])).toEqual({ status: 'error', error: { code: 'unavailable', diagnostics: [{ path: '$.op', rule: 'explicit_op_unavailable' }] } });
+    expect(a.replies).toHaveLength(1);
+    expect(a.replies[0].result).toEqual({ success: false, contentItems: [{ type: 'inputText', text: 'unknown tool' }] });
     expect(r.net.sends()).toHaveLength(0);
     expect(r.adapter.prepare('SELECT count(*) AS n FROM card_sessions').get()).toEqual({ n: 0 });
+    expect(r.rows(a.generation)).toEqual([]);
+    a.call(2, 'display-positive');
+    await r.time.advance(0);
+    expect(a.replies).toHaveLength(2);
+    expect(a.replies[1].result.success).toBe(true);
+    expect(result(a.replies[1]).status).toBe('sent');
+    expect(r.net.sends()).toHaveLength(1);
+    expect(r.adapter.prepare('SELECT invocation_count AS inv, logical_send_count AS sends FROM card_handler_generations WHERE generation = ?').get(a.generation))
+      .toEqual({ inv: 1, sends: 1 });
   });
   it('an acked display reaches sendAuthored exactly once with the reserved client_msg_no and is answered sent', async () => {
     const r = await runtimeRig(() => liveProfileJson());
@@ -605,6 +616,8 @@ describe.runIf(CERTIFIED)('per-Bot capabilities: elements and limits come from e
       { kind: 'collapsible', label: 'more', blocks: [{ kind: 'text', text: 'hidden' }] }, { kind: 'copy', label: 'copy', text: 'abc' }] };
     const a = openOnly.attempt();
     const b = full.attempt();
+    expect(a.cards.dynamicTools.map((t) => t.name)).toEqual(['display']);
+    expect(b.cards.dynamicTools.map((t) => t.name)).toEqual(['display']);
     a.call(1, 'c1', args);
     b.call(1, 'c1', args);
     await time.advance(0);

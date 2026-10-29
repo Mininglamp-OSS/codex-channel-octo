@@ -12,7 +12,7 @@ import { provisionFirstInstallMarker } from '../cards/migrations.js';
 import { createPacer } from '../cards/pacer.js';
 import { createPolicy } from '../cards/policy.js';
 import { cardSubsystemPaths, openCardSubsystem } from '../cards/recovery.js';
-import { PRODUCTION_EXPLICIT_OPS, appServerToolset, createToolHost, type ExplicitOpHandler, type ExplicitTransport } from '../cards/tool-host.js';
+import { PRODUCTION_EXPLICIT_OPS, createToolHost, type ExplicitOpHandler, type ExplicitTransport } from '../cards/tool-host.js';
 import { createAdapter } from '../db-adapter.js';
 import { SessionStore } from '../session-store.js';
 import { profile } from './fixtures/card-profile.js';
@@ -87,7 +87,7 @@ async function rig(profileBody: () => unknown = () => profile(), transportOverri
     return true;
   } });
   if (!cards) throw new Error('attempt');
-  cards.setThread('thread', appServerToolset().digest);
+  cards.setThread('thread', cards.toolsetDigest);
   cards.turnStartEnqueued(); cards.bindTurn('turn');
   const call = (id: number, tool = 'interactive', input: unknown = args) => cards.onToolCall(id, { threadId: 'thread', turnId: 'turn', callId: `c${id}`, namespace: null, tool, arguments: input });
   const counters = () => adapter.prepare('SELECT invocation_count AS inv, logical_send_count AS sends FROM card_handler_generations WHERE generation = ?').get(ctx.turnGeneration);

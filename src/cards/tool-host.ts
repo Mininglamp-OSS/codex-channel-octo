@@ -122,9 +122,13 @@ export interface DynamicToolSpec {
   readonly inputSchema: { readonly type: "object" };
 }
 
-/** The full versioned toolset (T2a) and its digest (T0). Pure and stable. */
-export function appServerToolset(): { readonly tools: readonly DynamicToolSpec[]; readonly digest: string } {
-  const tools: DynamicToolSpec[] = (["display", "interactive"] as const).map((name) => ({
+/**
+ * Versioned discovery and digest for an admitted offer (T2a/T0). The default
+ * is the current production thread toolset; interaction remains topology-gated.
+ * Each attempt supplies its frozen generation offer, including synthetic controls.
+ */
+export function appServerToolset(ops: readonly ToolOpcode[] = ["display"]): { readonly tools: readonly DynamicToolSpec[]; readonly digest: string } {
+  const tools: DynamicToolSpec[] = (["display", "interactive"] as const).filter((op) => ops.includes(op)).map((name) => ({
     type: "function", name, inputSchema: { type: "object" },
     description: name === "display" ? "Send a display card to the current conversation." : "Send an interactive card to the current requester.",
   }));
@@ -1252,7 +1256,7 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
   }
 
   function openAppAttempt(gen: Generation, port: AppServerReplyPort): AppServerAttemptCards {
-    const toolset = appServerToolset();
+    const toolset = appServerToolset(gen.input.ops);
     let state: "live" | "closed" = "live";
     let threadId: string | null = null;
     let threadTools: ReadonlySet<string> = new Set();
@@ -1574,6 +1578,11 @@ export function createToolHost(options: ToolHostOptions): ToolHost | undefined {
         if (typeof serverId !== "string" || !SERVER_ID.test(serverId) || !serverId.startsWith(SERVER_ID_PREFIX)) return undefined;
         if (!Number.isFinite(input.expiresAtMono) || input.expiresAtMono <= clock.nowMono()) return undefined;
         if (input.binding.generation !== ctx.turnGeneration) return undefined;
+        // One immutable offer drives app-server discovery/dispatch and MCP
+        // redemption/configuration. Registration alone never grants an op.
+        const ops = Object.freeze((["display", "interactive"] as const)
+          .filter((op) => input.ops.includes(op)));
+        input = Object.freeze({ ...input, ops });
         const tuple = canonicalJson({
           runtimeIncarnation: ctx.runtimeIncarnation, botRef: { originKey: ctx.botRef.originKey, credentialRef: ctx.botRef.credentialRef },
           turnGeneration: ctx.turnGeneration, injectedServerId: serverId, resetEpoch: ctx.resetEpoch,
