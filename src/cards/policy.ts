@@ -37,7 +37,7 @@ function sameBot(a: BotRef, b: BotRef): boolean {
 function fingerprint(p: NormalizedProfile): string {
   // Hash normalized allowlisted facts only. No raw profile or compatibility extensions.
   return createHash("sha256").update(JSON.stringify({ automatic: p.automatic,
-    display: { ...p.display, elements: [...p.display.elements].sort() },
+    display: { ...p.display, elements: [...p.display.elements].sort(), actions: [...p.display.actions].sort() },
     interaction: { ...p.interaction, inputs: [...p.interaction.inputs].sort() }, reasons: p.reasons })).digest("hex");
 }
 function resolvedFailure(error: unknown): NormalizedProfile | undefined {
