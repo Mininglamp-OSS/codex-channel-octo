@@ -184,6 +184,20 @@ describe('trusted continuation port and actual settlement', () => {
       await dispatch(prepared());
       expect(store.getAdmissionForSession(session.sessionId)?.state).toBe(outcome === 'completed' ? 'completed' : outcome === 'failed' ? 'failed' : 'ambiguous');
     });
+  it('does not throw into the ordinary handler when completion persistence fails', async () => {
+    vi.spyOn(store, 'settleAdmission').mockImplementation(() => { throw new Error('fixture write failure'); });
+    router.setContinuationHandler(async msg => { await router.routeAndHandle(msg, async () => {
+      const turn = begin(msg);
+      turn.observe({ kind: 'attempt_start', attempt: 0, reason: 'initial', continues: null });
+      turn.observe({ kind: 'attempt_end', attempt: 0, terminal: 'completed' });
+      turn.signal({ t: 'delivery_report', report: { expected: 1, acked: 1, failed: 0, messageIds: ['reply'], emptyNotice: false } });
+      expect(() => turn.settle()).not.toThrow();
+      actual.push('handler-completed');
+    }); });
+    await dispatch(prepared());
+    expect(actual).toEqual(['handler-completed']);
+    expect(store.getAdmissionForSession(session.sessionId)?.state).toBe('ambiguous');
+  });
   it('rejects serialized origin claims and preserves timezone as separate data', async () => {
     const p = prepared(); claim(p);
     const message = continuationMessage(p.turn);
