@@ -71,10 +71,10 @@ function aSettledAmbiguous(requestId: string, opcode: 'display' | 'interactive' 
 const row = (requestId: string) => adapter.prepare('SELECT * FROM card_explicit_requests WHERE generation = ? AND request_id = ?').get('gen-1', requestId);
 const counters = () => adapter.prepare('SELECT invocation_count, logical_send_count FROM card_handler_generations WHERE generation = ?').get('gen-1');
 
-describe('schema version 3', () => {
-  it('a fresh install is version 3 with the settlement columns', () => {
-    expect(CARD_SCHEMA_VERSION).toBe(3);
-    expect(inspectCardSchema(adapter)).toMatchObject({ state: 'complete', meta: { schemaVersion: 3, schemaHash: referenceSchema(3).hash } });
+describe('current schema with SC-1 columns', () => {
+  it('a fresh install is version 4 with the settlement columns', () => {
+    expect(CARD_SCHEMA_VERSION).toBe(4);
+    expect(inspectCardSchema(adapter)).toMatchObject({ state: 'complete', meta: { schemaVersion: 4, schemaHash: referenceSchema(4).hash } });
     const cols = (adapter.prepare('PRAGMA table_info(card_explicit_requests)').all() as Array<{ name: string; notnull: number }>);
     for (const c of ['settled_by', 'late_outcome', 'late_message_id', 'late_at']) {
       expect(cols.find((x) => x.name === c)).toMatchObject({ notnull: 0 });
@@ -233,6 +233,9 @@ describe('ST-6 late-ack card binding under the reset/policy/expiry guards', () =
 
 describe('version 2 → 3 upgrade', () => {
   function downgradeToV2(a: DbAdapter): void {
+    for (const trigger of ['trg_card_event_invalidations_final', 'trg_card_event_invalidations_exclusive',
+      'trg_card_event_dispositions_exclusive', 'trg_card_event_attempts_exclusive', 'trg_card_event_attempts_identity']) a.exec(`DROP TRIGGER ${trigger}`);
+    a.exec('DROP TABLE card_event_invalidations');
     a.exec('DROP TRIGGER trg_card_explicit_requests_settled');
     for (const c of ['late_at', 'late_message_id', 'late_outcome', 'settled_by']) a.exec(`ALTER TABLE card_explicit_requests DROP COLUMN ${c}`);
     a.prepare(`UPDATE card_meta SET v = '2' WHERE k = 'schema_version'`).run();
@@ -252,7 +255,7 @@ describe('version 2 → 3 upgrade', () => {
     expect(store.finishExplicitRequest({ generation: 'gen-1', requestId: 'r1', outcome: 'acked', safeResultJson: '{"status":"sent"}', message: { kind: 'ack', messageId: 'm1', currentResetEpoch: 0, policyAllows: true } }).kind).toBe('finished');
   });
 
-  it('initializeCardStore backs up before the upgrade and reopens version 3', async () => {
+  it('initializeCardStore backs up before the upgrade and reopens version 4', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cards-sc1-init-'));
     try {
       const a = createAdapter(join(dir, 'cc-octo.db'));
@@ -261,10 +264,10 @@ describe('version 2 → 3 upgrade', () => {
       provisionFirstInstallMarker(markerPath, 'install-a', T0);
       const opts = { adapter: a, marker: new FileActivationMarker(markerPath), installationRef: 'install-a', backupDir: join(dir, 'backups'),
         clock: { nowUtcMs: () => T0 }, newLineageId: () => 'lineage-1', newId: () => `card-${randomUUID()}` };
-      expect(await initializeCardStore(opts)).toMatchObject({ state: 'ready', meta: { schemaVersion: 3 } });
+      expect(await initializeCardStore(opts)).toMatchObject({ state: 'ready', meta: { schemaVersion: 4 } });
       downgradeToV2(a);
       const upgraded = await initializeCardStore({ ...opts, clock: { nowUtcMs: () => T0 + 1000 } });
-      expect(upgraded).toMatchObject({ state: 'ready', provenance: 'reopened', meta: { schemaVersion: 3 } });
+      expect(upgraded).toMatchObject({ state: 'ready', provenance: 'reopened', meta: { schemaVersion: 4 } });
       expect(upgraded.state === 'ready' && upgraded.backup?.fileName).toMatch(/^cc-octo\.pre-card_v1-s3\./);
       expect(readdirSync(join(dir, 'backups')).some((f) => f.includes('pre-card_v1-s3'))).toBe(true);
       a.close();

@@ -17,12 +17,14 @@ import type { DbAdapter } from '../db-adapter.js';
 import type { CardChannelType, WallClock } from './contracts.js';
 import {
   CARD_TABLES,
+  EVENT_SCOPE_PREFIX,
   INTENT_LEGACY_KEY,
   LEGACY_IDS_SQL,
   RETENTION_MS,
   SESSION_TTL_MS,
   UPGRADE_V2_BACKUP_LABEL,
   UPGRADE_V3_BACKUP_LABEL,
+  UPGRADE_V4_BACKUP_LABEL,
   backupBeforeMigration,
   checkCardInvariants,
   countProtectedRows,
@@ -30,8 +32,11 @@ import {
   isSafeStoreRef,
   migrateCardSchema,
   referenceSchema,
+  serializeActivationMarker,
   upgradeCardSchemaV1toV2,
   upgradeCardSchemaV2toV3,
+  upgradeCardSchemaV3toV4,
+  cardTablesFor,
   type ActivationMarkerPort,
   type BackupReceipt,
   type CardMeta,
@@ -53,7 +58,7 @@ const ACTIVE_SESSION_SQL = `('sending','pending','retry_wait','admitted','ambigu
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
-export type CardStoreErrorCode = 'storage_failure' | 'nested_transaction' | 'async_transaction' | 'invalid_input' | 'closed';
+export type CardStoreErrorCode = 'storage_failure' | 'nested_transaction' | 'async_transaction' | 'invalid_input' | 'closed' | 'scope_conflict';
 
 /**
  * Card rows whose edit sequence fences may still move: bound to a message and
@@ -479,6 +484,23 @@ export interface AttemptStartInput extends EventIdentity {
   readonly envelopeDigest: string;
 }
 
+export interface SettingsEventIdentity {
+  readonly eventId: string;
+  readonly scope: string;
+  readonly eventClass: 'bot_setting_updated';
+  readonly settingsScope: 'bot_setting';
+  readonly positionRef: string;
+  readonly previousPositionRef: string | null;
+  readonly envelopeDigest: string;
+}
+
+export type EventReplay =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'inconsistent'; readonly code: 'missing_identity' | 'ledger_conflict' | 'identity_conflict' }
+  | { readonly kind: 'retained'; readonly identity: AttemptStartInput | SettingsEventIdentity;
+      readonly attempt?: { readonly number: number; readonly phase: AttemptRow['phase']; readonly nextEligibleAt: number | null };
+      readonly final?: { readonly outcome: FinalDisposition | 'invalidated'; readonly createdAt: number; readonly retainUntil: number } };
+
 export type AttemptStartResult =
   | { readonly kind: 'started'; readonly attemptNo: 1 | 2 | 3 }
   | { readonly kind: 'in_progress'; readonly attemptNo: number }
@@ -496,6 +518,7 @@ export type AttemptFailureResult =
 export type DispositionResult =
   | { readonly kind: 'recorded' }
   | { readonly kind: 'already_final'; readonly disposition: FinalDisposition }
+  | { readonly kind: 'conflict' }
   | CursorFailure;
 
 export interface AdmitInput extends EventIdentity {
@@ -512,6 +535,7 @@ export type AdmitResult =
   | { readonly kind: 'duplicate'; readonly recorded: CardSessionStatus | FinalDisposition }
   | { readonly kind: 'expired' }
   | { readonly kind: 'rejected'; readonly reason: 'reset_fenced' | 'unknown_session' }
+  | { readonly kind: 'conflict' }
   | CursorFailure;
 
 export type SettleResult =
@@ -1106,6 +1130,12 @@ export class CardStore {
     text(scope);
     if (topology !== 'T-PART' && topology !== 'T-EXCL') throw new CardStoreError('invalid_input');
     return this.tx(() => {
+      // One Bot store cannot silently open a new proof stream/environment/Bot
+      // namespace over retained replay/ACK/halt facts. Reconciliation is external.
+      if (scope.startsWith(EVENT_SCOPE_PREFIX) && this.get(
+        `SELECT 1 FROM card_event_cursor WHERE substr(consumer_scope, 1, ?) = ? AND consumer_scope <> ? LIMIT 1`,
+        EVENT_SCOPE_PREFIX.length, EVENT_SCOPE_PREFIX, scope,
+      )) throw new CardStoreError('scope_conflict');
       this.run(
         'INSERT OR IGNORE INTO card_event_cursor (consumer_scope, topology, updated_at) VALUES (?, ?, ?)',
         scope, topology, this.now(),
@@ -1144,7 +1174,7 @@ export class CardStore {
     text(position);
     return this.tx(() => {
       const row = this.get<CursorRow>('SELECT * FROM card_event_cursor WHERE consumer_scope = ?', scope);
-      if (!row || row.cursor !== position) return false;
+      if (!row || row.halted_reason !== null || row.cursor !== position) return false;
       this.run('UPDATE card_event_cursor SET acked_through = ?, updated_at = ? WHERE consumer_scope = ?', position, this.now(), scope);
       return true;
     });
@@ -1158,6 +1188,7 @@ export class CardStore {
     text(input.messageId); text(input.positionRef); optText(input.previousPositionRef); text(input.envelopeDigest);
     return this.tx(() => {
       const now = this.now();
+      if (!this.actionIdentityCompatible(input)) return { kind: 'conflict' };
       const final = this.finalDisposition(input.eventId);
       if (final !== undefined) return { kind: 'final', disposition: final };
       const cursor = this.get<CursorRow>('SELECT * FROM card_event_cursor WHERE consumer_scope = ?', input.scope);
@@ -1252,6 +1283,7 @@ export class CardStore {
     text(input.eventId); text(input.scope); text(input.eventClass); optText(input.sessionId);
     text(input.messageId); text(input.positionRef); optText(input.previousPositionRef); text(input.envelopeDigest);
     return this.tx(() => {
+      if (!this.actionIdentityCompatible(input)) return { kind: 'conflict' };
       const final = this.finalDisposition(input.eventId);
       if (final !== undefined) return { kind: 'final', disposition: final };
       const row = this.get<AttemptRow>('SELECT * FROM card_event_attempts WHERE event_id = ?', input.eventId);
@@ -1289,6 +1321,7 @@ export class CardStore {
     CardStore.checkCursorInput(input.cursor);
     return this.tx<DispositionResult>(() => {
       const now = this.now();
+      if (!this.actionIdentityCompatible(input)) return { kind: 'conflict' };
       const final = this.finalDisposition(input.eventId);
       if (final !== undefined) return { kind: 'already_final', disposition: final };
       this.checkCursorBoundary(input.scope, input.cursor);
@@ -1319,6 +1352,7 @@ export class CardStore {
     CardStore.checkCursorInput(input.cursor);
     return this.tx<AdmitResult>(() => {
       const now = this.now();
+      if (!this.actionIdentityCompatible(input)) return { kind: 'conflict' };
       const final = this.finalDisposition(input.eventId);
       if (final !== undefined) return { kind: 'duplicate', recorded: final };
       this.checkCursorBoundary(input.scope, input.cursor);
@@ -1452,11 +1486,10 @@ export class CardStore {
     return this.tx(() => {
       const now = this.now();
       const terminalSession = `s.status IN ('completed','failed','dead_letter','expired') AND s.retain_until < ${now}`;
-      const attempts = this.run(
-        `DELETE FROM card_event_attempts WHERE event_id IN (
-           SELECT d.event_id FROM card_event_dispositions d WHERE d.retain_until < ?)`,
-        now,
-      );
+      // No durable source replay/restore retirement proof exists yet. Keep all
+      // replay identities and their finals, including confirmed older events;
+      // timestamps and lexical cursor comparisons cannot establish safe pruning.
+      const attempts = 0;
       // Admitted dispositions leave together with their settled admission, and
       // only when no other retained event still pins the session, so the
       // session is pruned in the same pass and never outlives its admission.
@@ -1466,6 +1499,8 @@ export class CardStore {
            JOIN card_sessions s USING(session_id)
            JOIN card_event_dispositions d ON d.event_id = a.event_id
            WHERE a.state IN ('completed','failed') AND ${terminalSession} AND d.retain_until < ?
+             AND substr(d.consumer_scope, 1, ${EVENT_SCOPE_PREFIX.length}) <> '${EVENT_SCOPE_PREFIX}'
+             AND NOT EXISTS (SELECT 1 FROM card_event_attempts t WHERE t.event_id = a.event_id)
              AND NOT EXISTS (SELECT 1 FROM card_event_dispositions d2
                              WHERE d2.session_id = a.session_id AND d2.event_id <> a.event_id)
              AND NOT EXISTS (SELECT 1 FROM card_event_attempts t
@@ -1478,6 +1513,8 @@ export class CardStore {
       }
       const dispositions = admitted.length + this.run(
         `DELETE FROM card_event_dispositions AS d WHERE d.retain_until < ? AND d.disposition <> 'admitted'
+           AND substr(d.consumer_scope, 1, ${EVENT_SCOPE_PREFIX.length}) <> '${EVENT_SCOPE_PREFIX}'
+           AND NOT EXISTS (SELECT 1 FROM card_event_attempts t WHERE t.event_id = d.event_id)
            AND (d.session_id IS NULL OR EXISTS (SELECT 1 FROM card_sessions s WHERE s.session_id = d.session_id AND ${terminalSession}))`,
         now,
       );
@@ -1824,6 +1861,91 @@ export class CardStore {
     return this.read(() => this.finalDisposition(eventId) ?? null);
   }
 
+  /** Coherent bounded replay read: one SQLite statement observes all three ledgers. */
+  getEventReplay(eventId: string): EventReplay {
+    text(eventId);
+    return this.read(() => {
+      const r = this.get<{ attempt: string | null; disposition: string | null; invalidation: string | null }>(
+        `SELECT
+          (SELECT json_object('event_id',event_id,'consumer_scope',consumer_scope,'event_class',event_class,
+            'session_id',session_id,'message_id',message_id,'position_ref',position_ref,
+            'previous_position_ref',previous_position_ref,'envelope_digest',envelope_digest,
+            'attempt_no',attempt_no,'phase',phase,'next_eligible_at',next_eligible_at)
+           FROM card_event_attempts WHERE event_id = ?) AS attempt,
+          (SELECT json_object('consumer_scope',consumer_scope,'event_class',event_class,'session_id',session_id,
+            'disposition',disposition,'created_at',created_at,'retain_until',retain_until)
+           FROM card_event_dispositions WHERE event_id = ?) AS disposition,
+          (SELECT json_object('eventId',event_id,'scope',consumer_scope,'eventClass',event_class,
+            'settingsScope',settings_scope,'positionRef',position_ref,'previousPositionRef',previous_position_ref,
+            'envelopeDigest',envelope_digest,'createdAt',created_at,'retainUntil',retain_until)
+           FROM card_event_invalidations WHERE event_id = ?) AS invalidation`, eventId, eventId, eventId,
+      )!;
+      const a = r.attempt === null ? null : JSON.parse(r.attempt) as AttemptRow;
+      const d = r.disposition === null ? null : JSON.parse(r.disposition) as {
+        consumer_scope: string; event_class: string; session_id: string | null;
+        disposition: FinalDisposition; created_at: number; retain_until: number;
+      };
+      const i = r.invalidation === null ? null : JSON.parse(r.invalidation) as SettingsEventIdentity & { createdAt: number; retainUntil: number };
+      if (i && (a || d)) return { kind: 'inconsistent', code: 'ledger_conflict' };
+      if (i) {
+        const { createdAt, retainUntil, ...identity } = i;
+        return { kind: 'retained', identity, final: { outcome: 'invalidated', createdAt, retainUntil } };
+      }
+      if (d && !a) return { kind: 'inconsistent', code: 'missing_identity' };
+      if (!a) return { kind: 'absent' };
+      if (d && (d.consumer_scope !== a.consumer_scope || d.event_class !== a.event_class || d.session_id !== a.session_id)) {
+        return { kind: 'inconsistent', code: 'identity_conflict' };
+      }
+      return { kind: 'retained', identity: { eventId, scope: a.consumer_scope, eventClass: a.event_class,
+        sessionId: a.session_id, messageId: a.message_id, positionRef: a.position_ref,
+        previousPositionRef: a.previous_position_ref, envelopeDigest: a.envelope_digest },
+        attempt: { number: a.attempt_no, phase: a.phase, nextEligibleAt: a.next_eligible_at },
+        ...(d ? { final: { outcome: d.disposition, createdAt: d.created_at, retainUntil: d.retain_until } } : {}) };
+    });
+  }
+
+  private actionIdentityCompatible(input: EventIdentity & Partial<AttemptStartInput>): boolean {
+    if (this.get('SELECT 1 FROM card_event_invalidations WHERE event_id = ?', input.eventId)) return false;
+    const a = this.get<AttemptRow>('SELECT * FROM card_event_attempts WHERE event_id = ?', input.eventId);
+    const d = this.get<{ consumer_scope: string; event_class: string; session_id: string | null }>(
+      'SELECT consumer_scope,event_class,session_id FROM card_event_dispositions WHERE event_id = ?', input.eventId);
+    if (d && (d.consumer_scope !== input.scope || d.event_class !== input.eventClass || d.session_id !== input.sessionId)) return false;
+    if (!a) return true;
+    return a.consumer_scope === input.scope && a.event_class === input.eventClass && a.session_id === input.sessionId
+      && (input.messageId === undefined || a.message_id === input.messageId)
+      && (input.positionRef === undefined || a.position_ref === input.positionRef)
+      && (input.previousPositionRef === undefined || a.previous_position_ref === input.previousPositionRef)
+      && (input.envelopeDigest === undefined || a.envelope_digest === input.envelopeDigest);
+  }
+
+  recordEventInvalidation(input: SettingsEventIdentity & { readonly cursor: CursorAdvance }):
+    { readonly kind: 'recorded' } | { readonly kind: 'already_final'; readonly disposition: 'invalidated' }
+    | { readonly kind: 'conflict' } | CursorFailure {
+    text(input.eventId); text(input.scope); text(input.positionRef); optText(input.previousPositionRef); text(input.envelopeDigest);
+    CardStore.checkCursorInput(input.cursor);
+    if (input.eventClass !== 'bot_setting_updated' || input.settingsScope !== 'bot_setting') throw new CardStoreError('invalid_input');
+    return this.tx(() => {
+      if (input.cursor.scope !== input.scope || input.cursor.next !== input.positionRef
+        || input.cursor.expectedPrevious !== input.previousPositionRef) return { kind: 'cursor_conflict' };
+      const replay = this.getEventReplay(input.eventId);
+      if (replay.kind !== 'absent') {
+        if (replay.kind !== 'retained' || replay.final?.outcome !== 'invalidated') return { kind: 'conflict' };
+        const i = replay.identity;
+        if (i.scope !== input.scope || i.eventClass !== input.eventClass || i.positionRef !== input.positionRef
+          || i.previousPositionRef !== input.previousPositionRef || i.envelopeDigest !== input.envelopeDigest) return { kind: 'conflict' };
+        return { kind: 'already_final', disposition: 'invalidated' };
+      }
+      this.checkCursorBoundary(input.scope, input.cursor);
+      const now = this.now();
+      this.run(`INSERT INTO card_event_invalidations (event_id,consumer_scope,event_class,settings_scope,
+        position_ref,previous_position_ref,envelope_digest,created_at,retain_until) VALUES (?,?,?,?,?,?,?,?,?)`,
+      input.eventId, input.scope, input.eventClass, input.settingsScope, input.positionRef, input.previousPositionRef,
+      input.envelopeDigest, now, now + RETENTION_MS);
+      this.advanceCursor(input.cursor, now);
+      return { kind: 'recorded' };
+    });
+  }
+
   getHandler(generation: string): HandlerGenerationRecord | null {
     return this.read(() => {
       const r = this.get<GenerationRow>('SELECT * FROM card_handler_generations WHERE generation = ?', generation);
@@ -1901,6 +2023,7 @@ const TABLE_KEYS: Readonly<Record<CardTable, readonly string[]>> = {
   card_event_cursor: ['consumer_scope'],
   card_handler_generations: ['generation'],
   card_explicit_requests: ['generation', 'request_id'],
+  card_event_invalidations: ['event_id'],
 };
 
 export type ProtectedGraphRows = Readonly<Record<CardTable, ReadonlyArray<Readonly<Record<string, unknown>>>>>;
@@ -1912,8 +2035,10 @@ function canonical(row: Readonly<Record<string, unknown>>): string {
 /** Read every card table in primary-key order. */
 export function readProtectedGraph(adapter: DbAdapter): ProtectedGraphRows {
   const out = {} as Record<CardTable, Array<Record<string, unknown>>>;
+  const version = Number((adapter.prepare("SELECT v FROM card_meta WHERE k = 'schema_version'").get() as { v: string } | undefined)?.v);
+  const present = new Set(cardTablesFor(version));
   for (const table of CARD_TABLES) {
-    out[table] = adapter.prepare(`SELECT * FROM ${table} ORDER BY ${TABLE_KEYS[table].join(', ')}`).all() as Array<Record<string, unknown>>;
+    out[table] = present.has(table) ? adapter.prepare(`SELECT * FROM ${table} ORDER BY ${TABLE_KEYS[table].join(', ')}`).all() as Array<Record<string, unknown>> : [];
   }
   return out;
 }
@@ -1929,7 +2054,7 @@ export function manifestProtectedGraph(rows: ProtectedGraphRows): ProtectedGraph
   }
   const lineage = rows.card_meta.find((r) => r.k === 'lineage_id');
   return {
-    schemaHash: referenceSchema().hash,
+    schemaHash: String(rows.card_meta.find((r) => r.k === 'schema_hash')?.v ?? referenceSchema().hash),
     lineageId: typeof lineage?.v === 'string' ? lineage.v : null,
     tables,
     sha256: all.digest('hex'),
@@ -1956,7 +2081,9 @@ const IMMUTABLE_FIELDS: Readonly<Partial<Record<CardTable, readonly string[]>>> 
   card_messages: ['kind', 'session_key', 'channel_id', 'channel_type', 'generation', 'topic_scope', 'reset_epoch', 'body_digest', 'client_msg_no'],
   card_sessions: ['card_id', 'requester_uid', 'session_key', 'channel_id', 'channel_type', 'origin_generation', 'topic_scope', 'reset_epoch', 'contract_version', 'authored_contract_json', 'authored_data_hash', 'expires_at', 'created_at'],
   card_admissions: ['session_id', 'event_id', 'continuation_generation', 'submitted_hash', 'admitted_at'],
-  card_event_dispositions: ['consumer_scope', 'event_class', 'session_id', 'disposition', 'reason_code', 'attempts', 'created_at'],
+  card_event_dispositions: ['consumer_scope', 'event_class', 'session_id', 'disposition', 'reason_code', 'attempts', 'created_at', 'retain_until'],
+  card_event_attempts: ['consumer_scope', 'event_class', 'session_id', 'message_id', 'position_ref', 'previous_position_ref', 'envelope_digest'],
+  card_event_invalidations: ['consumer_scope', 'event_class', 'settings_scope', 'position_ref', 'previous_position_ref', 'envelope_digest', 'created_at', 'retain_until'],
   card_handler_generations: ['installation_ref', 'session_key', 'runtime_incarnation', 'reset_epoch', 'context_digest', 'policy_identity'],
   card_explicit_requests: ['body_digest', 'opcode'],
 };
@@ -2017,6 +2144,10 @@ export function compareProtectedGraph(candidate: ProtectedGraphRows, tail: Prote
   const admittedSessions = (rows: ProtectedGraphRows): Set<unknown> => new Set(rows.card_admissions.map((r) => r.session_id));
   const candAdmitted = admittedSessions(candidate);
   const tailAdmitted = admittedSessions(tail);
+  const candidateActions = new Set([...candidate.card_event_dispositions, ...candidate.card_event_attempts].map((r) => r.event_id));
+  for (const i of candidate.card_event_invalidations) {
+    if (candidateActions.has(i.event_id)) out.push({ table: 'card_event_invalidations', key: String(i.event_id), code: 'conflicting_fact' });
+  }
 
   for (const table of CARD_TABLES) {
     if (table === 'card_meta') continue;
@@ -2076,7 +2207,17 @@ export function compareProtectedGraph(candidate: ProtectedGraphRows, tail: Prote
       }
       if (table === 'card_event_cursor') {
         if (t.halted_reason !== null && c.halted_reason === null) out.push({ table, key, code: 'halt_lost' });
-        if (t.cursor !== c.cursor) out.push({ table, key, code: 'cursor_regression' });
+        if (t.cursor !== c.cursor || t.acked_through !== c.acked_through) out.push({ table, key, code: 'cursor_regression' });
+        if (t.topology !== c.topology || (t.halted_reason !== null && c.halted_reason !== null
+          && (t.halted_reason !== c.halted_reason || t.halted_at !== c.halted_at))) out.push({ table, key, code: 'conflicting_fact' });
+      }
+      if (table === 'card_event_attempts') {
+        if (num(c.attempt_no) < num(t.attempt_no) || (c.attempt_no === t.attempt_no && t.phase === 'failed' && c.phase !== 'failed')) {
+          out.push({ table, key, code: 'revived_work' });
+        }
+        if (c.attempt_no === t.attempt_no && t.phase === 'failed' && c.next_eligible_at !== t.next_eligible_at) {
+          out.push({ table, key, code: 'conflicting_fact' });
+        }
       }
     }
   }
@@ -2187,30 +2328,35 @@ export async function initializeCardStore(options: CardStoreInitOptions): Promis
    * leaves the store at the last committed version and cards disabled.
    */
   const open = async (meta: CardMeta, provenance: 'reopened' | 'activation_reconciled'): Promise<CardStoreInit> => {
-    if (meta.schemaVersion === 3) return ready(meta, provenance);
+    if (meta.schemaVersion === 4) return ready(meta, provenance);
     let backup: BackupReceipt;
     try {
       backup = await backupBeforeMigration(adapter, options.backupDir, nowMs,
-        meta.schemaVersion === 1 ? UPGRADE_V2_BACKUP_LABEL : UPGRADE_V3_BACKUP_LABEL);
+        meta.schemaVersion === 1 ? UPGRADE_V2_BACKUP_LABEL : meta.schemaVersion === 2 ? UPGRADE_V3_BACKUP_LABEL : UPGRADE_V4_BACKUP_LABEL);
     } catch {
       return disabled('migration_failed');
     }
     let upgraded: CardMeta = meta;
-    while (upgraded.schemaVersion !== 3) {
+    while (upgraded.schemaVersion !== 4) {
       const from = upgraded.schemaVersion;
       try {
         // Re-inspect after the await: the store must still be the same lineage at the same version.
         const again = inspectCardSchema(adapter);
-        if (again.state !== 'complete' || again.meta.schemaVersion !== from || again.meta.lineageId !== meta.lineageId) {
+        const markerAgain = marker.read();
+        if (again.state !== 'complete' || again.meta.schemaVersion !== from || again.meta.lineageId !== meta.lineageId
+          || again.meta.installationRef !== meta.installationRef || again.meta.schemaHash !== upgraded.schemaHash
+          || markerAgain.state !== 'present' || serializeActivationMarker(markerAgain.marker) !== serializeActivationMarker(m)) {
           return disabled('provenance_conflict');
         }
-        upgraded = from === 1 ? upgradeCardSchemaV1toV2(adapter, meta.lineageId) : upgradeCardSchemaV2toV3(adapter, meta.lineageId);
+        upgraded = from === 1 ? upgradeCardSchemaV1toV2(adapter, meta.lineageId)
+          : from === 2 ? upgradeCardSchemaV2toV3(adapter, meta.lineageId) : upgradeCardSchemaV3toV4(adapter, meta.lineageId);
       } catch {
         return disabled('migration_failed');
       }
       const violations = validate();
       if (violations) return disabled(violations.includes('integrity_check') ? 'integrity_failed' : 'invariant_failed', violations);
     }
+    if (!activate(upgraded.lineageId, backup.fileName, nowMs)) return disabled('marker_write_failed');
     return ready(upgraded, provenance, backup);
   };
   const activate = (lineageId: string, backupRef: string | null, nowMs: number): boolean => {
@@ -2247,6 +2393,9 @@ export async function initializeCardStore(options: CardStoreInitOptions): Promis
       return disabled('integrity_failed');
     }
     if (rows !== 0) return disabled('provenance_conflict');
+    // Keep the entry marker stable through a historical upgrade's backup and
+    // mutations; publish activation only after its last committed step.
+    if (inspected.meta.schemaVersion !== 4) return open(inspected.meta, 'activation_reconciled');
     if (!activate(inspected.meta.lineageId, m.backupRef, nowMs)) return disabled('marker_write_failed');
     return open(inspected.meta, 'activation_reconciled');
   }

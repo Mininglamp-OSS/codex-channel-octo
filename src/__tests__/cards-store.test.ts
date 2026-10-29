@@ -577,6 +577,92 @@ describe('T2 admission, T3 settle and T4 expiry (AC-015.1, AC-017.1)', () => {
   });
 });
 
+describe('WP11 settings replay ledger', () => {
+  const settings = { eventId: 'settings-1', scope: 'scope-a', eventClass: 'bot_setting_updated' as const,
+    settingsScope: 'bot_setting' as const, positionRef: 'p11', previousPositionRef: null, envelopeDigest: 'digest-1' };
+  it('atomically commits settings success and exposes coherent durable replay identity', () => {
+    store.initCursor('scope-a', 'T-PART');
+    expect(store.getEventReplay('settings-1')).toEqual({ kind: 'absent' });
+    expect(store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') })).toEqual({ kind: 'recorded' });
+    expect(store.getEventReplay('settings-1')).toMatchObject({ kind: 'retained', identity: settings,
+      final: { outcome: 'invalidated', createdAt: T0, retainUntil: T0 + DAY } });
+    expect(store.readCursor('scope-a')?.cursor).toBe('p11');
+    expect(store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') })).toEqual({ kind: 'already_final', disposition: 'invalidated' });
+    expect(store.recordEventInvalidation({ ...settings, envelopeDigest: 'changed', cursor: cursor(null, 'p11') })).toEqual({ kind: 'conflict' });
+    expect(count('card_sessions')).toBe(0);
+    expect(count('card_admissions')).toBe(0);
+  });
+  it('rolls success back on cursor CAS failure and forbids cross-ledger action mutations', () => {
+    store.initCursor('scope-a', 'T-PART');
+    expect(store.recordEventInvalidation({ ...settings, cursor: cursor('wrong', 'p11') })).toEqual({ kind: 'cursor_conflict' });
+    expect(count('card_event_invalidations')).toBe(0);
+    expect(store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') }).kind).toBe('recorded');
+    expect(store.recordAttemptStart({ ...settings, messageId: 'm', sessionId: null })).toEqual({ kind: 'conflict' });
+    expect(store.recordDisposition({ ...settings, sessionId: null, disposition: 'invalid', cursor: cursor(null, 'p11') })).toEqual({ kind: 'conflict' });
+  });
+  it('pins settings and action identity through cleanup and reopen with unconfirmed ACK', () => {
+    store.initCursor('scope-a', 'T-PART');
+    store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') });
+    now += 3 * DAY;
+    store.cleanup();
+    store = newStore();
+    expect(store.getEventReplay(settings.eventId).kind).toBe('retained');
+    expect(store.readCursor('scope-a')?.ackedThrough).toBeNull();
+  });
+  it('treats historical finals without identity as inconsistent', () => {
+    store.initCursor('scope-a', 'T-PART');
+    store.recordDisposition({ ...ev('old', null), disposition: 'invalid', cursor: cursor(null, 'p1') });
+    expect(store.getEventReplay('old')).toEqual({ kind: 'inconsistent', code: 'missing_identity' });
+  });
+  it.each(['event_id', 'consumer_scope', 'event_class', 'settings_scope', 'position_ref', 'previous_position_ref',
+    'envelope_digest', 'created_at', 'retain_until'])('protects settings %s against SQL rewrites and restore changes', (field) => {
+    store.initCursor('scope-a', 'T-PART'); store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') });
+    const tail = readProtectedGraph(adapter);
+    expect(() => adapter.prepare(`UPDATE card_event_invalidations SET ${field} = ? WHERE event_id = ?`).run('changed', settings.eventId)).toThrow(/final/);
+    const changed = structuredClone(tail) as unknown as Record<string, Record<string, unknown>[]>;
+    changed.card_event_invalidations[0][field] = 'changed';
+    expect(compareProtectedGraph(changed as unknown as typeof tail, tail)).not.toEqual([]);
+    expect(manifestProtectedGraph(changed as unknown as typeof tail).sha256).not.toBe(manifestProtectedGraph(tail).sha256);
+  });
+  it.each(['event_id', 'consumer_scope', 'event_class', 'session_id', 'message_id', 'position_ref', 'previous_position_ref',
+    'envelope_digest'])('protects action identity %s through final shortcuts, SQL and restore', (field) => {
+    store.initCursor('scope-a', 'T-PART');
+    const identity = { ...ev('e', null), messageId: 'message', positionRef: 'p', previousPositionRef: null, envelopeDigest: 'digest' };
+    store.recordAttemptStart(identity);
+    store.recordDisposition({ ...identity, disposition: 'invalid', cursor: cursor(null, 'p') });
+    const tail = readProtectedGraph(adapter);
+    expect(() => adapter.prepare(`UPDATE card_event_attempts SET ${field} = ? WHERE event_id = 'e'`).run('changed')).toThrow(/immutable/);
+    const changed = structuredClone(tail) as unknown as Record<string, Record<string, unknown>[]>;
+    changed.card_event_attempts[0][field] = 'changed';
+    expect(compareProtectedGraph(changed as unknown as typeof tail, tail)).not.toEqual([]);
+    expect(store.recordAttemptStart({ ...identity, envelopeDigest: 'changed' })).toEqual({ kind: 'conflict' });
+    now += 3 * DAY; store.cleanup();
+    expect(store.getEventReplay('e')).toMatchObject({ kind: 'retained', identity, final: { outcome: 'invalid' } });
+  });
+  it('excludes contradictory finals through direct inserts in either order', () => {
+    store.initCursor('scope-a', 'T-PART'); store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') });
+    const insertAction = adapter.prepare(`INSERT INTO card_event_dispositions(event_id,consumer_scope,event_class,disposition,created_at,retain_until)
+      VALUES (?, 'scope-a', 'card_action', 'invalid', ?, ?)`);
+    expect(() => insertAction.run(settings.eventId, now, now + DAY)).toThrow(/contradictory/);
+    insertAction.run('action', now, now + DAY);
+    expect(() => adapter.prepare(`INSERT INTO card_event_invalidations(event_id,consumer_scope,event_class,settings_scope,
+      position_ref,envelope_digest,created_at,retain_until) VALUES ('action','scope-a','bot_setting_updated','bot_setting','p12','d',?,?)`)
+      .run(now, now + DAY)).toThrow(/contradictory/);
+    expect(store.checkInvariants()).toEqual([]);
+  });
+  it('keeps replay reads closed and storage failures fail-closed through the public port', () => {
+    const broken = new Proxy(adapter, { get(target, prop) {
+      if (prop === 'prepare') return () => { throw new Error('read fault'); };
+      const value = Reflect.get(target, prop, target) as unknown;
+      return typeof value === 'function' ? (value as (...p: unknown[]) => unknown).bind(target) : value;
+    } });
+    const s = new CardStore(broken, { clock });
+    try { s.getEventReplay('e'); throw new Error('expected failure'); } catch (error) { expect(error).toMatchObject({ code: 'storage_failure' }); }
+    s.retire();
+    try { s.getEventReplay('e'); throw new Error('expected failure'); } catch (error) { expect(error).toMatchObject({ code: 'closed' }); }
+  });
+});
+
 describe('retention cleanup', () => {
   it('deletes child-first only after retention and never removes unresolved work', () => {
     store.initCursor('scope-a', 'T-EXCL');

@@ -70,6 +70,7 @@ import { createExplicitDisplay, type ExplicitDisplayCapabilities } from "./expli
 import { createExplicitInteractive, interactionDegradation, type InteractiveCapability } from "./explicit-interactive.js";
 import { createExplicitTransport } from "./explicit-transport.js";
 import type { CardBinding } from "./store.js";
+import { createFakeEventConsumer, type FakeConsumerOptions, type FakeEventConsumer } from './event-consumer.js';
 import {
   CALL_ADMISSION_MS,
   PRODUCTION_EXPLICIT_OPS,
@@ -88,6 +89,10 @@ import type { CardObservableEvent, ToolOpcode, TurnSignal } from "./contracts.js
 
 type ReadySubsystem = Extract<CardSubsystem, { state: "ready" }>;
 type WriteTelemetry = NonNullable<Parameters<CardQueueFactory>[0]["telemetry"]>;
+type RuntimeTelemetry = Omit<WriteTelemetry, 'sink'> & { readonly sink: {
+  emit(name: Parameters<WriteTelemetry['sink']['emit']>[0] | 'policy_invalidation_total',
+    labels: Readonly<Record<string, string>>, value: number): unknown;
+} };
 
 /** Fresh per process run; any other incarnation's live handler generations are closed at open. */
 const RUNTIME_INCARNATION = randomUUID();
@@ -160,6 +165,8 @@ export interface CardRuntime extends DispatchObserver {
   idle(): Promise<void>;
   /** Automatic restart recovery of this open; resolves once every recovery closure settled. Never rejects. */
   readonly recovery: Promise<AutomaticRecoveryResult>;
+  /** Finite fake-source fixture seam; absent in production. */
+  readonly eventsForTest?: FakeEventConsumer;
   /** Fence, close and drain every card resource of this Bot once; never rejects. */
   close(reason?: ShutdownReason): Promise<CardDrainResult | undefined>;
 }
@@ -174,12 +181,14 @@ export interface CardRuntimeOptions {
   readonly nowUtcMs?: () => number;
   /** Defaults to the process-shared origin pacer (or a private one for an injected clock). */
   readonly pacer?: Pacer;
-  readonly telemetry?: WriteTelemetry;
+  readonly telemetry?: RuntimeTelemetry;
   readonly newId?: () => string;
   /** Test-only explicit op table (G-b); never set by `index.ts`. */
   readonly explicitOpsForTest?: ExplicitOpTable;
   /** Test-only explicit transport; `null` builds none. Never set by `index.ts`. */
   readonly explicitTransportForTest?: ExplicitTransport | null;
+  /** No production caller supplies a source, proof or stable registered Bot identity. */
+  readonly fakeEventsForTest?: Omit<FakeConsumerOptions, 'store' | 'invalidate' | 'pacing' | 'checkPolicy'>;
 }
 
 export interface OpenCardRuntimeOptions extends CardRuntimeOptions {
@@ -424,6 +433,24 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
   const MAX_TIMED_OUT = 256;
   let closing = false;
   let closed: Promise<CardDrainResult | undefined> | undefined;
+  let eventsForTest: FakeEventConsumer | undefined;
+  if (options.fakeEventsForTest !== undefined) {
+    const seam = options.fakeEventsForTest;
+    eventsForTest = createFakeEventConsumer({ ...seam, store: subsystem.store,
+      invalidate: () => {
+        policy.invalidate('bot_setting');
+        try { options.telemetry?.sink.emit('policy_invalidation_total',
+          { bot_ref: options.telemetry.botRef, code: 'bot_setting_updated' }, 1); } catch { /* telemetry grants no authority */ }
+      },
+      pacing: { pacer, origin: api.origin, clock },
+      checkPolicy: async (signal) => {
+        if (closing || signal.aborted || !pacer.gate(api.origin).eligible) return 'unavailable';
+        await policy.snapshot();
+        if (closing || signal.aborted) return 'unavailable';
+        return policy.authorize('interaction', { botRef }).allowed ? 'allowed' : 'denied';
+      } });
+    registry.register(eventsForTest);
+  }
 
   // Warm the policy so the first turn's decision usually sees a resolved snapshot.
   track(refresh());
@@ -456,6 +483,7 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
   const runtime: CardRuntime = {
     get closing() { return closing; },
     recovery,
+    ...(eventsForTest !== undefined ? { eventsForTest } : {}),
 
     beginTurn(input) {
       try {

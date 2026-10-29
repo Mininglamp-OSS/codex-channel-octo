@@ -7,6 +7,7 @@ import { SessionStore } from '../session-store.js';
 import {
   CARD_TABLES,
   CARD_V1_DDL,
+  CARD_V3_DDL,
   FileActivationMarker,
   backupBeforeMigration,
   inspectCardSchema,
@@ -14,12 +15,15 @@ import {
   parseActivationMarker,
   provisionFirstInstallMarker,
   referenceSchema,
+  upgradeCardSchemaV1toV2,
+  upgradeCardSchemaV2toV3,
+  upgradeCardSchemaV3toV4,
   serializeActivationMarker,
   type ActivationMarker,
   type ActivationMarkerPort,
   type MarkerRead,
 } from '../cards/migrations.js';
-import { initializeCardStore, readProtectedGraph, type CardStoreInit } from '../cards/store.js';
+import { CardStore, initializeCardStore, readProtectedGraph, type CardStoreInit } from '../cards/store.js';
 
 const INSTALL = 'install-a';
 const T0 = Date.UTC(2026, 9, 14, 8, 0, 0);
@@ -109,14 +113,106 @@ describe('reference schema', () => {
     const tables = ref.objects.filter((o) => o.type === 'table').map((o) => o.name).sort();
     expect(tables).toEqual([...CARD_TABLES].sort());
     // Version 3 (SC-1) adds one settlement trigger to the eight of versions 1 and 2.
-    expect(ref.objects.filter((o) => o.type === 'trigger')).toHaveLength(9);
+    expect(ref.objects.filter((o) => o.type === 'trigger')).toHaveLength(14);
+    expect(referenceSchema(3).objects.filter((o) => o.type === 'trigger')).toHaveLength(9);
     expect(referenceSchema(2).objects.filter((o) => o.type === 'trigger')).toHaveLength(8);
     expect(referenceSchema(1).hash).toBe(referenceSchema(2).hash);
+    expect(referenceSchema(1).hash).toBe('96ceca1b7fcb7dc6b5c9a2a9ce31789fdd0c7905ddc7090c69a2e69547e3652b');
+    expect(referenceSchema(3).hash).toBe('e8b1cca8e75c8f7ad38240edcf661219d3f25858d7ec491878e3877d1c779028');
     expect(referenceSchema(2).hash).not.toBe(ref.hash);
     expect(ref.objects.filter((o) => o.type === 'index' && !o.name.startsWith('sqlite_')).map((o) => o.name).sort()).toEqual([
       'idx_card_messages_open',
       'idx_card_sessions_active',
     ]);
+  });
+});
+
+describe('WP11 historical migration chains and faults', () => {
+  function historical(a: DbAdapter, version: 1 | 2 | 3) {
+    for (const ddl of [...CARD_V1_DDL, ...(version === 3 ? CARD_V3_DDL : [])]) a.exec(ddl);
+    const values = { schema_family: 'card_v1', schema_version: String(version), explicit_ledger_version: '1',
+      schema_hash: referenceSchema(version).hash, lineage_id: 'lineage-1', installation_ref: INSTALL,
+      created_by: 'codex-channel-octo', created_at: String(T0), ...(version >= 2 ? { intent_legacy: '{"format":1,"cards":[]}' } : {}) };
+    const insert = a.prepare('INSERT INTO card_meta(k,v) VALUES (?,?)');
+    for (const [k, v] of Object.entries(values)) insert.run(k, v);
+    provisionFirstInstallMarker(env.markerPath, INSTALL, T0);
+    const marker = new FileActivationMarker(env.markerPath); const m = marker.read();
+    if (m.state !== 'present') throw new Error('fixture marker');
+    marker.write({ ...m.marker, everActivated: true, schemaFamily: 'card_v1', lineageId: 'lineage-1' });
+    return marker;
+  }
+  function proxy(a: DbAdapter, fault: (sql: string, operation: 'exec' | 'prepare') => void): DbAdapter {
+    return new Proxy(a, { get(target, prop) {
+      if (prop === 'exec') return (sql: string) => { fault(sql, 'exec'); return target.exec(sql); };
+      if (prop === 'prepare') return (sql: string) => { fault(sql, 'prepare'); return target.prepare(sql); };
+      const value = Reflect.get(target, prop, target) as unknown;
+      return typeof value === 'function' ? (value as (...p: unknown[]) => unknown).bind(target) : value;
+    } });
+  }
+  it.each([1, 2, 3] as const)('backs up once and upgrades exact historical version %i through v4', async (version) => {
+    const a = openDb(); historical(a, version);
+    const old = new CardStore(a, { clock: clock() });
+    old.registerHandler({ generation: 'g', installationRef: INSTALL, sessionKey: 's', runtimeIncarnation: 'r', resetEpoch: 0,
+      expiresAt: T0 + 86400000, contextDigest: 'd', policyIdentity: 'p' });
+    const before = readProtectedGraph(a); const result = await init(a);
+    expect(result).toMatchObject({ state: 'ready', meta: { schemaVersion: 4 } });
+    const after = readProtectedGraph(a);
+    for (const table of CARD_TABLES.filter((t) => t !== 'card_meta')) expect(after[table]).toEqual(before[table]);
+    expect(readdirSync(env.backupDir)).toHaveLength(1);
+    expect(result.state === 'ready' && result.backup?.fileName).toContain(`pre-card_v1-s${version + 1}`);
+    expect(await init(a)).toMatchObject({ state: 'ready', meta: { schemaVersion: 4 } });
+    expect(readdirSync(env.backupDir)).toHaveLength(1);
+  });
+  it('preserves literal historical direct targets and hashes before the additive v4 step', () => {
+    const a = openDb(); historical(a, 1);
+    expect(upgradeCardSchemaV1toV2(a, 'lineage-1').schemaVersion).toBe(2);
+    expect(inspectCardSchema(a)).toMatchObject({ meta: { schemaHash: referenceSchema(1).hash } });
+    expect(upgradeCardSchemaV2toV3(a, 'lineage-1').schemaVersion).toBe(3);
+    expect(inspectCardSchema(a)).toMatchObject({ meta: { schemaHash: referenceSchema(3).hash } });
+    expect(upgradeCardSchemaV3toV4(a, 'lineage-1').schemaVersion).toBe(4);
+  });
+  it.each(['CREATE TABLE card_event_invalidations', 'CREATE TRIGGER trg_card_event_invalidations_final',
+    'CREATE TRIGGER trg_card_event_attempts_identity', 'UPDATE card_meta SET v = ? WHERE k = ? AND v = ?',
+    'PRAGMA integrity_check', 'PRAGMA foreign_key_check(card_event_invalidations)',
+    'SELECT 1 FROM card_event_invalidations'])('rolls v4 back on %s failure', (fragment) => {
+    const a = openDb(); historical(a, 3); const before = readProtectedGraph(a);
+    const failing = proxy(a, (sql) => { if (sql.includes(fragment)) throw new Error('injected'); });
+    expect(() => upgradeCardSchemaV3toV4(failing, 'lineage-1')).toThrow('injected');
+    expect(a.inTransaction).toBe(false); expect(inspectCardSchema(a)).toMatchObject({ state: 'complete', meta: { schemaVersion: 3 } });
+    expect(readProtectedGraph(a)).toEqual(before);
+  });
+  it.each(['schema_version', 'lineage_id', 'installation_ref', 'schema_hash'])('detects %s drift during backup before mutation', async (key) => {
+    const a = openDb(); historical(a, 3);
+    const wrapped = new Proxy(a, { get(target, prop) {
+      if (prop === 'backup') return async (path: string) => { await target.backup(path); target.prepare('UPDATE card_meta SET v = ? WHERE k = ?').run('changed', key); };
+      const value = Reflect.get(target, prop, target) as unknown;
+      return typeof value === 'function' ? (value as (...p: unknown[]) => unknown).bind(target) : value;
+    } });
+    expect(await init(wrapped)).toEqual({ state: 'disabled', reason: 'provenance_conflict' });
+    expect(cardObjects(a)).not.toContain('card_event_invalidations');
+    expect(a.prepare('SELECT v FROM card_meta WHERE k = ?').get(key)).toEqual({ v: 'changed' });
+  });
+  it('keeps the last committed historical version after a later step fails, then re-upgrades', async () => {
+    const a = openDb(); historical(a, 1);
+    const failing = proxy(a, (sql) => { if (sql.startsWith('ALTER TABLE card_explicit_requests ADD COLUMN')) throw new Error('injected'); });
+    expect(await init(failing)).toEqual({ state: 'disabled', reason: 'migration_failed' });
+    expect(inspectCardSchema(a)).toMatchObject({ state: 'complete', meta: { schemaVersion: 2 } });
+    const result = await init(a);
+    expect(result).toMatchObject({ state: 'ready', meta: { schemaVersion: 4 } });
+    expect(result.state === 'ready' && result.backup?.fileName).toContain('pre-card_v1-s3');
+  });
+  it('keeps v3 untouched on backup failure and keeps committed v4 disabled on marker failure', async () => {
+    const a = openDb(); const marker = historical(a, 3);
+    const backupFails = new Proxy(a, { get(target, prop) {
+      if (prop === 'backup') return async () => { throw new Error('backup'); };
+      const value = Reflect.get(target, prop, target) as unknown;
+      return typeof value === 'function' ? (value as (...p: unknown[]) => unknown).bind(target) : value;
+    } });
+    expect(await init(backupFails)).toMatchObject({ state: 'disabled' });
+    expect(inspectCardSchema(a)).toMatchObject({ meta: { schemaVersion: 3 } });
+    const result = await init(a, { marker: { read: () => marker.read(), write: () => { throw new Error('marker'); } } });
+    expect(result).toEqual({ state: 'disabled', reason: 'marker_write_failed' });
+    expect(inspectCardSchema(a)).toMatchObject({ state: 'complete', meta: { schemaVersion: 4 } });
   });
 });
 
@@ -359,9 +455,9 @@ describe('schema rejection', () => {
   it('newer schema version is rejected and left untouched', async () => {
     const a = openDb();
     migrateCardSchema(a, { installationRef: INSTALL, lineageId: 'lineage-1', nowMs: T0 });
-    a.prepare(`UPDATE card_meta SET v = '4' WHERE k = 'schema_version'`).run();
+    a.prepare(`UPDATE card_meta SET v = '5' WHERE k = 'schema_version'`).run();
     a.exec('CREATE TABLE card_v2_extra (x TEXT)');
-    expect(inspectCardSchema(a)).toEqual({ state: 'newer', schemaVersion: 4 });
+    expect(inspectCardSchema(a)).toEqual({ state: 'newer', schemaVersion: 5 });
     expect(await init(a)).toEqual({ state: 'disabled', reason: 'newer_schema' });
     expect(cardObjects(a)).toContain('card_v2_extra');
   });
