@@ -80,6 +80,9 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
   let current: Promise<PumpResult> | undefined;
   const controller = new AbortController();
   const invalidated = new Set<string>();
+  // Only this incarnation can prove that its pre-handler work settled safely.
+  // A restart still needs the independent retired-owner witness for a started T0.
+  let settledHold: { readonly eventId: string; readonly attemptNo: 1 | 2 | 3 } | undefined;
   const active = (): boolean => !stopped && !fenced && !store.retired && !controller.signal.aborted;
   const eligible = (): boolean => !options.pacing || options.pacing.pacer.gate(options.pacing.origin).eligible;
 
@@ -166,11 +169,20 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
     else if (!session) rejection = 'unknown';
     else {
       const message = store.getMessage(session.cardId);
-      if (message?.messageId !== body.messageId) rejection = 'invalid';
+      if (!message || (message.messageId !== null && message.messageId !== body.messageId)) rejection = 'invalid';
       else if (body.channelId !== session.channelId || body.channelType !== session.channelType
         || body.topicScope !== session.topicScope) rejection = 'unauthorized';
       else if (!boundedId(authenticated.actorUid) || authenticated.actorUid !== body.requesterUid
         || authenticated.actorUid !== session.requesterUid) rejection = 'unauthorized';
+      else if (message.messageId === null) {
+        if ((message.state === 'sending' || message.state === 'ambiguous')
+          && (session.status === 'sending' || session.status === 'ambiguous')) {
+          // Retain the callback identity without using it as T-bind authority.
+          if (store.recordSendWait(action).kind !== 'send_wait') return halt('identity_commit_conflict');
+          return { kind: 'held' };
+        }
+        rejection = 'invalid';
+      }
       else if (session.status === 'admitted' || session.status === 'ambiguous' || store.getAdmissionForSession(session.sessionId)) return { kind: 'held' };
     }
     if (rejection) {
@@ -180,17 +192,22 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
       if (final.kind !== 'recorded' && final.kind !== 'already_final') return halt('final_commit_conflict');
       return ack(event);
     }
-    if (replay.kind === 'retained' && replay.attempt?.phase === 'started') {
+    const localAttempt = settledHold?.eventId === eventId ? settledHold.attemptNo : undefined;
+    const resume = replay.kind === 'retained' && replay.attempt?.phase === 'started'
+      && localAttempt === replay.attempt.number;
+    if (replay.kind === 'retained' && replay.attempt?.phase === 'started' && !resume) {
       if (options.startedOwner?.(action) !== 'retired') return { kind: 'held' };
       const recovered = store.recordAttemptFailure({ eventId, reasonCode: 'interrupted', cursor: advance });
       if (recovered.kind === 'dead_letter') return ack(event);
       if (recovered.kind !== 'retry_wait') return halt('interruption_conflict');
       return { kind: 'held' };
     }
-    const start = store.recordAttemptStart(action);
+    settledHold = undefined;
+    const start = resume ? { kind: 'started' as const, attemptNo: localAttempt! } : store.recordAttemptStart(action);
     if (start.kind === 'not_eligible' || start.kind === 'in_progress') return { kind: 'held' };
     if (start.kind !== 'started') return halt('attempt_conflict');
     let result: FakeActionResult;
+    let handlerStarted = false;
     try {
       if (session!.channelType !== 1) {
         const member = await options.freshMember?.(event, authenticated.actorUid!, controller.signal);
@@ -202,7 +219,12 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
     } catch (error) { observe(error); result = { kind: 'retry' }; }
     if (!active()) return { kind: 'closed' };
     if (options.now() >= topology.expiresAt) return { kind: 'held' };
-    if (result.kind === 'hold') return { kind: 'held' };
+    if (result.kind === 'hold') {
+      // Cooldown/missing wiring before dispatch is a wait, not a failed attempt.
+      // A handler's own hold may hide ambiguous work and cannot grant a rerun.
+      if (!handlerStarted) settledHold = { eventId, attemptNo: start.attemptNo };
+      return { kind: 'held' };
+    }
     if (result.kind === 'retry') {
       const failure = store.recordAttemptFailure({ eventId, reasonCode: 'pre_admission', cursor: advance });
       if (failure.kind === 'retry_wait') return { kind: 'held' };
@@ -221,6 +243,7 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
       if (policy !== 'allowed') return { kind: 'retry' };
       if (session!.expiresAt <= options.now()) return { kind: 'final', disposition: 'expired' };
       if (!options.handler() || !eligible() || options.now() >= topology!.expiresAt) return { kind: 'hold' };
+      handlerStarted = true;
       return handler!(event, controller.signal);
     }
   }

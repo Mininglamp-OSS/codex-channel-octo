@@ -55,12 +55,12 @@ function consumer(overrides: Partial<FakeConsumerOptions> = {}) {
 }
 function replay(id = '11') { return store.getEventReplay(eventKey(proven().scope, id)); }
 
-function action(channelType: 1 | 2 | 5 = 2): FakeEvent {
+function action(channelType: 1 | 2 | 5 = 2, acknowledged = true): FakeEvent {
   const r = store.reserveSession({ binding: { sessionKey: 'session', channelId: 'route', channelType,
     topicScope: channelType === 5 ? 'route' : null, generation: 'gen', resetEpoch: 0 }, bodyDigest: 'authored', clientMsgNo: 'client',
     contract: { requesterUid: 'u', contractVersion: 1, authoredContractJson: '{}', authoredDataHash: 'hash' } });
   if (r.kind !== 'reserved') throw new Error('fixture reservation');
-  store.ackMessage({ cardId: r.cardId, messageId: 'message', currentResetEpoch: 0, policyAllows: true });
+  if (acknowledged) store.ackMessage({ cardId: r.cardId, messageId: 'message', currentResetEpoch: 0, policyAllows: true });
   return { ...settings(), eventClass: 'card_action', payload: { sessionId: r.sessionId, messageId: 'message',
     channelId: 'route', channelType, topicScope: channelType === 5 ? 'route' : null, requesterUid: 'u', actionId: 'ok' } };
 }
@@ -406,5 +406,235 @@ describe('runtime fake seam and default regression', () => {
       expect(store.retired).toBe(true); release([settings()]); await work;
       expect(trace).toEqual([]);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('independent boundary regressions', () => {
+  it('holds an independently owned early callback until T-bind instead of finalizing it', async () => {
+    const r = store.reserveSession({ binding: { sessionKey: 'session', channelId: 'route', channelType: 2,
+      topicScope: null, generation: 'gen', resetEpoch: 0 }, bodyDigest: 'authored', clientMsgNo: 'early-client',
+      contract: { requesterUid: 'u', contractVersion: 1, authoredContractJson: '{}', authoredDataHash: 'hash' } });
+    if (r.kind !== 'reserved') throw new Error('reservation');
+    queue = [{ ...settings(), eventClass: 'card_action', payload: { sessionId: r.sessionId, messageId: 'message',
+      channelId: 'route', channelType: 2, topicScope: null, requesterUid: 'u', actionId: 'ok' } }];
+    const handler = vi.fn(async () => ({ kind: 'final' as const, disposition: 'unsupported_control' as const }));
+    const c = consumer({ freshMember: async () => 'member', checkPolicy: async () => 'allowed', handler: () => handler });
+    const result = await c.pump();
+    expect(result.kind).toBe('held');
+    expect(replay()).toMatchObject({ kind: 'retained', attempt: { phase: 'send_wait', number: 0 } });
+    expect(trace.some((s) => s.startsWith('ack:'))).toBe(false);
+    store.ackMessage({ cardId: r.cardId, messageId: 'message', currentResetEpoch: 0, policyAllows: true });
+    await c.pump();
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumes a settled local attempt after a cooldown starts during fresh membership', async () => {
+    queue = [action()];
+    const clock = { nowMono: () => now };
+    const origin = normalizeOrigin('https://fixture.invalid');
+    const pacer = createPacer({ clock, timers: { setTimeout: () => 1, clearTimeout: () => undefined }, rng: () => 0 });
+    let first = true;
+    const member = vi.fn(async () => {
+      if (first) { first = false; pacer.observe429(origin, 5000, now); }
+      return 'member' as const;
+    });
+    const handler = vi.fn(async () => ({ kind: 'final' as const, disposition: 'unsupported_control' as const }));
+    const c = consumer({ freshMember: member, checkPolicy: async () => 'allowed', handler: () => handler,
+      pacing: { pacer, origin, clock } });
+    expect((await c.pump()).kind).toBe('held');
+    now += 5000;
+    expect(pacer.gate(origin).eligible).toBe(true);
+    const result = await c.pump();
+    pacer.close();
+    expect(result.kind).toBe('processed');
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('positive control: a bound valid action reaches the scripted handler', async () => {
+    queue = [action()];
+    const handler = vi.fn(async () => ({ kind: 'final' as const, disposition: 'unsupported_control' as const }));
+    const c = consumer({ freshMember: async () => 'member', checkPolicy: async () => 'allowed', handler: () => handler });
+    expect((await c.pump()).kind).toBe('processed');
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(replay()).toMatchObject({ final: { outcome: 'unsupported_control' } });
+  });
+
+  it('positive control: cooldown before T0 resumes once eligibility returns', async () => {
+    queue = [action()];
+    const clock = { nowMono: () => now };
+    const origin = normalizeOrigin('https://fixture.invalid');
+    const pacer = createPacer({ clock, timers: { setTimeout: () => 1, clearTimeout: () => undefined }, rng: () => 0 });
+    pacer.observe429(origin, 5000, now);
+    const handler = vi.fn(async () => ({ kind: 'final' as const, disposition: 'unsupported_control' as const }));
+    const c = consumer({ freshMember: async () => 'member', checkPolicy: async () => 'allowed', handler: () => handler,
+      pacing: { pacer, origin, clock } });
+    expect((await c.pump()).kind).toBe('held');
+    expect(replay().kind).toBe('absent');
+    now += 5000;
+    expect((await c.pump()).kind).toBe('processed');
+    pacer.close();
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('early callback binding and local hold recovery', () => {
+  const finalHandler = () => vi.fn(async () => ({ kind: 'final' as const, disposition: 'unsupported_control' as const }));
+  const member = async () => 'member' as const;
+  const allowed = async () => 'allowed' as const;
+
+  it.each([1, 2, 5] as const)('retains route %i send_wait through reopen until independent T-bind', async (type) => {
+    const event = action(type, false); queue = [event, settings('12', '11')];
+    const body = event.payload as { sessionId: string };
+    const session = store.getSession(body.sessionId)!;
+    const handler = finalHandler(), membership = vi.fn(member), policy = vi.fn(allowed);
+    const start = vi.spyOn(store, 'recordAttemptStart');
+    const c = consumer({ handler: () => handler, freshMember: membership, checkPolicy: policy });
+    expect(await c.pump()).toEqual({ kind: 'held' }); await c.pump();
+    expect(replay()).toMatchObject({ attempt: { phase: 'send_wait', number: 0 } });
+    const retained = replay();
+    expect(replay('12').kind).toBe('absent');
+    expect(store.readCursor(c.scope!)).toMatchObject({ cursor: null, ackedThrough: null });
+    expect(store.getMessage(session.cardId)).toMatchObject({ messageId: null, state: 'sending' });
+    expect(store.getSession(session.sessionId)?.status).toBe('sending');
+    expect(start).not.toHaveBeenCalled(); expect(membership).not.toHaveBeenCalled();
+    expect(policy).not.toHaveBeenCalled(); expect(handler).not.toHaveBeenCalled();
+    expect(trace.filter((s) => s.startsWith('ack'))).toEqual([]);
+    c.close(fence()); await c.drain(fence()); store.retire(); db.close();
+    db = createAdapter(join(root, 'events.db')); store = new CardStore(db, { clock: { nowUtcMs: () => now } });
+    opts = { ...opts, store };
+    const next = consumer({ handler: () => handler, freshMember: membership, checkPolicy: policy });
+    expect(await next.pump()).toEqual({ kind: 'held' }); expect(replay()).toEqual(retained);
+    expect(store.ackMessage({ cardId: session.cardId, messageId: 'message', currentResetEpoch: 0, policyAllows: true }))
+      .toEqual({ kind: 'bound', admittable: true });
+    expect(await next.pump()).toMatchObject({ kind: 'processed', count: 2 });
+    expect(replay()).toMatchObject({ attempt: { phase: 'started', number: 1 }, final: { outcome: 'unsupported_control' } });
+    expect(handler).toHaveBeenCalledTimes(1); expect(membership).toHaveBeenCalledTimes(type === 1 ? 0 : 1);
+    expect(trace.filter((s) => s.startsWith('ack'))).toEqual(['ack:11', 'ack:12']);
+    queue = [event]; await next.pump(); expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds an ambiguous unbound send and never binds it from a callback', async () => {
+    const event = action(2, false); queue = [event];
+    const session = store.getSession((event.payload as { sessionId: string }).sessionId)!;
+    store.markSendAmbiguous(session.cardId);
+    const handler = finalHandler(); const c = consumer({ handler: () => handler, freshMember: member, checkPolicy: allowed });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    expect(store.getMessage(session.cardId)).toMatchObject({ messageId: null, state: 'ambiguous' });
+    expect(store.getSession(session.sessionId)?.status).toBe('ambiguous');
+    expect(replay()).toMatchObject({ attempt: { phase: 'send_wait', number: 0 } });
+    expect(handler).not.toHaveBeenCalled();
+    store.ackMessage({ cardId: session.cardId, messageId: 'independently-proven-other', currentResetEpoch: 0, policyAllows: true });
+    expect(await c.pump()).toMatchObject({ kind: 'processed' });
+    expect(replay()).toMatchObject({ final: { outcome: 'invalid' } });
+    expect(handler).not.toHaveBeenCalled();
+    expect(store.getMessage(session.cardId)?.messageId).toBe('independently-proven-other');
+  });
+
+  it.each([
+    ['sessionId', 'unknown', 'unknown'], ['channelId', 'foreign', 'unauthorized'],
+    ['channelType', 1, 'unauthorized'], ['topicScope', 'foreign', 'unauthorized'],
+    ['requesterUid', 'forged', 'unauthorized'],
+  ])('does not grant an early wait bypass for changed %s', async (key, value, outcome) => {
+    const event = action(2, false);
+    queue = [{ ...event, payload: { ...event.payload as object, [key as string]: value } }];
+    const handler = finalHandler(), membership = vi.fn(member);
+    expect(await consumer({ handler: () => handler, freshMember: membership, checkPolicy: allowed }).pump())
+      .toMatchObject({ kind: 'processed' });
+    expect(replay()).toMatchObject({ final: { outcome } });
+    expect(handler).not.toHaveBeenCalled(); expect(membership).not.toHaveBeenCalled();
+  });
+
+  it.each(['unproven', 'forged_actor', 'wrong_scope'])('keeps %s early ownership fail-closed', async (mode) => {
+    const event = action(2, false); queue = [event];
+    if (mode === 'wrong_scope') queue = [{ ...event, binding: { ...binding, bot: 'other' } }];
+    else opts.source.verifyOwned = () => ({ owned: mode !== 'unproven', actorUid: 'forged' });
+    const handler = finalHandler(); const result = await consumer({ handler: () => handler }).pump();
+    expect(handler).not.toHaveBeenCalled();
+    if (mode === 'forged_actor') expect(replay()).toMatchObject({ final: { outcome: 'unauthorized' } });
+    else { expect(result.kind).toBe('halted'); expect(replay().kind).toBe('absent'); }
+  });
+
+  it('halts a changed retained early callback without finalizing or binding it', async () => {
+    const event = action(2, false); queue = [event]; const c = consumer();
+    await c.pump(); queue = [{ ...event, payload: { ...event.payload as object, messageId: 'changed' } }];
+    expect(await c.pump()).toMatchObject({ kind: 'halted', persisted: true });
+    expect(replay()).toMatchObject({ attempt: { phase: 'send_wait', number: 0 } });
+    expect(replay()).not.toHaveProperty('final');
+    expect(trace.some((s) => s.startsWith('ack'))).toBe(false);
+  });
+
+  it.each(['membership', 'policy'] as const)('resumes only after %s settles and real pacing eligibility returns', async (stage) => {
+    queue = [action(), settings('12', '11')];
+    let mono = 0, release!: () => void;
+    const clock = { nowMono: () => mono }, origin = normalizeOrigin('https://local-hold.invalid');
+    const timers = { setTimeout: vi.fn(() => 1), clearTimeout: vi.fn() };
+    const pacer = createPacer({ clock, timers, rng: () => 0 });
+    let pending = true;
+    const wait = async () => { if (pending) { pending = false; await new Promise<void>((r) => { release = r; }); } };
+    const membership = vi.fn(async () => { if (stage === 'membership') await wait(); return 'member' as const; });
+    const policy = vi.fn(async () => { if (stage === 'policy') await wait(); return 'allowed' as const; });
+    const handler = finalHandler(); const retired = vi.fn(() => 'unknown' as const);
+    const c = consumer({ freshMember: membership, checkPolicy: policy, handler: () => handler,
+      startedOwner: retired, pacing: { pacer, clock, origin } });
+    try {
+      const first = c.pump();
+      while (!release) await Promise.resolve();
+      expect(replay()).toMatchObject({ attempt: { phase: 'started', number: 1 } });
+      expect(c.pump()).toBe(first); expect(membership).toHaveBeenCalledTimes(1);
+      pacer.observe429(origin, 5000, mono); release();
+      expect(await first).toEqual({ kind: 'held' });
+      expect(handler).not.toHaveBeenCalled(); expect(replay('12').kind).toBe('absent');
+      expect(store.readCursor(c.scope!)).toMatchObject({ cursor: null, ackedThrough: null });
+      mono = 4999; expect(await c.pump()).toEqual({ kind: 'held' });
+      expect(membership).toHaveBeenCalledTimes(1);
+      mono = 5000; expect(pacer.gate(origin).eligible).toBe(true);
+      expect(await c.pump()).toMatchObject({ kind: 'processed', count: 2 });
+      expect(retired).not.toHaveBeenCalled(); expect(handler).toHaveBeenCalledTimes(1);
+      expect(membership).toHaveBeenCalledTimes(2); expect(policy).toHaveBeenCalledTimes(stage === 'policy' ? 2 : 1);
+      expect(replay()).toMatchObject({ attempt: { number: 1 }, final: { outcome: 'unsupported_control' } });
+      expect(trace.filter((s) => s.startsWith('ack'))).toEqual(['ack:11', 'ack:12']);
+      queue = [queue[0]]; await c.pump(); expect(handler).toHaveBeenCalledTimes(1);
+    } finally { pacer.close(); }
+  });
+
+  it('keeps handler-originated holds fenced instead of assuming dispatch was harmless', async () => {
+    queue = [action()]; const handler = vi.fn(async () => ({ kind: 'hold' as const }));
+    const c = consumer({ handler: () => handler, freshMember: member, checkPolicy: allowed });
+    expect(await c.pump()).toEqual({ kind: 'held' }); expect(await c.pump()).toEqual({ kind: 'held' });
+    expect(handler).toHaveBeenCalledTimes(1); expect(replay()).toMatchObject({ attempt: { number: 1, phase: 'started' } });
+    expect(trace.some((s) => s.startsWith('ack'))).toBe(false);
+  });
+
+  it('does not carry local settled authority into a new consumer incarnation', async () => {
+    queue = [action()]; let present = true;
+    const handler = finalHandler();
+    const c = consumer({ handler: () => present ? handler : undefined,
+      freshMember: async () => { present = false; return 'member'; }, checkPolicy: allowed });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    c.close(fence()); await c.drain(fence());
+    const next = consumer({ handler: () => handler, freshMember: member, checkPolicy: allowed });
+    expect(await next.pump()).toEqual({ kind: 'held' }); expect(handler).not.toHaveBeenCalled();
+    expect(replay()).toMatchObject({ attempt: { number: 1, phase: 'started' } });
+  });
+
+  it('resumes local wiring holds without charging attempts and preserves the 1s/4s failure schedule', async () => {
+    queue = [action()]; let available = true, pause = true;
+    const handler = vi.fn(async () => ({ kind: 'retry' as const }));
+    const membership = vi.fn(async () => { if (pause) available = false; return 'member' as const; });
+    const c = consumer({ handler: () => available ? handler : undefined, freshMember: membership, checkPolicy: allowed });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    expect(replay()).toMatchObject({ attempt: { number: 1, phase: 'started' } });
+    available = true; expect(await c.pump()).toEqual({ kind: 'held' });
+    expect(replay()).toMatchObject({ attempt: { number: 1, phase: 'started' } });
+    pause = false; available = true; await c.pump();
+    expect(replay()).toMatchObject({ attempt: { number: 1, phase: 'failed', nextEligibleAt: now + 1000 } });
+    expect(handler).toHaveBeenCalledTimes(1);
+    now += 999; await c.pump(); expect(handler).toHaveBeenCalledTimes(1);
+    now++; await c.pump(); expect(handler).toHaveBeenCalledTimes(2);
+    expect(replay()).toMatchObject({ attempt: { number: 2, phase: 'failed', nextEligibleAt: now + 4000 } });
+    now += 3999; await c.pump(); expect(handler).toHaveBeenCalledTimes(2);
+    now++; await c.pump(); expect(handler).toHaveBeenCalledTimes(3);
+    expect(replay()).toMatchObject({ final: { outcome: 'dead_letter' }, attempt: { number: 3 } });
+    await c.pump(); expect(handler).toHaveBeenCalledTimes(3);
   });
 });
