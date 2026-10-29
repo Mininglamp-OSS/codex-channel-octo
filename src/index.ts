@@ -414,6 +414,8 @@ export async function handleMessage(
     const eligibleForMemory = canLoadPrivateMemory(config, msg, ownerUid);
     const sessionKey = config.privateMemory?.enabled === true
       ? privateMemorySessionKey(result.sessionKey, eligibleForMemory) : result.sessionKey;
+    const continuation = getContinuation(msg);
+    if (continuation && (!continuation.current() || continuation.turn.sessionKey !== sessionKey)) return;
     const turnStore = turn.guard(store);
     const turnGroupContext = turn.guard(groupContext);
     const sendMessage = (params: Parameters<typeof import('./octo/api.js').sendMessage>[0]) => {
@@ -493,7 +495,6 @@ export async function handleMessage(
       }
 
       // Commands never create cards. The context comes from router-verified fields only.
-      const continuation = getContinuation(msg);
       if (cardRuntime && (config.sdk.toolProgress === true || continuation !== undefined)) {
         const barrier = store.getResetBarrier(sessionKey);
         const begun = cardRuntime.beginTurn({

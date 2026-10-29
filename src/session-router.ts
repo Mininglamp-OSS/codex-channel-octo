@@ -18,6 +18,7 @@ import { summarizeAgentError } from './agent-errors.js';
 import { ConversationMarkdown, type ConversationTurnContext } from './conversation-md.js';
 import type { AdmissionReservation, ContinuationPort, ContinuationTurn, DispatchObserver, ReservationResult } from './cards/contracts.js';
 import { continuationMessage, getContinuation } from './cards/continuation.js';
+import { canLoadPrivateMemory, privateMemorySessionKey } from './private-memory.js';
 
 export interface RouteResult {
   sessionKey: string;
@@ -116,16 +117,25 @@ export class SessionRouter {
     this.continuationHandler = handler;
   }
 
+  /** The router locks/rate-limits raw routes; history and card bindings use the effective key. */
+  private continuationKeys(turn: ContinuationTurn): { routeKey: string; historyKey: string } {
+    const message = { from_uid: turn.requesterUid, channel_id: turn.route.channelId, channel_type: turn.route.channelType } as BotMessage;
+    const routeKey = this.sessionKey(message);
+    const historyKey = this.config.privateMemory?.enabled === true
+      ? privateMemorySessionKey(routeKey, canLoadPrivateMemory(this.config, message, this.getOwnerUid())) : routeKey;
+    return { routeKey, historyKey };
+  }
+
   preflightContinuation(turn: ContinuationTurn): ReservationResult {
     const detail = getContinuation(turn);
-    if (!this.lockedContinuations.has(turn) || this.stopping || !this.continuationHandler || !detail || !detail.current()
-      || this.ledger?.getQuarantinedTurnId(turn.sessionKey) || this.quarantined.has(turn.sessionKey)) return { accepted: false, reason: 'closing' };
+    if (!this.lockedContinuations.has(turn) || this.stopping || !this.continuationHandler || !detail || !detail.current()) return { accepted: false, reason: 'closing' };
     if (!this.isSupportedChannel(turn.route.channelType)) return { accepted: false, reason: 'unsupported_channel' };
-    const message = { from_uid: turn.requesterUid, channel_id: turn.route.channelId, channel_type: turn.route.channelType } as BotMessage;
-    if (this.sessionKey(message) !== turn.sessionKey) return { accepted: false, reason: 'unsupported_channel' };
-    if (this.checkAllRateLimits(turn.sessionKey, turn.requesterUid)) return { accepted: false, reason: 'rate_limited' };
+    const { routeKey, historyKey } = this.continuationKeys(turn);
+    if (historyKey !== turn.sessionKey) return { accepted: false, reason: 'unsupported_channel' };
+    if (this.ledger?.getQuarantinedTurnId(routeKey) || this.quarantined.has(routeKey)) return { accepted: false, reason: 'closing' };
+    if (this.checkAllRateLimits(routeKey, turn.requesterUid)) return { accepted: false, reason: 'rate_limited' };
     const max = this.config.rateLimit.maxPerMinute;
-    const buckets = [this.globalBucket!, this.userBuckets.get(turn.requesterUid)!, this.tokenBuckets.get(`${turn.sessionKey}\n${turn.requesterUid}`)!];
+    const buckets = [this.globalBucket!, this.userBuckets.get(turn.requesterUid)!, this.tokenBuckets.get(`${routeKey}\n${turn.requesterUid}`)!];
     let released = false;
     const reservation = Object.freeze({}) as AdmissionReservation;
     this.continuationReservations.set(reservation, { turn, release: () => {
@@ -142,7 +152,7 @@ export class SessionRouter {
 
   /** Admission uses this port so preflight, T2 and execution cannot interleave a reset. */
   withContinuationLock<T>(turn: ContinuationTurn, fn: (port: ContinuationPort) => Promise<T>): Promise<T> {
-    return this.withSessionLock(turn.sessionKey, async () => {
+    return this.withSessionLock(this.continuationKeys(turn).routeKey, async () => {
       this.lockedContinuations.add(turn);
       const reservations: AdmissionReservation[] = [];
       const port: ContinuationPort = {
@@ -163,7 +173,7 @@ export class SessionRouter {
   }
 
   dispatchContinuation(turn: ContinuationTurn, reservation: AdmissionReservation): Promise<void> {
-    return this.withSessionLock(turn.sessionKey, () => this.dispatchContinuationLocked(turn, reservation));
+    return this.withSessionLock(this.continuationKeys(turn).routeKey, () => this.dispatchContinuationLocked(turn, reservation));
   }
 
   private async dispatchContinuationLocked(turn: ContinuationTurn, reservation: AdmissionReservation): Promise<void> {
@@ -171,11 +181,13 @@ export class SessionRouter {
     const detail = getContinuation(turn);
     if (!held || held.turn !== turn || !detail || !turn.admissionId) return;
     if (this.stopping || !this.continuationHandler || !await detail.authorize() || !detail.current()
-      || this.stopping || !this.continuationHandler || this.continuationReservations.get(reservation) !== held) return;
+      || this.stopping || !this.continuationHandler || this.continuationReservations.get(reservation) !== held
+      || this.continuationKeys(turn).historyKey !== turn.sessionKey) return;
     this.continuationReservations.delete(reservation); // consumed once; no refund after dispatch
     const message = continuationMessage(turn);
-    const result: RouteResult = { sessionKey: turn.sessionKey, shouldProcess: true, message, cleanContent: detail.prompt,
-      interruptedTurn: this.ledger?.getInterruption(turn.sessionKey) };
+    const { routeKey } = this.continuationKeys(turn);
+    const result: RouteResult = { sessionKey: routeKey, shouldProcess: true, message, cleanContent: detail.prompt,
+      interruptedTurn: this.ledger?.getInterruption(routeKey) };
     await this.runHandlerWithTimeout(result, async (_result, context) => {
       this.continuationDispatches.set(message, { result, turn: context, used: false });
       try { await this.continuationHandler!(message); }
@@ -262,6 +274,8 @@ export class SessionRouter {
     if (continuation) {
       const detail = getContinuation(msg);
       if (continuation.used || !detail || !detail.current()) return null;
+      const keys = this.continuationKeys(detail.turn);
+      if (keys.historyKey !== detail.turn.sessionKey || keys.routeKey !== continuation.result.sessionKey) return null;
       continuation.used = true;
       await handler(continuation.result, continuation.turn);
       return continuation.result;
