@@ -33,6 +33,7 @@ let root: string, db: DbAdapter, store: CardStore, runtime: CardRuntime, router:
 let session: CardSessionRecord, actual: string[];
 let allowed: boolean;
 let edits: { card: { body: unknown[]; actions: unknown[] }; plain: string }[];
+let fixtureProof: boolean;
 const config = (timeout = 1000): Config => ({ cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' },
   botToken: 'synthetic', apiUrl: 'https://fixture.invalid', cwd: '/tmp', dataDir: '/tmp', baseDir: '/tmp',
   sdk: {}, dispatchTimeoutMs: timeout, maxResponseChars: 10000, rateLimit: { maxPerMinute: 5 }, context: { maxContextChars: 6000, historyLimit: 40 } });
@@ -65,11 +66,11 @@ beforeEach(async () => {
   const binding = { environment: 'fixture', tenant: 'fixture', bot: 'fixture', stream: 'fixture' };
   const proof = { ...binding, topology: 'T-PART', expiresAt: 1e12, nonDestructiveRead: true,
     orderedReplay: true, idempotentPerEventAck: true, partitionIsolated: true, otherOwners: ['documents'] };
-  edits = [];
+  edits = []; fixtureProof = true;
   runtime = createCardRuntime({ state: 'ready', store, meta: inspection.meta, provenance: 'reopened',
     ledger: store.recoverExplicitLedger('fixture'), queueFactory: o => createWriteQueue({ ...o, store }) },
   { apiUrl: 'https://fixture.invalid', botToken: 'synthetic', clock: { nowMono: () => 100 }, explicitTransportForTest: null,
-    fakeEventsForTest: { binding, proof: () => proof, verifyProof: () => true, now: () => 100, fence: () => {},
+    fakeEventsForTest: { binding, proof: () => proof, verifyProof: () => fixtureProof, now: () => 100, fence: () => {},
       source: { kind: 'fake', read: async () => [{ binding, wireId: 'event', position: 'position', previous: null, eventClass: 'card_action',
         payload: { sessionId: session.sessionId, messageId: '900001', channelId: 'route', channelType: 2, topicScope: null,
           requesterUid: 'requester', actionId: 'ok', data: { operation: 'stored' }, inputs: {} } }],
@@ -123,6 +124,17 @@ async function dispatch(p: ReturnType<typeof prepared>) {
   });
 }
 describe('trusted continuation port and actual settlement', () => {
+  it('rechecks proof between sequence reservation and the status transport effect', async () => {
+    const reserve = store.reserveSequence.bind(store);
+    vi.spyOn(store, 'reserveSequence').mockImplementation(cardId => {
+      const result = reserve(cardId); fixtureProof = false; return result;
+    });
+    router.setContinuationHandler(async () => { actual.push('dispatch'); });
+    expect(await runtime.eventsForTest!.pump()).toEqual({ kind: 'held' });
+    expect(edits).toEqual([]); expect(actual).toEqual([]);
+    expect(store.getAdmissionForSession(session.sessionId)?.state).toBe('ambiguous');
+    expect(store.getMessage(session.cardId)).toMatchObject({ seqReserved: 1, seqAcked: 0 });
+  });
   it('wires admission through the runtime, edits the original card and ACKs each reserved sequence', async () => {
     router.setContinuationHandler(async msg => { await router.routeAndHandle(msg, async () => {
       const turn = begin(msg);

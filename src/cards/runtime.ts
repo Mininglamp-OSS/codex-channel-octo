@@ -480,6 +480,8 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
         const seq = subsystem.store.reserveSequence(edit.session.cardId);
         if (seq.kind !== 'reserved') return;
         try {
+          if (closing || edit.signal.aborted || !pacer.gate(api.origin).eligible || !edit.current()
+            || !policy.authorize('interaction', { botRef }).allowed) return;
           const ack = await api.editAuthored({ route: { channelId: edit.session.channelId, channelType: edit.session.channelType as 1 | 2 | 5 },
             messageId: edit.messageId, ...built.authored, plain: built.plain, seq: seq.seq, transient: false }, { signal: edit.signal });
           if (!closing && !edit.signal.aborted && edit.current() && ack.messageId === edit.messageId && ack.seq === seq.seq) subsystem.store.ackSequence(edit.session.cardId, seq.seq);
