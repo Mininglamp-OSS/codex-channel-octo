@@ -950,3 +950,102 @@ export function encodeReplyFrame(frame: ToolReplyFrame): Uint8Array {
   if (result === null) throw new FrameEncodeError("invalid_message");
   return encodeBody(JSON.stringify({ v: frame.v, request_id: frame.request_id, result }));
 }
+
+// ─── Bootstrap redemption frames (AM-08 v4 §4) ──────────────────────────────
+//
+// The injected proxy redeems its single-use bootstrap ticket over the
+// registration's loopback listener before it answers MCP `initialize`:
+//
+//   bootstrap       = {v:1, bootstrap:<256-bit hex ticket>}
+//   bootstrap reply = {v:1, authority:<≥256-bit hex>, ops:[<opcode>…]}
+//
+// Neither frame carries author content, routing or context. The parent alone
+// decides whether a ticket redeems (`tool-host.ts`).
+
+const BOOTSTRAP_TICKET = /^[0-9a-f]{64}$/;
+const BOOTSTRAP_LIMITS: StrictJsonLimits = { maxDepth: 4, maxNodes: 16, unsafeIntegers: "reject" };
+
+export interface BootstrapFrame {
+  readonly v: 1;
+  readonly bootstrap: string;
+}
+
+export interface BootstrapReplyFrame {
+  readonly v: 1;
+  readonly authority: string;
+  readonly ops: readonly ToolOpcode[];
+}
+
+function parseSmallObject(body: Uint8Array): JsonObject | null {
+  if (body.byteLength === 0 || body.byteLength > MAX_FRAME_BODY_BYTES) return null;
+  const text = decodeUtf8(body);
+  if (text === null) return null;
+  const parsed = parseStrictJson(text, BOOTSTRAP_LIMITS);
+  return parsed.ok && isJsonObject(parsed.value) ? parsed.value : null;
+}
+
+/** True when the body is shaped as a bootstrap frame (exact keys), valid or not. */
+export function isBootstrapShaped(body: Uint8Array): boolean {
+  const v = parseSmallObject(body);
+  return v !== null && hasExactKeys(v, ["v", "bootstrap"]);
+}
+
+export function parseBootstrapFrame(body: Uint8Array): BootstrapFrame | null {
+  const v = parseSmallObject(body);
+  if (v === null || !hasExactKeys(v, ["v", "bootstrap"]) || v.v !== PROTOCOL_VERSION) return null;
+  if (typeof v.bootstrap !== "string" || !BOOTSTRAP_TICKET.test(v.bootstrap)) return null;
+  return Object.freeze({ v: 1, bootstrap: v.bootstrap });
+}
+
+export function encodeBootstrapFrame(frame: BootstrapFrame): Uint8Array {
+  if (frame.v !== PROTOCOL_VERSION || !BOOTSTRAP_TICKET.test(frame.bootstrap)) throw new FrameEncodeError("invalid_message");
+  return encodeBody(JSON.stringify({ v: frame.v, bootstrap: frame.bootstrap }));
+}
+
+export function parseBootstrapReply(body: Uint8Array): BootstrapReplyFrame | null {
+  const v = parseSmallObject(body);
+  if (v === null || !hasExactKeys(v, ["v", "authority", "ops"]) || v.v !== PROTOCOL_VERSION) return null;
+  if (typeof v.authority !== "string" || !AUTHORITY.test(v.authority)) return null;
+  if (!Array.isArray(v.ops) || v.ops.length > 2) return null;
+  const ops: ToolOpcode[] = [];
+  for (const op of v.ops as readonly JsonValue[]) {
+    if ((op !== "display" && op !== "interactive") || ops.includes(op)) return null;
+    ops.push(op);
+  }
+  return Object.freeze({ v: 1, authority: v.authority, ops: Object.freeze(ops) });
+}
+
+export function encodeBootstrapReply(frame: BootstrapReplyFrame): Uint8Array {
+  const encoded = encodeBody(JSON.stringify({ v: frame.v, authority: frame.authority, ops: frame.ops }));
+  if (parseBootstrapReply(encoded.slice(FRAME_PREFIX_BYTES)) === null) throw new FrameEncodeError("invalid_message");
+  return encoded;
+}
+
+// ─── Canonical request body (RFC 8785) ──────────────────────────────────────
+
+/**
+ * RFC 8785 (JCS) serialization of a strict-parsed JSON value: object members
+ * sorted by UTF-16 code units, ECMAScript number and string serialization.
+ */
+export function canonicalJson(value: JsonValue): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${(value as readonly JsonValue[]).map(canonicalJson).join(",")}]`;
+  const obj = value as JsonObject;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k] as JsonValue)}`).join(",")}}`;
+}
+
+/**
+ * Canonical `{op,args}` of a well-framed request body, the deduplication
+ * digest source; `null` when the body is not a well-framed request.
+ */
+export function canonicalRequestBody(body: Uint8Array): string | null {
+  if (body.byteLength === 0 || body.byteLength > MAX_FRAME_BODY_BYTES) return null;
+  const text = decodeUtf8(body);
+  if (text === null) return null;
+  const parsed = parseStrictJson(text, ARGS_LIMITS);
+  if (!parsed.ok || !isJsonObject(parsed.value)) return null;
+  const { op, args } = parsed.value;
+  if ((op !== "display" && op !== "interactive") || !isJsonObject(args)) return null;
+  return canonicalJson({ op, args });
+}

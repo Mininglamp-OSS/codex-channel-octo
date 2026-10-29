@@ -78,7 +78,7 @@ const ENDPOINTS = Object.freeze({
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
 export type ApiOperation =
-  | "get_profile" | "send_registry" | "send_authored" | "edit_registry" | "edit_authored"
+  | "get_profile" | "send_registry" | "send_authored" | "send_informational" | "edit_registry" | "edit_authored"
   | "poll_owned" | "ack" | "get_fresh_members";
 
 export type ApiTransport = "response" | "timeout" | "network" | "abort";
@@ -210,6 +210,9 @@ export function classifyProfileFailure(err: OctoApiError | CardRequestError): Pr
 // ─── Request validation and closed serialization ────────────────────────────
 
 const CLIENT_MSG_NO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const SERVER_CLIENT_MSG_NO_MAX = 256;
+/** `wkhttp.ResponseOK()` body of a successful Bot API edit. */
+const EDIT_OK_STATUS = 200;
 const ANY_CONTROL = /\p{Cc}/u;
 const CHANNEL_TYPES: ReadonlySet<number> = new Set<CardChannelType>([1, 2, 5]);
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
@@ -247,6 +250,12 @@ function checkRoute(route: CardRoute): { channel_id: string; channel_type: CardC
 function checkClientMsgNo(value: string): string {
   if (typeof value !== "string" || !CLIENT_MSG_NO.test(value)) reject("invalid_request", "client_msg_no");
   return value;
+}
+
+/** Server-assigned `client_msg_no`: an opaque bounded string, possibly empty. */
+function isServerClientMsgNo(value: JsonValue): value is string {
+  return typeof value === "string" && value.length <= SERVER_CLIENT_MSG_NO_MAX
+    && !CONTROL_CHARS.test(value) && !LONE_SURROGATE.test(value);
 }
 
 function checkMessageId(value: string): string {
@@ -633,17 +642,20 @@ export function projectAuthoredCard(authored: AuthoredCard): DisplayAdaptiveCard
   return reject("invalid_card", "profile");
 }
 
-// Template data contract bounds (reference `src/reasoning-process.ts`, E.2):
-// thought nonempty and ≤280 scalars (no 0.4.0 widening), actions nonempty,
-// detail ≤192 and may be empty,
-// timerText ≤128, errorMessage ≤121, reasoningId ≤512; newest 6 phases and
-// 12 actions.
+// Template data contract bounds (reference `src/reasoning-process.ts`, E.2,
+// and the server `ai.reasoning-process@0.4.1` data schema): thought nonempty
+// and ≤280 scalars (no 0.4.0 widening), actions nonempty, tool ≤81, detail
+// nonempty and ≤192, statusGlyph ≤2, title ≤64, statusLabel ≤32,
+// collapsedSummary and progressText ≤160, timerText ≤128, errorTitle ≤64,
+// errorMessage ≤121, reasoningId ≤512; newest 6 phases and 12 actions.
+// `reasoning`/`answering` require progressText, `error` requires errorTitle
+// and errorMessage, and exactly one of traceExpanded/traceCollapsed is true.
 export const REGISTRY_MAX_PHASES = 6;
 export const REGISTRY_MAX_ACTIONS = 12;
 export const REGISTRY_THOUGHT_MAX = 280;
 
-function bounded(value: unknown, field: string, maxRunes: number, nonEmpty = true): string {
-  const s = nonEmpty ? nonEmptyWireString(value, field) : wireString(value, field);
+function bounded(value: unknown, field: string, maxRunes: number): string {
+  const s = nonEmptyWireString(value, field);
   if (runeLength(s) > maxRunes) reject("invalid_card", field);
   return s;
 }
@@ -667,28 +679,31 @@ export function projectRegistryData(state: WireState, data: RegistryData): Regis
     const actions = (rawActions as unknown[]).map((a) => {
       const action = asRecord(a, "data.phases.actions");
       return {
-        tool: nonEmptyWireString(action.tool, "action.tool"),
-        detail: bounded(action.detail, "action.detail", 192, false),
-        statusGlyph: nonEmptyWireString(action.statusGlyph, "action.statusGlyph"),
+        tool: bounded(action.tool, "action.tool", 81),
+        detail: bounded(action.detail, "action.detail", 192),
+        statusGlyph: bounded(action.statusGlyph, "action.statusGlyph", 2),
         statusTone: oneOf(action.statusTone, ["Accent", "Good", "Attention"] as const, "action.statusTone"),
       };
     });
     return { thought: bounded(phase.thought, "phase.thought", REGISTRY_THOUGHT_MAX), actions };
   });
-  if (typeof o.traceExpanded !== "boolean" || typeof o.traceCollapsed !== "boolean") reject("invalid_card", "data.trace");
+  if (typeof o.traceExpanded !== "boolean" || typeof o.traceCollapsed !== "boolean"
+    || o.traceExpanded === o.traceCollapsed) reject("invalid_card", "data.trace");
+  if ((state === "reasoning" || state === "answering") && o.progressText === undefined) reject("invalid_card", "data.progressText");
+  if (state === "error" && (o.errorTitle === undefined || o.errorMessage === undefined)) reject("invalid_card", "data.error");
   return compact({
     reasoningId: bounded(o.reasoningId, "data.reasoningId", 512),
     state,
-    title: nonEmptyWireString(o.title, "data.title"),
-    statusLabel: nonEmptyWireString(o.statusLabel, "data.statusLabel"),
+    title: bounded(o.title, "data.title", 64),
+    statusLabel: bounded(o.statusLabel, "data.statusLabel", 32),
     statusTone: oneOf(o.statusTone, ["Accent", "Good", "Warning", "Attention"] as const, "data.statusTone"),
     timerText: bounded(o.timerText, "data.timerText", 128),
     traceExpanded: o.traceExpanded as boolean,
     traceCollapsed: o.traceCollapsed as boolean,
-    collapsedSummary: nonEmptyWireString(o.collapsedSummary, "data.collapsedSummary"),
-    progressText: o.progressText === undefined ? undefined : nonEmptyWireString(o.progressText, "data.progressText"),
+    collapsedSummary: bounded(o.collapsedSummary, "data.collapsedSummary", 160),
+    progressText: o.progressText === undefined ? undefined : bounded(o.progressText, "data.progressText", 160),
     phases,
-    errorTitle: o.errorTitle === undefined ? undefined : nonEmptyWireString(o.errorTitle, "data.errorTitle"),
+    errorTitle: o.errorTitle === undefined ? undefined : bounded(o.errorTitle, "data.errorTitle", 64),
     errorMessage: o.errorMessage === undefined ? undefined : bounded(o.errorMessage, "data.errorMessage", 121),
   });
 }
@@ -900,6 +915,21 @@ function checkPlain(plain: string): string {
   return wireString(plain, "plain", "invalid_request");
 }
 
+export interface SendInformationalRequest {
+  readonly route: CardRoute;
+  readonly clientMsgNo: string;
+  readonly plain: string;
+  readonly maxEnvelopeBytes?: number;
+}
+
+/** Ordinary type-1 text, using the same stable reservation identity and bounded ACK parser. */
+export function serializeSendInformational(req: SendInformationalRequest): FrozenRequest {
+  const route = checkRoute(req.route);
+  const content = nonEmptyWireString(req.plain, 'plain', 'invalid_request');
+  return freeze(ENDPOINTS.send, { channel_id: route.channel_id, channel_type: route.channel_type,
+    payload: { type: 1, content }, client_msg_no: checkClientMsgNo(req.clientMsgNo) }, req.maxEnvelopeBytes);
+}
+
 export function serializeSendRegistry(req: SendRegistryRequest): FrozenRequest {
   const route = checkRoute(req.route);
   return freeze(ENDPOINTS.send, {
@@ -969,7 +999,14 @@ export function serializeEditAuthored(req: EditAuthoredRequest): FrozenRequest {
 
 export interface SendAck {
   readonly messageId: string;
+  /** Client-generated idempotency key of the durable reservation (the request's value). */
   readonly clientMsgNo: string;
+  /**
+   * `client_msg_no` as reported by the server. The Bot API does not forward the
+   * request's value to the IM, so this is server-assigned (or empty) evidence,
+   * never a correlation of the request.
+   */
+  readonly serverClientMsgNo?: string;
   readonly messageSeq?: number;
   readonly request: FrozenRequest;
 }
@@ -1035,6 +1072,7 @@ export interface CardApi {
   getProfile(opts?: ApiCallOptions): Promise<CardProfileWire>;
   sendRegistry(req: SendRegistryRequest, opts?: ApiCallOptions): Promise<SendAck>;
   sendAuthored(req: SendAuthoredRequest, opts?: ApiCallOptions): Promise<SendAck>;
+  sendInformational(req: SendInformationalRequest, opts?: ApiCallOptions): Promise<SendAck>;
   editRegistry(req: EditRegistryRequest, opts?: ApiCallOptions): Promise<EditAck>;
   editAuthored(req: EditAuthoredRequest, opts?: ApiCallOptions): Promise<EditAck>;
   pollOwned(poll?: PollOptions, opts?: ApiCallOptions): Promise<readonly PolledEvent[]>;
@@ -1181,27 +1219,41 @@ export function createCardApi(config: CardApiConfig): CardApi {
     if (value === undefined || !isJsonObject(value)) throw new OctoApiError(op, "response", raw.status, "missing_identity");
     const messageId = parseMessageIdentity(value.message_id);
     if (messageId === null) throw new OctoApiError(op, "response", raw.status, "missing_identity");
-    if (value.client_msg_no !== undefined && value.client_msg_no !== clientMsgNo) {
-      throw new OctoApiError(op, "response", raw.status, "identity_mismatch");
+    // The Bot API drops the request's client_msg_no and returns the IM-assigned one (or ""), so
+    // it is recorded as server evidence; correlation is this request's own 2xx plus message_id.
+    const serverNo = value.client_msg_no;
+    if (serverNo !== undefined && !isServerClientMsgNo(serverNo)) {
+      throw new OctoApiError(op, "response", raw.status, "malformed_response");
     }
     const seq = value.message_seq;
     if (seq !== undefined && !(typeof seq === "number" && Number.isSafeInteger(seq) && seq >= 0)) {
       throw new OctoApiError(op, "response", raw.status, "malformed_response");
     }
-    return Object.freeze({ messageId, clientMsgNo, ...(typeof seq === "number" ? { messageSeq: seq } : {}), request });
+    return Object.freeze({
+      messageId, clientMsgNo,
+      ...(typeof serverNo === "string" ? { serverClientMsgNo: serverNo } : {}),
+      ...(typeof seq === "number" ? { messageSeq: seq } : {}),
+      request,
+    });
   }
 
   /**
-   * §5.3: an edit is acknowledged only by a 2xx carrying the edited
-   * `message_id` (and, if echoed, the same `card_seq`).
+   * §5.3: an edit is acknowledged only by a 2xx on this request carrying either
+   * the edited `message_id` or the Bot API's bare `{"status":200}`; any echoed
+   * `message_id` / `card_seq` must still match the request.
    */
   async function edit(op: ApiOperation, request: FrozenRequest, messageId: string, seq: number, opts?: ApiCallOptions): Promise<EditAck> {
     const raw = await call(op, "POST", request.path, request.body, ACK_BODY_MAX_BYTES, opts);
     const value = parseBody(op, raw, true);
     if (value === undefined || !isJsonObject(value)) throw new OctoApiError(op, "response", raw.status, "missing_identity");
-    const echoed = parseMessageIdentity(value.message_id);
-    if (echoed === null) throw new OctoApiError(op, "response", raw.status, "missing_identity");
-    if (echoed !== messageId) throw new OctoApiError(op, "response", raw.status, "identity_mismatch");
+    if (value.status !== undefined && value.status !== EDIT_OK_STATUS) {
+      throw new OctoApiError(op, "response", raw.status, "malformed_response");
+    }
+    if (value.message_id !== undefined || value.status === undefined) {
+      const echoed = parseMessageIdentity(value.message_id);
+      if (echoed === null) throw new OctoApiError(op, "response", raw.status, "missing_identity");
+      if (echoed !== messageId) throw new OctoApiError(op, "response", raw.status, "identity_mismatch");
+    }
     if (value.card_seq !== undefined && value.card_seq !== seq) {
       throw new OctoApiError(op, "response", raw.status, "identity_mismatch");
     }
@@ -1226,6 +1278,10 @@ export function createCardApi(config: CardApiConfig): CardApi {
     sendAuthored(req, opts) {
       const request = serializeSendAuthored(req);
       return send("send_authored", request, req.clientMsgNo, opts);
+    },
+
+    sendInformational(req, opts) {
+      return send('send_informational', serializeSendInformational(req), req.clientMsgNo, opts);
     },
 
     editRegistry(req, opts) {
