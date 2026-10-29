@@ -638,3 +638,200 @@ describe('early callback binding and local hold recovery', () => {
     await c.pump(); expect(handler).toHaveBeenCalledTimes(3);
   });
 });
+
+describe('settled pre-handler transition boundaries', () => {
+  const finalHandler = () => vi.fn(async () => ({ kind: 'final' as const, disposition: 'unsupported_control' as const }));
+
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => { throw new Error('forbidden real HTTP'); });
+    vi.spyOn(store, 'admitOnce').mockImplementation(() => { throw new Error('forbidden real admission'); });
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  // Every check settles before a local witness may permit the SAME attempt.
+  // Availability faults with valid proof still use the ordinary 1s/4s retry path.
+  it.each([
+    ['membership', 'allowed'], ['membership', 'denied'], ['membership', 'unavailable'], ['membership', 'throws'],
+    ['policy', 'allowed'], ['policy', 'denied'], ['policy', 'unavailable'], ['policy', 'throws'],
+  ] as const)('renews an expired proof after settled %s/%s without losing T0', async (stage, outcome) => {
+    queue = [action(), settings('12', '11')];
+    let currentProof = { ...proof, expiresAt: now + 10 }, release!: () => void, pending = true;
+    const wait = async () => {
+      if (!pending) return false;
+      pending = false;
+      await new Promise<void>((r) => { release = r; });
+      now = currentProof.expiresAt;
+      if (outcome === 'throws') throw new Error('fixture unavailable');
+      return true;
+    };
+    const membership = vi.fn(async () => {
+      const first = stage === 'membership' && await wait();
+      return first && outcome === 'denied' ? 'not_member' as const
+        : first && outcome === 'unavailable' ? 'unavailable' as const : 'member' as const;
+    });
+    const policy = vi.fn(async () => {
+      const first = stage === 'policy' && await wait();
+      return first && outcome === 'denied' ? 'denied' as const
+        : first && outcome === 'unavailable' ? 'unavailable' as const : 'allowed' as const;
+    });
+    const handler = finalHandler(), owner = vi.fn(() => 'live' as const);
+    const c = consumer({ proof: () => currentProof, freshMember: membership, checkPolicy: policy,
+      handler: () => handler, startedOwner: owner });
+    const first = c.pump();
+    while (!release) await Promise.resolve();
+    expect(replay()).toMatchObject({ attempt: { phase: 'started', number: 1 } });
+    expect(c.pump()).toBe(first); expect(membership).toHaveBeenCalledTimes(1);
+    release(); expect(await first).toEqual({ kind: 'held' });
+    expect(handler).not.toHaveBeenCalled(); expect(replay()).not.toHaveProperty('final');
+    expect(replay('12').kind).toBe('absent');
+    expect(store.readCursor(c.scope!)).toMatchObject({ cursor: null, ackedThrough: null });
+    expect(trace.filter((s) => s.startsWith('ack'))).toEqual([]);
+    expect(await c.pump()).toEqual({ kind: 'off' });
+    expect(membership).toHaveBeenCalledTimes(1);
+    currentProof = { ...proof, expiresAt: now + 10000 };
+    expect(await c.pump()).toMatchObject({ kind: 'processed', count: 2 });
+    expect(owner).not.toHaveBeenCalled(); expect(handler).toHaveBeenCalledTimes(1);
+    expect(membership).toHaveBeenCalledTimes(2);
+    expect(policy).toHaveBeenCalledTimes(stage === 'policy' ? 2 : 1);
+    expect(replay()).toMatchObject({ attempt: { phase: 'started', number: 1 }, final: { outcome: 'unsupported_control' } });
+    expect(replay('12')).toMatchObject({ final: { outcome: 'invalidated' } });
+    expect(store.readCursor(c.scope!)).toMatchObject({ cursor: '12', ackedThrough: '12' });
+    expect(trace.filter((s) => s.startsWith('ack'))).toEqual(['ack:11', 'ack:12']);
+    queue = [queue[0]]; await c.pump(); expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['membership', 'policy'] as const)('rechecks proof revocation after %s before dispatch', async (stage) => {
+    queue = [action(), settings('12', '11')]; let verified = true, pending = true;
+    const revoke = () => { if (pending) { pending = false; verified = false; } };
+    const handler = finalHandler();
+    const membership = vi.fn(async () => { if (stage === 'membership') revoke(); return 'member' as const; });
+    const policy = vi.fn(async () => { if (stage === 'policy') revoke(); return 'allowed' as const; });
+    const c = consumer({ verifyProof: () => verified, freshMember: membership, checkPolicy: policy, handler: () => handler });
+    expect(await c.pump()).toEqual({ kind: 'held' }); expect(handler).not.toHaveBeenCalled();
+    expect(replay()).toMatchObject({ attempt: { phase: 'started', number: 1 } });
+    expect(replay()).not.toHaveProperty('final'); expect(replay('12').kind).toBe('absent');
+    expect(await c.pump()).toEqual({ kind: 'off' }); expect(membership).toHaveBeenCalledTimes(1);
+    verified = true;
+    expect(await c.pump()).toMatchObject({ kind: 'processed', count: 2 });
+    expect(handler).toHaveBeenCalledTimes(1); expect(replay()).toMatchObject({ attempt: { number: 1 } });
+  });
+
+  it.each(['expired', 'unverified', 'absent', 'wrong_scope'] as const)('requires valid same-scope renewal after an %s replacement', async (replacement) => {
+    queue = [action()]; let currentProof: typeof proof | undefined = { ...proof, expiresAt: now + 10 }, verified = true;
+    let pending = true;
+    const handler = finalHandler(), membership = vi.fn(async () => {
+      if (pending) { pending = false; now += 11; } return 'member' as const;
+    });
+    const c = consumer({ proof: () => currentProof, verifyProof: () => verified,
+      freshMember: membership, checkPolicy: async () => 'allowed', handler: () => handler });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    currentProof = replacement === 'absent' ? undefined : { ...proof, expiresAt: now + 10000,
+      ...(replacement === 'wrong_scope' ? { stream: 'foreign' } : {}) };
+    if (replacement === 'expired') currentProof = { ...proof, expiresAt: now };
+    if (replacement === 'unverified') verified = false;
+    expect(await c.pump()).toEqual({ kind: 'off' }); expect(handler).not.toHaveBeenCalled();
+    expect(membership).toHaveBeenCalledTimes(1); expect(replay()).not.toHaveProperty('final');
+    verified = true; currentProof = { ...proof, expiresAt: now + 10000 };
+    expect(await c.pump()).toMatchObject({ kind: 'processed' });
+    expect(c.scope).toBe(proven().scope); expect(handler).toHaveBeenCalledTimes(1);
+    expect(replay()).toMatchObject({ attempt: { number: 1 } });
+  });
+
+  it.each(['hold', 'retry', 'final'] as const)('never resumes %s work after the handler crossed an expired proof', async (kind) => {
+    queue = [action()]; let currentProof = { ...proof, expiresAt: now + 10 };
+    const handler = vi.fn(async () => { now += 11; return kind === 'final'
+      ? { kind, disposition: 'unsupported_control' as const } : { kind }; });
+    const owner = vi.fn(() => 'live' as const);
+    const c = consumer({ proof: () => currentProof, freshMember: async () => 'member',
+      checkPolicy: async () => 'allowed', handler: () => handler, startedOwner: owner });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    currentProof = { ...proof, expiresAt: now + 10000 };
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    expect(handler).toHaveBeenCalledTimes(1); expect(owner).toHaveBeenCalledTimes(1);
+    expect(replay()).toMatchObject({ attempt: { phase: 'started', number: 1 } });
+    expect(replay()).not.toHaveProperty('final');
+    expect(store.readCursor(c.scope!)).toMatchObject({ cursor: null, ackedThrough: null });
+  });
+
+  it.each(['membership', 'policy'] as const)('keeps shutdown during %s closed without reviving the old attempt', async (stage) => {
+    queue = [action()]; let release!: () => void;
+    const wait = () => new Promise<void>((r) => { release = r; });
+    const handler = finalHandler();
+    const c = consumer({ handler: () => handler,
+      freshMember: async () => { if (stage === 'membership') await wait(); return 'member'; },
+      checkPolicy: async () => { if (stage === 'policy') await wait(); return 'allowed'; } });
+    const first = c.pump(); while (!release) await Promise.resolve();
+    c.close(fence()); release(); expect(await first).toEqual({ kind: 'closed' });
+    expect(await c.drain(fence())).toMatchObject({ unresolved: 0 });
+    expect(await c.pump()).toEqual({ kind: 'closed' });
+    const next = consumer({ handler: () => handler, freshMember: async () => 'member', checkPolicy: async () => 'allowed' });
+    expect(await next.pump()).toEqual({ kind: 'held' }); expect(handler).not.toHaveBeenCalled();
+    expect(replay()).toMatchObject({ attempt: { phase: 'started', number: 1 } });
+    expect(replay()).not.toHaveProperty('final');
+  });
+
+  it.each(['membership', 'policy'] as const)('charges %s unavailability once when proof stays valid', async (stage) => {
+    queue = [action()];
+    const handler = finalHandler(), membership = vi.fn(async () => stage === 'membership' ? 'unavailable' as const : 'member' as const);
+    const policy = vi.fn(async () => 'unavailable' as const);
+    const c = consumer({ handler: () => handler, freshMember: membership, checkPolicy: policy });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    expect(replay()).toMatchObject({ attempt: { phase: 'failed', number: 1, nextEligibleAt: now + 1000 } });
+    now += 999; await c.pump(); expect(membership).toHaveBeenCalledTimes(1);
+    now++; await c.pump();
+    expect(replay()).toMatchObject({ attempt: { phase: 'failed', number: 2, nextEligibleAt: now + 4000 } });
+    now += 3999; await c.pump(); expect(membership).toHaveBeenCalledTimes(2);
+    now++; expect(await c.pump()).toMatchObject({ kind: 'processed' });
+    expect(replay()).toMatchObject({ attempt: { number: 3 }, final: { outcome: 'dead_letter' } });
+    await c.pump(); expect(membership).toHaveBeenCalledTimes(3); expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('does not restore a local proof-expiry witness after physical reopen', async () => {
+    queue = [action()]; let currentProof = { ...proof, expiresAt: now + 10 };
+    const handler = finalHandler();
+    const c = consumer({ proof: () => currentProof, freshMember: async () => { now += 11; return 'member'; },
+      checkPolicy: async () => 'allowed', handler: () => handler });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    c.close(fence()); await c.drain(fence()); store.retire(); db.close();
+    db = createAdapter(join(root, 'events.db')); store = new CardStore(db, { clock: { nowUtcMs: () => now } });
+    opts = { ...opts, store }; currentProof = { ...proof, expiresAt: now + 10000 };
+    const next = consumer({ proof: () => currentProof, freshMember: async () => 'member',
+      checkPolicy: async () => 'allowed', handler: () => handler });
+    expect(await next.pump()).toEqual({ kind: 'held' }); expect(handler).not.toHaveBeenCalled();
+    expect(replay()).toMatchObject({ attempt: { phase: 'started', number: 1 } });
+  });
+
+  it('compares replay identity before using a locally settled proof-expiry witness', async () => {
+    queue = [action()]; let currentProof = { ...proof, expiresAt: now + 10 };
+    const handler = finalHandler();
+    const c = consumer({ proof: () => currentProof, freshMember: async () => { now += 11; return 'member'; },
+      checkPolicy: async () => 'allowed', handler: () => handler });
+    expect(await c.pump()).toEqual({ kind: 'held' }); currentProof = { ...proof, expiresAt: now + 10000 };
+    queue = [{ ...queue[0], payload: { ...queue[0].payload as object, actionId: 'changed' } }];
+    expect(await c.pump()).toMatchObject({ kind: 'halted', persisted: true });
+    expect(handler).not.toHaveBeenCalled(); expect(replay()).not.toHaveProperty('final');
+    expect(trace.filter((s) => s.startsWith('ack'))).toEqual([]);
+  });
+
+  it('rechecks policy after renewal instead of retaining an earlier permission', async () => {
+    queue = [action()]; let currentProof = { ...proof, expiresAt: now + 10 };
+    const handler = finalHandler(), policy = vi.fn(async () => {
+      if (policy.mock.calls.length === 1) { now += 11; return 'allowed' as const; }
+      return 'denied' as const;
+    });
+    const c = consumer({ proof: () => currentProof, freshMember: async () => 'member', checkPolicy: policy, handler: () => handler });
+    expect(await c.pump()).toEqual({ kind: 'held' }); currentProof = { ...proof, expiresAt: now + 10000 };
+    expect(await c.pump()).toMatchObject({ kind: 'processed' }); expect(handler).not.toHaveBeenCalled();
+    expect(policy).toHaveBeenCalledTimes(2);
+    expect(replay()).toMatchObject({ attempt: { number: 1 }, final: { outcome: 'unauthorized' } });
+  });
+
+  it('finalizes session expiry during policy checking without dispatch or retry', async () => {
+    queue = [action()]; const body = queue[0].payload as { sessionId: string };
+    const handler = finalHandler();
+    const c = consumer({ freshMember: async () => 'member', handler: () => handler,
+      checkPolicy: async () => { now = store.getSession(body.sessionId)!.expiresAt; return 'allowed'; } });
+    expect(await c.pump()).toMatchObject({ kind: 'processed' }); expect(handler).not.toHaveBeenCalled();
+    expect(replay()).toMatchObject({ attempt: { number: 1 }, final: { outcome: 'expired' } });
+  });
+});

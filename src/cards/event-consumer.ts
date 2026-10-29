@@ -85,6 +85,12 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
   let settledHold: { readonly eventId: string; readonly attemptNo: 1 | 2 | 3 } | undefined;
   const active = (): boolean => !stopped && !fenced && !store.retired && !controller.signal.aborted;
   const eligible = (): boolean => !options.pacing || options.pacing.pacer.gate(options.pacing.origin).eligible;
+  const proofValid = (): boolean => {
+    const proof = options.proof();
+    const current = proof && validateTopology(options.binding, proof, options.verifyProof, options.now());
+    return !!topology && options.now() < topology.expiresAt && !!current
+      && current.scope === topology.scope && current.topology === topology.topology;
+  };
 
   function halt(reason: string): PumpResult {
     if (haltResult) return haltResult;
@@ -218,9 +224,9 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
       } else result = await policyAndHandler();
     } catch (error) { observe(error); result = { kind: 'retry' }; }
     if (!active()) return { kind: 'closed' };
-    if (options.now() >= topology.expiresAt) return { kind: 'held' };
-    if (result.kind === 'hold') {
-      // Cooldown/missing wiring before dispatch is a wait, not a failed attempt.
+    if (result.kind === 'hold' || !proofValid()) {
+      // Save the settled witness before EVERY pre-handler wait, including proof
+      // expiry/revocation after an awaited check. Renewal never resets T0.
       // A handler's own hold may hide ambiguous work and cannot grant a rerun.
       if (!handlerStarted) settledHold = { eventId, attemptNo: start.attemptNo };
       return { kind: 'held' };
@@ -236,9 +242,9 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
     return ack(event);
 
     async function policyAndHandler(): Promise<FakeActionResult> {
-      if (!active() || !eligible()) return { kind: 'hold' };
+      if (!active() || !eligible() || !proofValid()) return { kind: 'hold' };
       const policy = await options.checkPolicy?.(controller.signal);
-      if (!active()) return { kind: 'hold' };
+      if (!active() || !proofValid()) return { kind: 'hold' };
       if (policy === 'denied') return { kind: 'final', disposition: 'unauthorized' };
       if (policy !== 'allowed') return { kind: 'retry' };
       if (session!.expiresAt <= options.now()) return { kind: 'final', disposition: 'expired' };
