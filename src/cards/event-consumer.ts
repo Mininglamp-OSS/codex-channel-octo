@@ -85,12 +85,26 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
   let settledHold: { readonly eventId: string; readonly attemptNo: 1 | 2 | 3 } | undefined;
   const active = (): boolean => !stopped && !fenced && !store.retired && !controller.signal.aborted;
   const eligible = (): boolean => !options.pacing || options.pacing.pacer.gate(options.pacing.origin).eligible;
+  const currentTopology = (): ProvenTopology | undefined => {
+    try {
+      const proof = options.proof();
+      return proof && validateTopology(topology?.binding ?? options.binding, proof, options.verifyProof, options.now());
+    } catch { return undefined; }
+  };
   const proofValid = (): boolean => {
-    const proof = options.proof();
-    const current = proof && validateTopology(options.binding, proof, options.verifyProof, options.now());
-    return !!topology && options.now() < topology.expiresAt && !!current
+    const current = currentTopology();
+    return !!topology && !!current
       && current.scope === topology.scope && current.topology === topology.topology;
   };
+  // Every effect uses current verifier authority, including final/replay shortcuts.
+  // An unexpired snapshot from before an await cannot authorize the next operation.
+  function authority(): PumpResult | undefined {
+    if (!active()) return { kind: 'closed' };
+    const valid = proofValid();
+    if (!active()) return { kind: 'closed' };
+    if (!valid || !eligible()) return { kind: 'held' };
+    return undefined;
+  }
 
   function halt(reason: string): PumpResult {
     if (haltResult) return haltResult;
@@ -113,19 +127,18 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
   }
 
   async function ack(event: FakeEvent): Promise<PumpResult | undefined> {
-    if (!active() || !topology || options.now() >= topology.expiresAt) return { kind: 'closed' };
-    if (!eligible()) return { kind: 'held' };
+    let wait = authority(); if (wait) return wait;
     try {
       await source.ack(event, controller.signal);
-      if (!active()) return { kind: 'closed' };
-      if (!store.recordAck(topology.scope, event.position)) return { kind: 'held' };
+      wait = authority(); if (wait) return wait;
+      if (!store.recordAck(topology!.scope, event.position)) return { kind: 'held' };
       return undefined;
     } catch (error) { observe(error); return { kind: 'held' }; }
   }
 
   async function handle(event: FakeEvent): Promise<PumpResult | undefined> {
-    if (!active() || !topology || options.now() >= topology.expiresAt) return { kind: 'held' };
-    if (!eligible()) return { kind: 'held' };
+    let wait = authority(); if (wait) return wait;
+    if (!topology) return { kind: 'held' };
     if (!sameScope(event.binding, topology.binding) || !boundedId(event.wireId) || !boundedId(event.position)
       || (event.previous !== null && (!boundedId(event.previous) || event.previous === event.position))) return halt('scope_or_position');
     let authenticated: ReturnType<FakeEventSource['verifyOwned']>;
@@ -153,6 +166,7 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
     if (!cursor || cursor.haltedReason !== null) return halt('cursor_unavailable');
     if (replay.kind === 'retained' && replay.final) {
       if (cursor.cursor !== cursor.ackedThrough && cursor.cursor !== event.position) return halt('pending_ack_missing');
+      wait = authority(); if (wait) return wait;
       if (settings && !invalidated.has(eventId)) { options.invalidate(); invalidated.add(eventId); }
       if (cursor.cursor === cursor.ackedThrough) return undefined;
       return ack(event);
@@ -161,7 +175,9 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
     if (event.previous !== cursor.cursor) return halt('predecessor_conflict');
     const advance = { scope: topology.scope, expectedPrevious: event.previous, next: event.position };
     if (settings) {
+      wait = authority(); if (wait) return wait;
       options.invalidate(); invalidated.add(eventId);
+      wait = authority(); if (wait) return wait;
       const result = store.recordEventInvalidation({ ...identity as SettingsEventIdentity, cursor: advance });
       if (result.kind !== 'recorded' && result.kind !== 'already_final') return halt('final_commit_conflict');
       return ack(event);
@@ -184,6 +200,7 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
         if ((message.state === 'sending' || message.state === 'ambiguous')
           && (session.status === 'sending' || session.status === 'ambiguous')) {
           // Retain the callback identity without using it as T-bind authority.
+          wait = authority(); if (wait) return wait;
           if (store.recordSendWait(action).kind !== 'send_wait') return halt('identity_commit_conflict');
           return { kind: 'held' };
         }
@@ -192,8 +209,10 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
       else if (session.status === 'admitted' || session.status === 'ambiguous' || store.getAdmissionForSession(session.sessionId)) return { kind: 'held' };
     }
     if (rejection) {
+      wait = authority(); if (wait) return wait;
       const retained = store.recordSendWait(action);
       if (retained.kind !== 'send_wait' && !(replay.kind === 'retained' && replay.attempt)) return halt('identity_commit_conflict');
+      wait = authority(); if (wait) return wait;
       const final = store.recordDisposition({ ...action, disposition: rejection, cursor: advance });
       if (final.kind !== 'recorded' && final.kind !== 'already_final') return halt('final_commit_conflict');
       return ack(event);
@@ -203,11 +222,13 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
       && localAttempt === replay.attempt.number;
     if (replay.kind === 'retained' && replay.attempt?.phase === 'started' && !resume) {
       if (options.startedOwner?.(action) !== 'retired') return { kind: 'held' };
+      wait = authority(); if (wait) return wait;
       const recovered = store.recordAttemptFailure({ eventId, reasonCode: 'interrupted', cursor: advance });
       if (recovered.kind === 'dead_letter') return ack(event);
       if (recovered.kind !== 'retry_wait') return halt('interruption_conflict');
       return { kind: 'held' };
     }
+    wait = authority(); if (wait) return wait;
     settledHold = undefined;
     const start = resume ? { kind: 'started' as const, attemptNo: localAttempt! } : store.recordAttemptStart(action);
     if (start.kind === 'not_eligible' || start.kind === 'in_progress') return { kind: 'held' };
@@ -215,16 +236,20 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
     let result: FakeActionResult;
     let handlerStarted = false;
     try {
-      if (session!.channelType !== 1) {
+      if (authority()) result = { kind: 'hold' };
+      else if (session!.channelType !== 1) {
         const member = await options.freshMember?.(event, authenticated.actorUid!, controller.signal);
         if (!active()) return { kind: 'closed' };
-        if (member === 'not_member') result = { kind: 'final', disposition: 'unauthorized' };
+        if (authority()) result = { kind: 'hold' };
+        else if (member === 'not_member') result = { kind: 'final', disposition: 'unauthorized' };
         else if (member !== 'member') result = { kind: 'retry' };
         else result = await policyAndHandler();
       } else result = await policyAndHandler();
     } catch (error) { observe(error); result = { kind: 'retry' }; }
     if (!active()) return { kind: 'closed' };
-    if (result.kind === 'hold' || !proofValid()) {
+    wait = authority();
+    if (wait?.kind === 'closed') return wait;
+    if (result.kind === 'hold' || wait) {
       // Save the settled witness before EVERY pre-handler wait, including proof
       // expiry/revocation after an awaited check. Renewal never resets T0.
       // A handler's own hold may hide ambiguous work and cannot grant a rerun.
@@ -242,13 +267,13 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
     return ack(event);
 
     async function policyAndHandler(): Promise<FakeActionResult> {
-      if (!active() || !eligible() || !proofValid()) return { kind: 'hold' };
+      if (authority()) return { kind: 'hold' };
       const policy = await options.checkPolicy?.(controller.signal);
-      if (!active() || !proofValid()) return { kind: 'hold' };
+      if (authority()) return { kind: 'hold' };
       if (policy === 'denied') return { kind: 'final', disposition: 'unauthorized' };
       if (policy !== 'allowed') return { kind: 'retry' };
       if (session!.expiresAt <= options.now()) return { kind: 'final', disposition: 'expired' };
-      if (!options.handler() || !eligible() || options.now() >= topology!.expiresAt) return { kind: 'hold' };
+      if (!options.handler() || authority()) return { kind: 'hold' };
       handlerStarted = true;
       return handler!(event, controller.signal);
     }
@@ -258,18 +283,17 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
     if (haltResult) return haltResult;
     if (!active()) return { kind: 'closed' };
     try {
-      const proof = options.proof();
-      const next = proof && validateTopology(options.binding, proof, options.verifyProof, options.now());
+      const next = currentTopology();
       if (!next || source.kind !== 'fake' || !options.handler()) return { kind: 'off' };
       if (topology && topology.scope !== next.scope) return halt('proof_scope_changed');
       topology = next;
       const cursor = store.initCursor(topology.scope, topology.topology);
       if (cursor.haltedReason !== null || cursor.topology !== topology.topology) return halt('durable_halt');
-      if (!eligible()) return { kind: 'held' };
+      let wait = authority(); if (wait) return wait;
       let events: readonly FakeEvent[];
       try { events = await source.read(cursor.ackedThrough, controller.signal); }
       catch (error) { observe(error); return { kind: 'held' }; }
-      if (!active()) return { kind: 'closed' };
+      wait = authority(); if (wait) return wait;
       if (!Array.isArray(events) || events.length > 1000) return halt('invalid_batch');
       if (!events.length && cursor.cursor !== cursor.ackedThrough) return halt('pending_ack_missing');
       // Snapshot before any asynchronous handler; no caller can rewrite later batch entries.
@@ -280,6 +304,7 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
       for (const event of owned) {
         const result = await handle(event);
         if (result) return result;
+        wait = authority(); if (wait) return wait;
         count++;
       }
       return { kind: 'processed', count };

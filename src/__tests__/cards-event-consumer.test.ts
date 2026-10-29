@@ -72,6 +72,243 @@ function attemptIdentity(event: FakeEvent) {
     previousPositionRef: event.previous, envelopeDigest: createHash('sha256').update(canonicalEnvelope({ event, actorUid: 'u' })).digest('hex') };
 }
 
+describe('current authority at effect boundaries', () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => { throw new Error('forbidden real HTTP'); });
+    vi.spyOn(store, 'admitOnce').mockImplementation(() => { throw new Error('forbidden real admission'); });
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  // Exercise each shortcut with no T0, and both ledgers with an unresolved ACK.
+  it.each([
+    ['settings', 'revoked'], ['invalid_action', 'revoked'], ['invalid_control', 'revoked'],
+    ['pending_settings', 'revoked'], ['pending_action', 'revoked'],
+    ['settings', 'wrong_scope'], ['invalid_action', 'wrong_scope'], ['pending_settings', 'wrong_scope'],
+    ['settings', 'expired'], ['invalid_action', 'expired'], ['pending_settings', 'expired'],
+    ['settings', 'absent'], ['settings', 'T-WS'],
+  ] as const)('holds %s when proof becomes %s during read, then resumes only under valid authority', async (kind, change) => {
+    const pendingFinal = kind.startsWith('pending_');
+    const event = kind === 'pending_action' ? action() : kind === 'invalid_action' || kind === 'invalid_control'
+      ? { ...settings(), eventClass: kind === 'invalid_action' ? 'card_action' : 'card_control', payload: {} } : settings();
+    queue = [event];
+    let currentProof: typeof proof | undefined = { ...proof }, verified = true;
+    let defer = false, failAck = pendingFinal, release!: () => void;
+    const handler = vi.fn(async () => ({ kind: 'final' as const, disposition: 'unsupported_control' as const }));
+    const read = vi.fn(async () => {
+      trace.push('read');
+      if (defer) { defer = false; await new Promise<void>((r) => { release = r; }); }
+      return queue;
+    });
+    const c = consumer({ proof: () => currentProof, verifyProof: () => verified, handler: () => handler,
+      freshMember: async () => 'member', checkPolicy: async () => 'allowed',
+      source: { ...opts.source, read, ack: async (e) => {
+        trace.push(`ack:${e.wireId}`);
+        if (failAck) { failAck = false; throw new Error('fixture ACK loss'); }
+      } } });
+    if (pendingFinal) expect(await c.pump()).toEqual({ kind: 'held' });
+    const retained = replay();
+    const cursorBefore = pendingFinal ? '11' : null;
+    const handlerBefore = handler.mock.calls.length;
+    const mark = vi.spyOn(store, 'recordAck'), final = vi.spyOn(store, 'recordDisposition');
+    const invalidation = vi.spyOn(store, 'recordEventInvalidation');
+    trace = []; queue = [event, settings('12', '11')]; defer = true;
+    const work = c.pump(); while (!release) await Promise.resolve();
+    expect(c.pump()).toBe(work); expect(read).toHaveBeenCalledTimes(pendingFinal ? 2 : 1);
+    if (change === 'revoked') verified = false;
+    else if (change === 'absent') currentProof = undefined;
+    else currentProof = { ...proof, ...(change === 'wrong_scope' ? { stream: 'foreign' }
+      : change === 'T-WS' ? { topology: 'T-WS' } : { expiresAt: now }) };
+    release(); expect(await work).toEqual({ kind: 'held' });
+    expect(replay()).toEqual(retained); expect(replay('12').kind).toBe('absent');
+    expect(store.readCursor(c.scope!)).toMatchObject({ cursor: cursorBefore, ackedThrough: null, haltedReason: null });
+    expect(trace).toEqual(['read']); expect(handler).toHaveBeenCalledTimes(handlerBefore);
+    expect(mark).not.toHaveBeenCalled(); expect(final).not.toHaveBeenCalled(); expect(invalidation).not.toHaveBeenCalled();
+    expect(await c.pump()).toEqual({ kind: 'off' });
+    expect(read).toHaveBeenCalledTimes(pendingFinal ? 2 : 1);
+    currentProof = { ...proof }; verified = true;
+    expect(await c.pump()).toMatchObject({ kind: 'processed', count: 2 });
+    expect(store.readCursor(c.scope!)).toMatchObject({ cursor: '12', ackedThrough: '12' });
+    expect(replay()).toMatchObject({ final: { outcome: kind.includes('invalid') ? 'invalid'
+      : kind === 'pending_action' ? 'unsupported_control' : 'invalidated' } });
+    if (pendingFinal) expect(replay()).toEqual(retained);
+    expect(handler).toHaveBeenCalledTimes(handlerBefore);
+    expect(trace.filter((s) => s.startsWith('ack'))).toEqual(['ack:11', 'ack:12']);
+    expect(trace.filter((s) => s === 'invalidate')).toHaveLength(pendingFinal || kind.includes('invalid') ? 1 : 2);
+  });
+
+  it.each(['settings', 'invalid_action'] as const)('revalidates %s authority after synchronous ownership verification', async (kind) => {
+    queue = [kind === 'settings' ? settings() : { ...settings(), eventClass: 'card_action', payload: {} }];
+    let verified = true, revoke = true;
+    const c = consumer({ verifyProof: () => verified, source: { ...opts.source, verifyOwned: () => {
+      if (revoke) verified = false;
+      return { owned: true, actorUid: 'u' };
+    } } });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    expect(replay().kind).toBe('absent'); expect(trace).toEqual(['read:null']);
+    revoke = false; verified = true;
+    expect(await c.pump()).toMatchObject({ kind: 'processed' });
+    expect(replay()).toMatchObject({ final: { outcome: kind === 'settings' ? 'invalidated' : 'invalid' } });
+  });
+
+  it.each(['settings', 'action'] as const)('keeps the %s final pending when authority is revoked during remote ACK', async (kind) => {
+    queue = [kind === 'action' ? action() : settings(), settings('12', '11')];
+    let verified = true, release!: () => void, defer = true;
+    const handler = vi.fn(async () => ({ kind: 'final' as const, disposition: 'unsupported_control' as const }));
+    const mark = vi.spyOn(store, 'recordAck');
+    const c = consumer({ verifyProof: () => verified, handler: () => handler,
+      freshMember: async () => 'member', checkPolicy: async () => 'allowed',
+      source: { ...opts.source, ack: async (e) => {
+        trace.push(`ack:${e.wireId}`);
+        if (defer) { defer = false; await new Promise<void>((r) => { release = r; }); }
+      } } });
+    const work = c.pump(); while (!release) await Promise.resolve();
+    const retained = replay(); expect(retained).toHaveProperty('final');
+    expect(c.pump()).toBe(work); verified = false; release();
+    expect(await work).toEqual({ kind: 'held' });
+    expect(mark).not.toHaveBeenCalled(); expect(replay()).toEqual(retained); expect(replay('12').kind).toBe('absent');
+    expect(store.readCursor(c.scope!)).toMatchObject({ cursor: '11', ackedThrough: null });
+    expect(await c.pump()).toEqual({ kind: 'off' }); verified = true;
+    expect(await c.pump()).toMatchObject({ kind: 'processed', count: 2 });
+    expect(handler).toHaveBeenCalledTimes(kind === 'action' ? 1 : 0);
+    expect(replay()).toEqual(retained); expect(mark).toHaveBeenCalledTimes(2);
+    expect(trace.filter((s) => s.startsWith('ack'))).toEqual(['ack:11', 'ack:11', 'ack:12']);
+  });
+
+  it('holds ACK after authority changes during the final commit without undoing the durable final', async () => {
+    queue = [settings()]; let verified = true;
+    const commit = store.recordEventInvalidation.bind(store);
+    const final = vi.spyOn(store, 'recordEventInvalidation').mockImplementation((input) => {
+      const result = commit(input); verified = false; return result;
+    });
+    const c = consumer({ verifyProof: () => verified });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    expect(trace).toEqual(['read:null', 'invalidate']);
+    const retained = replay(); expect(retained).toMatchObject({ final: { outcome: 'invalidated' } });
+    expect(store.readCursor(c.scope!)).toMatchObject({ cursor: '11', ackedThrough: null });
+    verified = true; expect(await c.pump()).toMatchObject({ kind: 'processed' });
+    expect(final).toHaveBeenCalledTimes(1); expect(replay()).toEqual(retained);
+    expect(trace).toEqual(['read:null', 'invalidate', 'read:null', 'ack:11']);
+  });
+
+  it('does not finalize settings when authority changes inside an already authorized invalidation', async () => {
+    queue = [settings()]; let verified = true;
+    const c = consumer({ verifyProof: () => verified, invalidate: () => { trace.push('invalidate'); verified = false; } });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    // The synchronous invalidation was authorized at entry; only the next effect is held.
+    expect(trace).toEqual(['read:null', 'invalidate']); expect(replay().kind).toBe('absent');
+    expect(store.readCursor(c.scope!)).toMatchObject({ cursor: null, ackedThrough: null });
+  });
+
+  it.each(['hold', 'retry', 'final'] as const)('never re-enters a handler returning %s after revocation while it was pending', async (kind) => {
+    queue = [action(), settings('12', '11')]; let verified = true, release!: () => void;
+    const handler = vi.fn(async () => {
+      await new Promise<void>((r) => { release = r; });
+      return kind === 'final' ? { kind, disposition: 'unsupported_control' as const } : { kind };
+    });
+    const owner = vi.fn(() => 'live' as const);
+    const c = consumer({ verifyProof: () => verified, handler: () => handler, startedOwner: owner,
+      freshMember: async () => 'member', checkPolicy: async () => 'allowed' });
+    const work = c.pump(); while (!release) await Promise.resolve();
+    verified = false; release(); expect(await work).toEqual({ kind: 'held' });
+    expect(replay()).toMatchObject({ attempt: { number: 1, phase: 'started' } }); expect(replay()).not.toHaveProperty('final');
+    verified = true; expect(await c.pump()).toEqual({ kind: 'held' });
+    expect(handler).toHaveBeenCalledTimes(1); expect(owner).toHaveBeenCalledTimes(1);
+    expect(replay('12').kind).toBe('absent'); expect(trace.filter((s) => s.startsWith('ack'))).toEqual([]);
+  });
+
+  it('revalidates replay identity after renewal and physical reopen before restoring a settings barrier', async () => {
+    queue = [settings()]; vi.spyOn(opts.source, 'ack').mockRejectedValueOnce(new Error('lost'));
+    const first = consumer(); expect(await first.pump()).toEqual({ kind: 'held' });
+    first.close(fence()); await first.drain(fence()); store.retire(); db.close();
+    db = createAdapter(join(root, 'events.db')); store = new CardStore(db, { clock: { nowUtcMs: () => now } });
+    opts = { ...opts, store }; let verified = true;
+    const c = consumer({ verifyProof: () => verified,
+      source: { ...opts.source, read: async () => { verified = false; return queue; } } });
+    trace = []; expect(await c.pump()).toEqual({ kind: 'held' }); expect(trace).toEqual([]);
+    const retained = replay(); expect(retained).toHaveProperty('final');
+    queue = [{ ...settings(), payload: { scope: 'bot_setting', value: 'changed' } }];
+    verified = true;
+    const next = consumer(); expect(await next.pump()).toMatchObject({ kind: 'halted', persisted: true });
+    expect(replay()).toEqual(retained); expect(trace).toEqual(['read:null', 'fence']);
+    expect(store.readCursor(next.scope!)).toMatchObject({ cursor: '11', ackedThrough: null });
+  });
+
+  it('refreshes an expired real policy after a delayed read before entering the handler', async () => {
+    queue = [action()];
+    const origin = normalizeOrigin('https://policy.invalid'), botRef = { originKey: origin.key, credentialRef: 'a' };
+    const fetchProfile = vi.fn(async () => profile());
+    const policy = createPolicy({ botRef, api: { origin, getProfile: fetchProfile }, clock: { nowMono: () => now } });
+    const old = await policy.snapshot(); expect(policy.authorize('interaction', { botRef }, old).allowed).toBe(true);
+    fetchProfile.mockRejectedValueOnce(new OctoApiError('get_profile', 'response', 404, 'http_status'));
+    const handler = vi.fn(async () => ({ kind: 'final' as const, disposition: 'unsupported_control' as const }));
+    const c = consumer({ handler: () => handler, freshMember: async () => 'member',
+      source: { ...opts.source, read: async () => { now += 60001; return queue; } },
+      checkPolicy: async () => {
+        const snapshot = await policy.snapshot();
+        return policy.authorize('interaction', { botRef }, snapshot).allowed ? 'allowed' : 'denied';
+      } });
+    expect(await c.pump()).toMatchObject({ kind: 'processed' }); expect(fetchProfile).toHaveBeenCalledTimes(2);
+    expect(handler).not.toHaveBeenCalled(); expect(policy.authorize('interaction', { botRef }, old).allowed).toBe(false);
+    expect(replay()).toMatchObject({ final: { outcome: 'unauthorized' }, attempt: { number: 1 } });
+  });
+
+  it('accepts verified same-scope renewal during read without changing the replay namespace', async () => {
+    queue = [action(), settings('12', '11')]; let currentProof = { ...proof, expiresAt: now + 10 };
+    const handler = vi.fn(async () => ({ kind: 'final' as const, disposition: 'unsupported_control' as const }));
+    const read = vi.fn(async () => {
+      now += 11; currentProof = { ...proof, expiresAt: now + 10000 }; return queue;
+    });
+    const c = consumer({ proof: () => currentProof, source: { ...opts.source, read }, handler: () => handler,
+      freshMember: async () => 'member', checkPolicy: async () => 'allowed' });
+    expect(await c.pump()).toMatchObject({ kind: 'processed', count: 2 });
+    expect(c.scope).toBe(proven().scope); expect(read).toHaveBeenCalledTimes(1); expect(handler).toHaveBeenCalledTimes(1);
+    expect(replay()).toMatchObject({ attempt: { number: 1 }, final: { outcome: 'unsupported_control' } });
+    expect(store.readCursor(c.scope!)).toMatchObject({ cursor: '12', ackedThrough: '12' });
+  });
+
+  it('holds a newly started attempt before membership if authority changes at the T0 write boundary', async () => {
+    queue = [action(), settings('12', '11')]; let verified = true;
+    const start = store.recordAttemptStart.bind(store);
+    vi.spyOn(store, 'recordAttemptStart').mockImplementation((input) => {
+      const result = start(input); verified = false; return result;
+    });
+    const member = vi.fn(async () => 'member' as const);
+    const handler = vi.fn(async () => ({ kind: 'final' as const, disposition: 'unsupported_control' as const }));
+    const c = consumer({ verifyProof: () => verified, freshMember: member, handler: () => handler,
+      checkPolicy: async () => 'allowed' });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    expect(member).not.toHaveBeenCalled(); expect(handler).not.toHaveBeenCalled();
+    expect(replay()).toMatchObject({ attempt: { number: 1, phase: 'started' } }); expect(replay()).not.toHaveProperty('final');
+    verified = true; expect(await c.pump()).toMatchObject({ kind: 'processed', count: 2 });
+    expect(member).toHaveBeenCalledTimes(1); expect(handler).toHaveBeenCalledTimes(1);
+    expect(replay()).toMatchObject({ attempt: { number: 1 }, final: { outcome: 'unsupported_control' } });
+  });
+
+  it('holds a structural final if authority changes after its identity is retained', async () => {
+    queue = [{ ...settings(), eventClass: 'card_action', payload: {} }]; let verified = true;
+    const retain = store.recordSendWait.bind(store);
+    vi.spyOn(store, 'recordSendWait').mockImplementation((input) => {
+      const result = retain(input); verified = false; return result;
+    });
+    const c = consumer({ verifyProof: () => verified });
+    expect(await c.pump()).toEqual({ kind: 'held' });
+    expect(replay()).toMatchObject({ attempt: { phase: 'send_wait' } }); expect(replay()).not.toHaveProperty('final');
+    expect(store.readCursor(c.scope!)).toMatchObject({ cursor: null, ackedThrough: null });
+    expect(trace).toEqual(['read:null']);
+  });
+
+  it('fails closed on a throwing current-proof provider and resumes only after recovery', async () => {
+    queue = [settings()]; let unavailable = false;
+    const c = consumer({ proof: () => { if (unavailable) throw new Error('proof unavailable'); return proof; },
+      source: { ...opts.source, read: async () => { unavailable = true; return queue; } } });
+    expect(await c.pump()).toEqual({ kind: 'held' }); expect(replay().kind).toBe('absent'); expect(trace).toEqual([]);
+    expect(await c.pump()).toEqual({ kind: 'off' });
+    unavailable = false;
+    const next = consumer(); expect(await next.pump()).toMatchObject({ kind: 'processed' });
+    expect(replay()).toMatchObject({ final: { outcome: 'invalidated' } });
+  });
+});
+
 describe('serial fake event intake', () => {
   it('preserves source order across legal numeric gaps and opaque positions', async () => {
     queue = [settings('11'), settings('99', '11'), settings('opaque-a', '99'), settings('opaque-Z', 'opaque-a')];
