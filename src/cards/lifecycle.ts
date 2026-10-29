@@ -62,7 +62,7 @@ const ENVELOPE_CAP = 16_384;
 
 export interface ClosureGrants extends Pick<CardPolicy, "authorize"> {
   /** Permit one card context's terminal write under its expired pinned snapshot. */
-  grant(ctx: object, pinned: PolicySnapshot): void;
+  grant(ctx: object, pinned: PolicySnapshot, current: PolicySnapshot): void;
   revoke(ctx: object): void;
 }
 
@@ -72,19 +72,22 @@ export interface ClosureGrants extends Pick<CardPolicy, "authorize"> {
  * write under its own pinned snapshot, for the automatic capability only.
  * Only the coordinator grants it, after `closureDisposition` classified the
  * moment as `expired_closure_only`, and only for a minimal closure frame.
+ * Retain that proof and revalidate it on every use, including queue retries;
+ * a later invalidation or resolved disable must revoke the exception.
  */
-export function createClosureGrants(policy: Pick<CardPolicy, "authorize">): ClosureGrants {
-  const grants = new WeakMap<object, PolicySnapshot>();
+export function createClosureGrants(policy: Pick<CardPolicy, "authorize" | "closureDisposition">): ClosureGrants {
+  const grants = new WeakMap<object, { pinned: PolicySnapshot; current: PolicySnapshot }>();
   return Object.freeze({
     authorize(op: PolicyOperation, ctx: Parameters<CardPolicy["authorize"]>[1], pinned?: PolicySnapshot): Authorization {
       const auth = policy.authorize(op, ctx, pinned);
       if (auth.allowed || op !== "automatic" || pinned === undefined) return auth;
       const granted = grants.get(ctx);
-      if (granted === undefined || granted !== pinned) return auth;
+      if (granted === undefined || granted.pinned !== pinned
+        || policy.closureDisposition(op, pinned, granted.current) !== "expired_closure_only") return auth;
       return Object.freeze({ allowed: true, snapshot: pinned,
         limits: { ...pinned.display.limits, maxPayloadBytes: pinned.automatic.maxPayloadBytes } });
     },
-    grant(ctx: object, pinned: PolicySnapshot): void { grants.set(ctx, pinned); },
+    grant(ctx: object, pinned: PolicySnapshot, current: PolicySnapshot): void { grants.set(ctx, { pinned, current }); },
     revoke(ctx: object): void { grants.delete(ctx); },
   });
 }
@@ -326,7 +329,7 @@ export function createTurnCoordinator(deps: CoordinatorDeps): AutomaticTurn {
         && policy.closureDisposition("automatic", pinned, current) === "expired_closure_only") {
         const minimal = buildClosureFrame(reason, tpl, options());
         if (minimal !== undefined) {
-          closure.grant(cardCtx, pinned);
+          closure.grant(cardCtx, pinned, current);
           return finalizeWith(minimal, reason);
         }
       }

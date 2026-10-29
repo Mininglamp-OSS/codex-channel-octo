@@ -11,7 +11,7 @@ let buffer = '';
 // While batching, frames are joined into one write so the client reads them in one chunk.
 let batch = null;
 const send = (o) => { const line = JSON.stringify(o) + '\n'; if (batch !== null) batch += line; else process.stdout.write(line); };
-const coalesced = (fn) => { batch = ''; try { fn(); } finally { const out = batch; batch = null; process.stdout.write(out); } };
+const coalesced = (fn) => { if (batch !== null) { fn(); return; } batch = ''; try { fn(); } finally { const out = batch; batch = null; process.stdout.write(out); } };
 const later = (fn) => setTimeout(fn, 30);
 const note = (method, params) => send({ method, params });
 const turn = (id, status = 'inProgress', error = null) => ({ id, rootTurnId: id, items: [], itemsView: 'notLoaded', status, error, startedAt: null, completedAt: null, durationMs: null });
@@ -46,6 +46,43 @@ function body() {
 
 function onTurnStart(id) {
   switch (scenario) {
+    case 'late-call':
+    case 'late-failed-call':
+    case 'late-interrupted-call':
+    case 'before-terminal':
+    case 'foreign-terminal':
+    case 'foreign-thread-terminal':
+    case 'terminal-before-response-call':
+    case 'terminal-before-error-call':
+    case 'terminal-before-mismatch-call':
+    case 'response-terminal-call':
+    case 'held-terminal-call': {
+      const tool = () => send({ id: 'late-tool', method: 'item/tool/call', params: { threadId: THREAD, turnId: TURN, callId: 'late-1', namespace: null, tool: 'display', arguments: { blocks: [{ kind: 'text', text: 'offline control' }] } } });
+      const provisional = scenario.startsWith('terminal-before-');
+      const emit = () => coalesced(() => {
+        if (scenario === 'before-terminal' || scenario === 'held-terminal-call') tool();
+        const status = scenario === 'late-failed-call' ? 'failed' : scenario === 'late-interrupted-call' ? 'interrupted' : 'completed';
+        if (scenario === 'foreign-thread-terminal') note('turn/completed', { threadId: 'thr-other', turn: turn(TURN, status) });
+        else finish(status, null, scenario === 'foreign-terminal' ? 'other-turn' : TURN);
+        if (scenario !== 'before-terminal') tool();
+      });
+      if (scenario !== 'response-terminal-call' && scenario !== 'held-terminal-call') note('turn/started', { threadId: THREAD, turn: turn(TURN) });
+      if (provisional) {
+        emit();
+        later(() => {
+          if (scenario === 'terminal-before-error-call') send({ id, error: { code: -32600, message: 'not submitted' } });
+          else send({ id, result: { turn: turn(scenario === 'terminal-before-mismatch-call' ? 'turn-other' : TURN) } });
+        });
+      } else if (scenario === 'response-terminal-call' || scenario === 'held-terminal-call') {
+        coalesced(() => { send({ id, result: { turn: turn(TURN) } }); emit(); });
+      } else {
+        send({ id, result: { turn: turn(TURN) } });
+        later(emit);
+        if (scenario === 'foreign-terminal' || scenario === 'foreign-thread-terminal') setTimeout(() => finish(), 150);
+      }
+      return;
+    }
+
     case 'coalesced-prestart':
     case 'coalesced-prestart-call':
       send({ id, result: { turn: turn(TURN) } });

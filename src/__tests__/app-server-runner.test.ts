@@ -4,7 +4,7 @@
  * turn binding, event projection, the §6.3 classification and teardown.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,15 @@ import { startAppServerAttempt, AppServerAttemptFailure, AppServerExecution, typ
 import { classifyFailure } from '../agent-failure.js';
 import { processGroupStopped } from '../execution-scope.js';
 import type { ManagedExecution } from '../execution-scope.js';
-import type { AppServerAttemptCards } from '../cards/tool-host.js';
+import { randomBytes, randomUUID } from 'node:crypto';
+import type { ToolOpcode, TrustedTurnContext } from '../cards/contracts.js';
+import { provisionFirstInstallMarker } from '../cards/migrations.js';
+import { cardSubsystemPaths, openCardSubsystem } from '../cards/recovery.js';
+import type { CardBinding, CardStore, ExplicitCard } from '../cards/store.js';
+import { createToolHost, type AppServerAttemptCards, type ExplicitOpHandler, type ToolHost } from '../cards/tool-host.js';
+import { createAdapter, type DbAdapter } from '../db-adapter.js';
+import { SessionStore } from '../session-store.js';
+import { admissibleGateway, type AdmissibleGateway } from './fixtures/gd-admit.js';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-app-server.mjs', import.meta.url));
 const dirs: string[] = [];
@@ -374,5 +382,112 @@ describe('D3 turn notice (mocked app-server)', () => {
     const h = setup('ok', { resumeId: 'thr-1', prompt: PROMPT });
     await drain(startAppServerAttempt(h.input));
     expect(turnInput(h.frames())).toEqual([[{ type: 'text', text: PROMPT, text_elements: [] }]]);
+  });
+});
+
+const cardCleanups: (() => void)[] = [];
+afterEach(() => { for (const c of cardCleanups.splice(0).reverse()) c(); });
+interface Rig { store: CardStore; adapter: DbAdapter; host: ToolHost; gateway: AdmissibleGateway; incarnation: string; sends: ExplicitCard[] }
+
+async function cardRig(): Promise<Rig> {
+  const root = mkdtempSync(join(tmpdir(), 'cco-runner-cards-'));
+  const dataDir = join(root, 'data');
+  mkdirSync(dataDir);
+  cardCleanups.push(() => rmSync(root, { recursive: true, force: true }));
+  const p = cardSubsystemPaths(dataDir);
+  mkdirSync(p.cardsDir, { recursive: true, mode: 0o700 });
+  writeFileSync(p.installationRefPath, 'install-a\n', { mode: 0o600, flag: 'wx' });
+  chmodSync(p.installationRefPath, 0o600);
+  provisionFirstInstallMarker(p.markerPath, 'install-a', Date.UTC(2026, 9, 24));
+  const adapter = createAdapter(join(dataDir, 'cc-octo.db'));
+  new SessionStore(adapter).init();
+  const incarnation = randomUUID();
+  const clock = { nowMono: () => performance.now() };
+  const wall = { nowUtcMs: () => Date.now() };
+  const sub = await openCardSubsystem({ adapter, dataDir, clock: wall, runtimeIncarnation: incarnation });
+  if (sub.state !== 'ready') throw new Error(`subsystem ${sub.state}`);
+  const sends: ExplicitCard[] = [];
+  let msg = 9_100_000_000;
+  const op: ExplicitOpHandler = {
+    op: 'display',
+    async handle(_args, c, send) {
+      return send.reserveAndSend({ opcode: 'display', binding: bindingOf(c.ctx), bodyDigest: 'd'.repeat(64) });
+    },
+  };
+  const host = createToolHost({
+    store: sub.store, installationRef: sub.meta.installationRef, cardsDir: p.cardsDir, ops: new Map<ToolOpcode, ExplicitOpHandler>([['display', op]]),
+    excludedRoots: [], clock, wall, timers: { setTimeout: (cb, ms) => setTimeout(cb, ms), clearTimeout: (h) => clearTimeout(h as NodeJS.Timeout) },
+    entry: { nodePath: process.execPath, serverPath: fileURLToPath(import.meta.url) },
+    transport: { async send({ card }) { sends.push(card); return { kind: 'acked', messageId: String(msg++) }; } },
+  });
+  if (host === undefined) throw new Error('no host');
+  const gateway = admissibleGateway();
+  cardCleanups.push(() => { host.close({ reason: 'shutdown', deadlineMono: performance.now(), signal: AbortSignal.abort() }); sub.store.retire(); adapter.close(); gateway.release(); });
+  return { store: sub.store, adapter, host, gateway, incarnation, sends };
+}
+
+function bindingOf(ctx: TrustedTurnContext): CardBinding {
+  return Object.freeze({ sessionKey: ctx.sessionKey, channelId: ctx.route.channelId, channelType: 1, topicScope: null, generation: ctx.turnGeneration, resetEpoch: ctx.resetEpoch });
+}
+
+function generation(r: Rig, sessionKey: string) {
+  const ctx: TrustedTurnContext = Object.freeze({
+    botRef: Object.freeze({ originKey: 'https://test.invalid', credentialRef: 'c'.repeat(43) }),
+    route: Object.freeze({ channelId: 'chan', channelType: 1 }), requesterUid: 'u1', sessionKey,
+    turnGeneration: randomUUID(), resetEpoch: 0, policyIdentity: 'c'.repeat(43), runtimeIncarnation: r.incarnation,
+    injectedServerId: `octo_cards_${randomBytes(16).toString('hex')}`,
+    routeEligibility: Object.freeze({ kind: 'dm' as const, obo: false, docTask: false, cron: false }),
+    origin: Object.freeze({ kind: 'user' as const }),
+  });
+  const gen = r.host.openGeneration({ ctx, binding: bindingOf(ctx), expiresAtMono: performance.now() + 300_000, currentResetEpoch: () => 0, ops: ['display'], admit: r.gateway.admit });
+  if (gen === undefined) throw new Error('no generation');
+  return { gen, ctx };
+}
+
+describe('synchronous terminal admission with real host and SQLite', () => {
+  it.each([
+    ['late-call', false],
+    ['late-failed-call', false],
+    ['late-interrupted-call', false],
+    ['terminal-before-response-call', false],
+    ['terminal-before-error-call', false],
+    ['terminal-before-mismatch-call', false],
+    ['response-terminal-call', false],
+    ['held-terminal-call', false],
+    ['before-terminal', true],
+    ['foreign-terminal', true],
+    ['foreign-thread-terminal', true],
+  ] as const)('%s', async (scenario, allowed) => {
+    const r = await cardRig();
+    const g = generation(r, scenario);
+    const completions: string[] = [];
+    const h = setup(scenario, {
+      thread: { cwd: r.gateway.cwd, sandbox: 'read-only', approvalPolicy: 'never' },
+      cards: (port) => {
+        const attempt = g.gen.launch.prepareAppServerAttempt(port);
+        if (!attempt) throw new Error('missing card attempt');
+        return { ...attempt, turnCompleted() { completions.push('completed'); attempt.turnCompleted(); } };
+      },
+    });
+    // Drain immediately. The child writes terminal + call together; no consumer
+    // sleep or deferred host dispatch masks read-order admission.
+    const result = await drain(startAppServerAttempt(h.input));
+    expect(await stopped(h.executions)).toBe(true);
+    const error = scenario === 'terminal-before-error-call' ? 'turn_rejected'
+      : scenario === 'terminal-before-mismatch-call' ? 'turn_binding_mismatch' : undefined;
+    if (error) {
+      expect((result.error as AppServerAttemptFailure).failureClass).toBe(error);
+      expect(completions).toEqual([]);
+      expect(result.events.some((e) => e.type === 'turn.completed')).toBe(false);
+    } else {
+      expect(result.error).toBeUndefined();
+      expect(completions).toEqual(['completed']);
+      expect(result.events.at(-1)?.type).toBe(scenario === 'late-failed-call' || scenario === 'late-interrupted-call' ? 'turn.failed' : 'turn.completed');
+    }
+    const counts = r.adapter.prepare('SELECT invocation_count AS inv, logical_send_count AS sends FROM card_handler_generations WHERE generation = ?').get(g.ctx.turnGeneration);
+    expect(counts).toEqual(allowed ? { inv: 1, sends: 1 } : { inv: 0, sends: 0 });
+    expect(r.sends).toHaveLength(allowed ? 1 : 0);
+    expect(r.adapter.prepare('SELECT COUNT(*) AS n FROM card_explicit_requests').get()).toEqual({ n: allowed ? 1 : 0 });
+    expect(r.adapter.prepare('SELECT COUNT(*) AS n FROM card_sessions').get()).toEqual({ n: 0 });
   });
 });

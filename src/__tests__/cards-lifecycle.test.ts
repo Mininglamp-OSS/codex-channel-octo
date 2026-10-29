@@ -547,7 +547,9 @@ describe("expired-snapshot closure (AC-007.5)", () => {
     const a = { botRef: r.botRef }; const b = { botRef: r.botRef };
     await r.time.advance(61_000);
     expect(r.grants.authorize("automatic", a, pinned).allowed).toBe(false);
-    r.grants.grant(a, pinned);
+    r.setProfile(() => { throw new TypeError("offline unavailable"); });
+    const current = await r.policy.snapshot();
+    r.grants.grant(a, pinned, current);
     expect(r.grants.authorize("automatic", a, pinned).allowed).toBe(true);
     expect(r.grants.authorize("automatic", b, pinned).allowed).toBe(false);
     expect(r.grants.authorize("display", a, pinned).allowed).toBe(false);
@@ -702,5 +704,57 @@ describe("real Bot API acknowledgements (server-assigned client_msg_no, bare edi
     await finish(r, next, report(1, 1));
     expect(r.sends()).toHaveLength(1);
     expect(r.edits()).toHaveLength(0);
+  });
+});
+
+describe("closure authority on terminal retry", () => {
+  it.each(["invalidate", "profile-disable", "no-revocation"])("terminal retry after %s", async (change) => {
+    const r = rig();
+    const t = await activeTurn(r);
+    await r.time.advance(61_000);
+    r.setProfile(() => { throw new TypeError("offline unavailable"); });
+    r.net.reply({ status: 503 });
+    t.observe(end());
+    t.signal({ t: "delivery_report", report: report(1, 1) });
+    t.settle();
+    await r.time.advance(0);
+    expect(r.edits()).toHaveLength(1);
+    if (change === "invalidate") r.policy.invalidate("bot_setting");
+    if (change === "profile-disable") {
+      r.setProfile(() => json(200, profile({ config: { card_enabled: false, reasoning_enabled: false,
+        reasoning_template_ref: null, display_enabled: false, interaction_enabled: false } })));
+      await r.policy.snapshot();
+    }
+    expect(r.policy.authorize("automatic", { botRef: r.botRef }).allowed).toBe(false);
+    await r.time.advance(5_000);
+    await r.settleAll();
+    expect(r.edits()).toHaveLength(change === "no-revocation" ? 2 : 1);
+    expect(r.queue.status("card-1")).toMatchObject({ phase: "closed", outcome: change === "no-revocation" ? "acked" : "policy" });
+    if (change === "no-revocation") {
+      expect(r.edits()[1]).toEqual(r.edits()[0]);
+      expect(JSON.stringify(r.edits())).not.toContain("git");
+    }
+  });
+
+  it.each(["invalidate", "disable-then-enable"])("a grant cannot survive %s even with enabled policy later", async (change) => {
+    const r = rig();
+    const pinned = await r.policy.snapshot();
+    const ctx = { botRef: r.botRef };
+    await r.time.advance(61_000);
+    r.setProfile(() => { throw new TypeError("offline unavailable"); });
+    const current = await r.policy.snapshot();
+    r.grants.grant(ctx, pinned, current);
+    expect(r.grants.authorize("automatic", ctx, pinned).allowed).toBe(true);
+    if (change === "invalidate") r.policy.invalidate("bot_setting");
+    else {
+      r.setProfile(() => json(200, profile({ config: { card_enabled: false, reasoning_enabled: false,
+        reasoning_template_ref: null, display_enabled: false, interaction_enabled: false } })));
+      await r.policy.snapshot();
+      await r.time.advance(61_000);
+    }
+    r.setProfile(() => json(200, profile()));
+    await r.policy.snapshot();
+    expect(r.policy.authorize("automatic", ctx).allowed).toBe(true);
+    expect(r.grants.authorize("automatic", ctx, pinned).allowed).toBe(false);
   });
 });

@@ -41,6 +41,9 @@ export const TERMINAL_SETTLE_MS = INTERRUPT_BOUND_MS;
 /** Distinct threads with pre-enqueue turn activity remembered before the thread id is known. */
 export const PRESTART_THREADS_MAX = 32;
 
+/** Maximum terminal identities retained while the asynchronous binding settles. */
+const READ_TERMINALS_MAX = 32;
+
 /** Bounded failure classes after spawn (§10.1); logged by name only. */
 export type AppServerFailureClass =
   | 'auth_login_rejected' | 'auth_mode_mismatch' | 'ready_timeout' | 'child_exit_before_ready'
@@ -216,6 +219,13 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
 
   const queue = new NoticeQueue();
   let threadId = '';
+  // Admission follows synchronous pipe read order, independently of the
+  // consumer's provisional completion/response checks. Bound memory even if
+  // a child emits terminals for many foreign turns; overflow denies tools.
+  const readTerminals = new Set<string>();
+  let terminalOverflow = false;
+  const admissionEnded = (id: string): boolean => terminalOverflow || readTerminals.has(id);
+
   // TB-3(d): turn activity on our thread before our only turn/start was enqueued.
   // A chunk is dispatched synchronously, so activity coalesced with the thread
   // reply arrives before the thread id is known: remember its thread ids and
@@ -234,12 +244,22 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
     onNotification: (method, params) => {
       // Only a live turn/started counts: a cold resume replays the last turn's token usage.
       if (method === 'turn/started') prestart(params);
+      if (method === 'turn/completed' && client.turnStartEnqueued) {
+        const p = obj(params), id = obj(p.turn).id;
+        if (p.threadId === threadId && typeof id === 'string') {
+          if (readTerminals.size < READ_TERMINALS_MAX) readTerminals.add(id);
+          else if (!readTerminals.has(id)) terminalOverflow = true;
+        }
+      }
       // TB-3(c) is judged on read order: the response resolves in this reader, observers a microtask later.
       queue.push({ method, params, afterResponse: client.turnStartResponded });
     },
     onToolCall: (r) => {
       prestart(r.params);
-      if (cards !== undefined) cards.onToolCall(r.id, r.params);
+      const p = obj(r.params);
+      if (p.threadId === threadId && typeof p.turnId === 'string' && admissionEnded(p.turnId)) {
+        client.respond(r.id, toolRefusal('explicit cards are unavailable'), { uncharged: true });
+      } else if (cards !== undefined) cards.onToolCall(r.id, r.params);
       else client.respond(r.id, toolRefusal('explicit cards are unavailable'), { uncharged: true });
     },
     onClose: (reason) => { cards?.close(); queue.end(reason); void execution.kill(); },
@@ -325,7 +345,7 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
       .then((r) => {
         const id = obj(obj(r).turn).id;
         if (typeof id !== 'string') return 'mismatch' as const;
-        if (turnId === null) { turnId = id; cards?.bindTurn(id); return 'ok' as const; }
+        if (turnId === null) { turnId = id; if (!admissionEnded(id)) cards?.bindTurn(id); return 'ok' as const; }
         return turnId === id ? 'ok' as const : 'mismatch' as const;
       }, (e: unknown) => (e instanceof RpcError ? 'error' as const : 'closed' as const));
     let responseState: 'ok' | 'mismatch' | 'error' | 'closed' | undefined;
@@ -359,7 +379,7 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
       if (note.method === 'turn/started') {
         const id = obj(p.turn).id;
         if (typeof id !== 'string') continue;
-        if (turnId === null) { turnId = id; startedSeen = true; cards?.bindTurn(id); }
+        if (turnId === null) { turnId = id; startedSeen = true; if (!admissionEnded(id)) cards?.bindTurn(id); }
         else if (id !== turnId) {
           if (!(note.afterResponse && startedSeen)) fail('turn_binding_mismatch'); // TB-3(c)
           continue; // TB-4 foreign
