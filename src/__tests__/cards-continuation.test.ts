@@ -21,6 +21,7 @@ import { StreamRelay } from '../stream-relay.js';
 import { queryAgentEvents } from '../agent-bridge.js';
 import { canonicalJson } from '../cards/protocol.js';
 import { createHash } from 'node:crypto';
+import { privateMemorySessionKey } from '../private-memory.js';
 
 const model = vi.hoisted(() => ({ calls: [] as { prompt: string; resume?: string }[] }));
 vi.mock('../agent-bridge.js', async original => ({ ...await original<typeof import('../agent-bridge.js')>(),
@@ -123,7 +124,105 @@ async function dispatch(p: ReturnType<typeof prepared>) {
     claim(p); await c.dispatchContinuation(p.turn, pre.reservation);
   });
 }
+const memoryRoutes: { name: string; type: 1 | 2 | 5; owner: boolean }[] = [
+  { name: 'group', type: 2, owner: false }, { name: 'topic', type: 5, owner: false },
+  { name: 'owner DM', type: 1, owner: true }, { name: 'ordinary DM', type: 1, owner: false },
+];
+function memoryRoute(route: typeof memoryRoutes[number], enabled: boolean, keyOverride?: (key: string, raw: string) => string) {
+  const owner = route.owner ? 'requester' : 'owner';
+  const settings = { ...config(), cwd: root, dataDir: root, baseDir: root, privateMemory: { enabled }, sdk: { toolProgress: true } };
+  const history = new SessionStore(db); history.init();
+  router = new SessionRouter(settings, 'bot', owner, history); router.setDispatchObserver(runtime);
+  const message = { from_uid: 'requester', channel_id: 'route', channel_type: route.type } as BotMessage;
+  const raw = router.sessionKey(message);
+  const effective = enabled ? privateMemorySessionKey(raw, route.owner) : raw;
+  const stored = keyOverride?.(effective, raw) ?? effective;
+  const r = store.reserveSession({ binding: { sessionKey: stored, channelId: 'route', channelType: route.type,
+    topicScope: route.type === 5 ? 'route' : null, generation: 'memory-route', resetEpoch: 0 },
+    bodyDigest: 'digest', clientMsgNo: 'memory-route-client', contract: { requesterUid: 'requester', contractVersion: 1,
+      authoredContractJson: session.authoredContractJson, authoredDataHash: session.authoredDataHash } });
+  if (r.kind !== 'reserved') throw new Error('memory fixture reservation');
+  store.ackMessage({ cardId: r.cardId, messageId: '900002', policyAllows: true, currentResetEpoch: 0 });
+  session = store.getSession(r.sessionId)!;
+  history.getOrCreate(effective, 'route', route.type); history.setSdkSessionId(effective, 'prior-thread');
+  const group = new GroupContext(db, 6000), relay = new StreamRelay();
+  router.setContinuationHandler(msg => handleMessage(msg, settings, history, router, group, relay, 'bot', () => owner, runtime));
+  return { raw, effective, history, settings };
+}
 describe('trusted continuation port and actual settlement', () => {
+  it.each(memoryRoutes.flatMap(route => [false, true].map(enabled => ({ ...route, enabled })) ))(
+    'uses the ordinary lock and namespaces once for $name with private memory=$enabled', async ({ enabled, ...route }) => {
+      const { raw, effective, history } = memoryRoute(route, enabled);
+      const p = prepared();
+      // Positive preflight controls fail immediately on the reviewed source.
+      await router.withContinuationLock(p.turn, async port => { expect(port.preflightContinuation(p.turn).accepted).toBe(true); });
+      let releaseOrdinary!: () => void, ordinaryEntered!: () => void, releaseHandler!: () => void, handlerEntered!: () => void;
+      const ordinaryReady = new Promise<void>(resolve => { ordinaryEntered = resolve; });
+      const ordinaryGate = new Promise<void>(resolve => { releaseOrdinary = resolve; });
+      const handlerReady = new Promise<void>(resolve => { handlerEntered = resolve; });
+      const handlerGate = new Promise<void>(resolve => { releaseHandler = resolve; });
+      const original = vi.mocked(queryAgentEvents).getMockImplementation()!;
+      vi.mocked(queryAgentEvents).mockImplementation(async function* (...args) {
+        handlerEntered(); await handlerGate; yield* original(...args);
+      });
+      const before = router.withSessionLock(raw, async () => { ordinaryEntered(); await ordinaryGate; });
+      await ordinaryReady;
+      const work = dispatch(p);
+      let after: Promise<void> | undefined, afterEntered = false;
+      try {
+        await Promise.resolve(); expect(model.calls).toHaveLength(0);
+        releaseOrdinary(); await before; await handlerReady;
+        after = router.withSessionLock(raw, async () => { afterEntered = true; });
+        await Promise.resolve(); expect(afterEntered).toBe(false);
+      } finally {
+        releaseOrdinary(); releaseHandler(); await Promise.all([before, work, ...(after ? [after] : [])]);
+      }
+      expect(afterEntered).toBe(true); expect(model.calls).toHaveLength(1);
+      expect(model.calls[0].resume).toBe('prior-thread');
+      expect(history.getSdkSessionId(effective)).toBe('synthetic-thread');
+      expect(history.getSdkSessionId(privateMemorySessionKey(effective, route.owner))).toBeUndefined();
+      expect(store.getAdmissionForSession(session.sessionId)?.state).toBe('completed');
+      const keys = db.prepare('SELECT id FROM sessions').all() as { id: string }[];
+      expect(keys.some(row => row.id === effective)).toBe(true);
+      if (enabled) expect(keys.some(row => row.id === privateMemorySessionKey(effective, route.owner))).toBe(false);
+      expect(JSON.stringify(db.prepare('SELECT * FROM messages').all())).not.toContain('unsafe');
+    });
+  it.each(['raw', 'double', 'partition', 'foreign'])(
+    'rejects a %s stored history binding with private memory enabled', async mismatch => {
+      memoryRoute(memoryRoutes[2], true, (key, raw) => mismatch === 'raw' ? raw
+        : mismatch === 'double' ? privateMemorySessionKey(key, true)
+        : mismatch === 'partition' ? privateMemorySessionKey(raw, false) : privateMemorySessionKey('foreign', true));
+      const call = vi.fn(async () => {}); router.setContinuationHandler(call);
+      const p = prepared();
+      await router.withContinuationLock(p.turn, async port => {
+        const preflight = port.preflightContinuation(p.turn); expect(preflight.accepted).toBe(false);
+        claim(p); await port.dispatchContinuation(p.turn, {} as AdmissionReservation);
+      });
+      expect(call).not.toHaveBeenCalled(); expect(model.calls).toHaveLength(0);
+    });
+  it('rechecks the owner-derived partition after preflight before dispatch', async () => {
+    const { settings, history } = memoryRoute(memoryRoutes[2], true);
+    let owner = 'requester';
+    router = new SessionRouter(settings, 'bot', () => owner, history);
+    const call = vi.fn(async () => {}); router.setContinuationHandler(call);
+    const p = prepared();
+    await router.withContinuationLock(p.turn, async port => {
+      const c = createContinuation(port), preflight = c.preflightContinuation(p.turn);
+      expect(preflight.accepted).toBe(true); if (!preflight.accepted) return;
+      claim(p); owner = 'owner'; await c.dispatchContinuation(p.turn, preflight.reservation);
+    });
+    expect(call).not.toHaveBeenCalled(); expect(model.calls).toHaveLength(0);
+    expect(store.getAdmissionForSession(session.sessionId)?.state).toBe('ambiguous');
+  });
+  it('rejects a different effective partition at actual handler entry', async () => {
+    const { settings, history } = memoryRoute(memoryRoutes[2], true);
+    const group = new GroupContext(db, 6000), relay = new StreamRelay();
+    router.setContinuationHandler(msg => handleMessage(msg, settings, history, router, group, relay, 'bot', () => 'other-owner', runtime));
+    await dispatch(prepared());
+    expect(model.calls).toHaveLength(0);
+    expect(store.getAdmissionForSession(session.sessionId)?.state).toBe('ambiguous');
+    expect(history.getSdkSessionId(privateMemorySessionKey('requester', false))).toBeUndefined();
+  });
   it('rechecks proof between sequence reservation and the status transport effect', async () => {
     const reserve = store.reserveSequence.bind(store);
     vi.spyOn(store, 'reserveSequence').mockImplementation(cardId => {
