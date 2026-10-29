@@ -132,12 +132,13 @@ const budget = (r: Rig, generationId: string) =>
   r.adapter.prepare('SELECT invocation_count AS inv, logical_send_count AS sends FROM card_handler_generations WHERE generation = ?').get(generationId);
 
 describe.runIf(BIN !== null)('explicit cards over app-server dynamicTools (real 0.163.0 binary; model, op and transport mocked)', () => {
-  it('G-A2: a new thread declares the full toolset; a model call is dispatched in-process and answered', async () => {
+  it('G-A2: a new thread declares the admitted toolset; a model call is dispatched in-process and answered', async () => {
     const r = await rig();
     const cards = generation(r, 's1');
     const out = await run(r, DISPLAY_CALL, { cards });
-    // T2a: both tools declared on thread/start; T0: the digest is reported with the thread id.
-    expect(toolNames(out.requests[0])).toEqual(expect.arrayContaining(['display', 'interactive']));
+    // T2a: only the admitted display tool is declared on thread/start; T0: the digest is reported with the thread id.
+    expect(toolNames(out.requests[0])).toEqual(expect.arrayContaining(['display']));
+    expect(toolNames(out.requests[0])).not.toContain('interactive');
     expect(out.session?.digest).toBe(appServerToolset().digest);
     // developerInstructions on thread/start reaches the model.
     expect(JSON.stringify(out.requests[0].body)).toContain('Explicit card tools (display, interactive) are available');
@@ -155,7 +156,8 @@ describe.runIf(BIN !== null)('explicit cards over app-server dynamicTools (real 
     const cards = generation(r, 's2');
     const out = await run(r, DISPLAY_CALL, { cards, resume: first.session!.id, digest: first.session!.digest ?? null });
     expect(out.session?.id).toBe(first.session!.id);
-    expect(toolNames(out.requests[0])).toEqual(expect.arrayContaining(['display', 'interactive']));
+    expect(toolNames(out.requests[0])).toEqual(expect.arrayContaining(['display']));
+    expect(toolNames(out.requests[0])).not.toContain('interactive');
     expect(budget(r, cards.ctx.turnGeneration)).toEqual({ inv: 1, sends: 1 });
   }, 90_000);
 
@@ -197,7 +199,8 @@ describe.runIf(BIN !== null)('explicit cards over app-server dynamicTools (real 
     cleanups.push(() => warn.mockRestore());
     const r = await rig();
     const first = await run(r, 'hello', { cards: generation(r, 's5') });
-    expect(toolNames(first.requests[0])).toEqual(expect.arrayContaining(['display', 'interactive']));
+    expect(toolNames(first.requests[0])).toEqual(expect.arrayContaining(['display']));
+    expect(toolNames(first.requests[0])).not.toContain('interactive');
     const out = await run(r, 'again', { cards: generation(r, 's5'), resume: first.session!.id, digest: 'v0:old' });
     const turns = userMessages(out.requests[0]);
     expect(turns.at(-1)?.[0]).toBe(LEGACY_TOOLSET_NOTICE);
@@ -212,6 +215,7 @@ describe.runIf(BIN !== null)('explicit cards over app-server dynamicTools (real 
     const first = await run(r, 'hello', { cards: generation(r, 's4') });
     const out = await run(r, 'again', { cards: generation(r, 's4'), resume: first.session!.id, digest: first.session!.digest ?? null });
     for (const req of [...first.requests, ...out.requests]) expect(JSON.stringify(req.body)).not.toContain('[Card tools notice');
-    expect(toolNames(out.requests[0])).toEqual(expect.arrayContaining(['display', 'interactive']));
+    expect(toolNames(out.requests[0])).toEqual(expect.arrayContaining(['display']));
+    expect(toolNames(out.requests[0])).not.toContain('interactive');
   }, 90_000);
 });
