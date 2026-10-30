@@ -42,7 +42,9 @@ JSON object, without Markdown fences:
 }
 ```
 
-Only the final selected complete primary run supplies artifacts. Ordinary paths,
+Only one bare JSON object in a single selected message of a complete primary
+run supplies artifacts. Broken/fenced/joined protocol envelopes produce a fixed
+invalid-envelope notice rather than exposing protocol text. Ordinary paths,
 Markdown images and URLs never trigger uploads. Destination channel/type come
 from the host turn; model output cannot redirect delivery. Operator opt-in grants
 exports only from this fresh directory; prompt instructions ask the agent to
@@ -63,7 +65,8 @@ other distinct images. Failed/unknown text delivery stops image delivery.
   paths, URLs, hidden/config/credential names, symlinks, hardlinks or special files.
 - Before/after scope, inode, link-count, size and timestamp checks; no-follow
   open; bounded reads. Upload uses captured bytes and never reopens the path.
-- PNG chunk lengths/CRCs, JPEG markers/SOF dimensions and GIF blocks/dimensions
+- PNG chunk lengths/CRCs, JPEG SOF/SOS component structure and complete entropy
+  scan boundaries, and every GIF frame's dimensions/offsets within the canvas
   are checked against actual bytes and matching extensions. These structural
   checks are not a complete image decoding library.
 - Default **10 MiB per file**, configurable integer `maxBytes` **1..50 MiB**.
@@ -74,6 +77,10 @@ other distinct images. Failed/unknown text delivery stops image delivery.
   Existing **seven-day idle session TTL** removes them with the workspace;
   active sessions retain files. Operators may remove completed exports after
   reconciliation. No detached uploads or cleanup jobs are started.
+
+If the per-turn export directory cannot be created, image exports are disabled
+for that turn and plain text remains available. Presign has a separate 30-second
+budget; PUT has 120 seconds, with both also bounded by the parent turn signal.
 
 The workspace is a starting directory, not a chroot. These checks protect the
 upload path against links/replacements; they cannot prevent an agent with

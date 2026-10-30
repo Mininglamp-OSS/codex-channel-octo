@@ -39,4 +39,17 @@ describe('explicit final image envelope', () => {
     base.artifacts = Array.from({ length: 5 }, (_, i) => ({ ...base.artifacts[0], id: `id${i}` }));
     expect(collect(JSON.stringify(base)).select({ mode: 'final', maxChars: 1000, artifactRequestId: 'current' }).artifacts).toEqual([]);
   });
+  it.each(['```json\n' + envelope() + '\n```', '{"octo_output":1,', envelope() + '\n' + envelope()])('RVW-2: hides malformed/fenced/joined protocol text', text => {
+    const selected = collect(text).select({ mode: 'final', maxChars: 1000, artifactRequestId: 'current' });
+    expect(selected.artifacts).toEqual([]);
+    expect(selected.text).toBe('[Image generation: invalid or stale artifact envelope; no images sent.]');
+  });
+  it('RVW-2: does not decode JSON assembled from multiple selected final messages', () => {
+    const c = collect('{"octo_output":1,"requestId":"current",');
+    c.push({ kind: 'message', attempt: 1, itemId: 'part2', seq: 2, phase: 'final_answer',
+      text: '"text":"hello","artifacts":[{"id":"one","kind":"image","path":"x.png","disposition":"relay"}]}' });
+    const selected = c.select({ mode: 'final', maxChars: 1000, artifactRequestId: 'current' });
+    expect(selected.artifacts).toEqual([]);
+    expect(selected.text).toContain('invalid or stale artifact envelope');
+  });
 });

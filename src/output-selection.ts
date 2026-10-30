@@ -330,7 +330,7 @@ export class OutputCollector {
   ): SelectedOutput {
     const joined = selected.map((m) => m.text).join(sep);
     const decoded = this.artifactRequestId && pool === 'primary' && !source.includes('partial') && !source.startsWith('commentary')
-      ? decodeArtifactEnvelope(joined, this.artifactRequestId) : { text: joined, artifacts: [] };
+      ? decodeArtifactEnvelope(joined, this.artifactRequestId, selected.length === 1) : { text: joined, artifacts: [] };
     const capped = capSelected(decoded.text, maxChars);
     return {
       text: capped.text,

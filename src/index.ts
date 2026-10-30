@@ -46,7 +46,7 @@ import { handleCommand } from './commands.js';
 import { loadGroupConfig } from './group-config.js';
 import { canLoadPrivateMemory, loadPrivateMemory, privateMemorySessionKey } from './private-memory.js';
 import { buildSenderContext } from './sender-context.js';
-import { createArtifactScope } from './artifact-files.js';
+import { createArtifactScope, type ArtifactScope } from './artifact-files.js';
 import { DEFAULT_IMAGE_BYTES } from './artifacts.js';
 import { deliverImages, imageDeliverySummary } from './image-delivery.js';
 import { isConversationMdEvent } from './conversation-md.js';
@@ -792,9 +792,12 @@ export async function handleMessage(
       }
       // Host owns both the destination and the narrow per-turn export scope.
       // Never authorize ordinary model-produced paths across the workspace.
-      const imageScope = config.sdk.nativeImages?.enabled === true && outputImagesWritable(config)
-        && (config.sdk.outputSelection ?? DEFAULT_OUTPUT_SELECTION_MODE) === 'final'
-        ? createArtifactScope(resolveSessionCwd(config.cwdBase ?? config.cwd, sessionCtx)) : undefined;
+      let imageScope: ArtifactScope | undefined;
+      if (config.sdk.nativeImages?.enabled === true && outputImagesWritable(config)
+        && (config.sdk.outputSelection ?? DEFAULT_OUTPUT_SELECTION_MODE) === 'final') {
+        try { imageScope = createArtifactScope(resolveSessionCwd(config.cwdBase ?? config.cwd, sessionCtx)); }
+        catch { console.warn('[codex-channel-octo] native image exports unavailable for this turn'); }
+      }
       if (imageScope) {
         sessionOpts.nativeImageOutput = { requestId: turn.turnId, directory: imageScope.directory };
       }
@@ -852,7 +855,7 @@ export async function handleMessage(
         turnStore.saveDeliveryPart(turn.turnId, summaryPart, summaryKey, JSON.stringify({ channelId, channelType, content: summary }));
         turnStore.markDeliveryPart(turn.turnId, summaryPart, 'unknown');
         const ack = await sendMessage({ apiUrl: config.apiUrl, botToken: config.botToken, channelId, channelType,
-          clientMsgNo: summaryKey, content: summary });
+          clientMsgNo: summaryKey, content: summary, signal: turn.signal });
         turn.assertPublishable();
         const summaryId = confirmedMessageId(ack?.message_id);
         if (!summaryId) throw new AgentFailure({ stage: 'delivery', category: 'delivery_failed', source: 'octo_api', evidence: 'structured' });

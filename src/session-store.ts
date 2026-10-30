@@ -222,8 +222,9 @@ export class SessionStore {
       .run(r.generation, r.upload, r.delivery, r.messageId ?? null, turnId, r.id);
   }
   readImageDeliveries(turnId: string): ImageDelivery[] {
-    return this.adapter.prepare('SELECT artifact_id AS id, generation, upload, delivery, client_msg_no AS clientMsgNo, message_id AS messageId FROM image_deliveries WHERE turn_id=? ORDER BY part_index')
-      .all(turnId) as ImageDelivery[];
+    const rows = this.adapter.prepare('SELECT artifact_id AS id, generation, upload, delivery, client_msg_no AS clientMsgNo, message_id AS messageId FROM image_deliveries WHERE turn_id=? ORDER BY part_index')
+      .all(turnId) as Array<Omit<ImageDelivery, 'messageId'> & { messageId: string | null }>;
+    return rows.map(row => ({ ...row, messageId: row.messageId ?? undefined }));
   }
   saveDeliveryParts(turnId: string, parts: Array<{ clientMsgNo: string; payload: string }>): void {
     this.adapter.transaction(() => parts.forEach((part,index) => this.saveDeliveryPart(turnId,index,part.clientMsgNo,part.payload)))();

@@ -45,10 +45,13 @@ export async function uploadArtifact(params: MediaRequest & { name: string; mime
     const uploadUrl = await validateStorageUrl(data.uploadUrl, params.apiUrl);
     const downloadUrl = await validateStorageUrl(data.downloadUrl, params.apiUrl);
     params.check(); signal.throwIfAborted();
+    // The small presign request must not spend the upload's independent budget.
+    // The parent turn signal still bounds both stages and every late callback.
+    const uploadSignal = AbortSignal.any([params.signal, AbortSignal.timeout(120_000)]);
     const headers: Record<string, string> = { 'Content-Type': data.contentType, 'Content-Length': String(params.bytes.length) };
     if (typeof data.contentDisposition === 'string') headers['Content-Disposition'] = data.contentDisposition;
     code = 'outcome_unknown';
-    const uploaded = await fetch(uploadUrl, { method: 'PUT', headers, body: new Uint8Array(params.bytes), signal, redirect: 'error' });
+    const uploaded = await fetch(uploadUrl, { method: 'PUT', headers, body: new Uint8Array(params.bytes), signal: uploadSignal, redirect: 'error' });
     await uploaded.body?.cancel();
     if (!uploaded.ok) { code = 'put_rejected'; throw new Error('put'); }
     params.check();

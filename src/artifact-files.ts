@@ -64,7 +64,10 @@ function imageMetadata(b: Buffer): { mime: string; width: number; height: number
       if (tag === 0x21) { offset++; subBlocks(); continue; }
       if (tag !== 0x2c || offset + 9 > b.length) throw new Error('GIF descriptor');
       const packed = b[offset + 8];
-      if (!b.readUInt16LE(offset + 4) || !b.readUInt16LE(offset + 6)) throw new Error('GIF size');
+      const left = b.readUInt16LE(offset); const top = b.readUInt16LE(offset + 2);
+      const width = b.readUInt16LE(offset + 4); const height = b.readUInt16LE(offset + 6);
+      if (!width || !height || width > 16384 || height > 16384 || width * height > 40_000_000
+        || left + width > b.readUInt16LE(6) || top + height > b.readUInt16LE(8)) throw new Error('GIF frame bounds');
       offset += 9 + ((packed & 0x80) ? 3 * (1 << ((packed & 7) + 1)) : 0);
       const codeSize = b[offset++]; if (codeSize < 2 || codeSize > 8) throw new Error('GIF code size');
       subBlocks(); frames++;
@@ -74,17 +77,78 @@ function imageMetadata(b: Buffer): { mime: string; width: number; height: number
   }
   if (b.length >= 12 && b[0] === 0xff && b[1] === 0xd8 && b[b.length - 2] === 0xff && b[b.length - 1] === 0xd9) {
     let offset = 2; let dims: { width: number; height: number } | undefined;
-    while (offset + 4 <= b.length) {
+    let frameType = 0; let scans = 0; let restartInterval = 0;
+    const components = new Set<number>(); const scanned = new Set<number>();
+    // Parse every segment and entropy-scan boundary through EOI, including
+    // subsequent progressive scans. Never accept just the presence of SOS.
+    while (offset < b.length) {
       if (b[offset++] !== 0xff) throw new Error('JPEG marker');
-      while (b[offset] === 0xff) offset++;
+      while (offset < b.length && b[offset] === 0xff) offset++;
       const marker = b[offset++];
-      if (marker === 0xda) {
-        if (dims) return { mime: 'image/jpeg', ...dims, extensions: ['jpg', 'jpeg'] };
-        break;
+      if (marker === 0xd9) {
+        if (!dims || !scans || scanned.size !== components.size || offset !== b.length) throw new Error('JPEG incomplete');
+        return { mime: 'image/jpeg', ...dims, extensions: ['jpg', 'jpeg'] };
       }
+      if (![0xc0, 0xc1, 0xc2, 0xc4, 0xda, 0xdb, 0xdd, 0xfe].includes(marker)
+        && !(marker >= 0xe0 && marker <= 0xef)) throw new Error('JPEG unsupported marker');
+      if (offset + 2 > b.length) throw new Error('JPEG truncated length');
       const length = b.readUInt16BE(offset);
       if (length < 2 || offset + length > b.length) throw new Error('JPEG length');
-      if ([0xc0,0xc1,0xc2].includes(marker) && length >= 8) dims = { height: b.readUInt16BE(offset + 3), width: b.readUInt16BE(offset + 5) };
+      if ([0xc0,0xc1,0xc2].includes(marker)) {
+        if (dims || length < 8) throw new Error('JPEG SOF');
+        const count = b[offset + 7]; const precision = b[offset + 2];
+        if (count < 1 || count > 4 || length !== 8 + 3 * count
+          || (precision !== 8 && (marker === 0xc0 || precision !== 12))) throw new Error('JPEG SOF components');
+        for (let i = 0; i < count; i++) {
+          const id = b[offset + 8 + 3 * i]; const sampling = b[offset + 9 + 3 * i];
+          if (components.has(id) || !(sampling >> 4) || (sampling >> 4) > 4 || !(sampling & 15)
+            || (sampling & 15) > 4 || b[offset + 10 + 3 * i] > 3) throw new Error('JPEG SOF component');
+          components.add(id);
+        }
+        frameType = marker;
+        dims = { height: b.readUInt16BE(offset + 3), width: b.readUInt16BE(offset + 5) };
+      }
+      if (marker === 0xdd) {
+        if (length !== 4) throw new Error('JPEG DRI');
+        restartInterval = b.readUInt16BE(offset + 2);
+      }
+      if (marker === 0xda) {
+        if (!dims || length < 6) throw new Error('JPEG SOS');
+        const count = b[offset + 2]; const selectors = new Set<number>();
+        if (count < 1 || count > components.size || length !== 6 + 2 * count) throw new Error('JPEG SOS length');
+        for (let i = 0; i < count; i++) {
+          const id = b[offset + 3 + 2 * i]; const tables = b[offset + 4 + 2 * i];
+          if (!components.has(id) || selectors.has(id) || (tables >> 4) > 3 || (tables & 15) > 3) throw new Error('JPEG SOS component');
+          selectors.add(id);
+        }
+        const start = b[offset + 3 + 2 * count]; const end = b[offset + 4 + 2 * count];
+        const approximation = b[offset + 5 + 2 * count];
+        if (frameType === 0xc2) {
+          const high = approximation >> 4; const low = approximation & 15;
+          if (start > end || end > 63 || (start === 0 ? end !== 0 : count !== 1)
+            || high > 13 || low > 13 || (high !== 0 && high !== low + 1)) throw new Error('JPEG progressive SOS');
+        } else if (start !== 0 || end !== 63 || approximation !== 0) throw new Error('JPEG sequential SOS');
+        offset += length;
+        let bytes = 0; let intervalBytes = 0; let restart = 0;
+        while (offset < b.length) {
+          if (b[offset] !== 0xff) { offset++; bytes++; intervalBytes++; continue; }
+          const boundary = offset++;
+          while (offset < b.length && b[offset] === 0xff) offset++;
+          const next = b[offset];
+          if (next === 0) { // Stuffed FF is entropy data, not a marker.
+            if (offset !== boundary + 1) throw new Error('JPEG stuffing');
+            offset++; bytes++; intervalBytes++; continue;
+          }
+          if (next >= 0xd0 && next <= 0xd7) {
+            if (!restartInterval || !intervalBytes || next !== 0xd0 + restart) throw new Error('JPEG restart');
+            offset++; restart = (restart + 1) % 8; intervalBytes = 0; continue;
+          }
+          offset = boundary; break;
+        }
+        if (!bytes || offset >= b.length) throw new Error('JPEG empty/truncated scan');
+        for (const id of selectors) scanned.add(id);
+        scans++; continue;
+      }
       offset += length;
     }
   }

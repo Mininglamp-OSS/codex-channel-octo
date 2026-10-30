@@ -9,6 +9,7 @@ import { TurnContext } from '../turn-context.js';
 import { createArtifactScope } from '../artifact-files.js';
 import { deliverImages } from '../image-delivery.js';
 import type { ImageArtifact } from '../artifacts.js';
+import { uploadArtifact } from '../octo/media.js';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64');
 describe('native image pipeline against a local HTTP service', () => {
@@ -16,9 +17,11 @@ describe('native image pipeline against a local HTTP service', () => {
   let requests: Array<{ path: string; bytes: Buffer; headers: Record<string, unknown> }>;
   let uploadFails: boolean, sendMode: 'ok' | 'fail' | 'lost' | 'empty', cancelAfterPut: boolean;
   let presignMode: 'ok' | 'fail' | 'unsafe' | 'small', losePut: boolean, revokeOnSend: boolean;
+  let onPut: (() => void) | undefined;
   beforeEach(async () => {
     requests = []; uploadFails = false; sendMode = 'ok'; cancelAfterPut = false;
     presignMode = 'ok'; losePut = false; revokeOnSend = false;
+    onPut = undefined;
     root = mkdtempSync(join(tmpdir(), 'native-images-'));
     store = new SessionStore(createAdapter(':memory:')); store.init(); turn = new TurnContext(30000);
     server = createServer(async (req, res) => {
@@ -31,6 +34,7 @@ describe('native image pipeline against a local HTTP service', () => {
         res.end(JSON.stringify({ method: 'PUT', uploadUrl: presignMode === 'unsafe' ? 'http://169.254.169.254/credentials' : apiUrl + '/put?signature=SECRET', downloadUrl: apiUrl + '/image.png?signature=PRIVATE',
           contentType: 'image/png', contentDisposition: 'inline; filename="image.png"', maxFileSize: presignMode === 'small' ? 1 : 1024 }));
       } else if (path.startsWith('/put')) {
+        onPut?.();
         if (cancelAfterPut) turn.cancel();
         if (losePut) { req.socket.destroy(); return; }
         res.statusCode = uploadFails ? 500 : 200; res.end(uploadFails ? 'SECRET raw image contents' : '');
@@ -83,6 +87,7 @@ describe('native image pipeline against a local HTTP service', () => {
   it.each(['fail', 'lost', 'empty'] as const)('preserves delivery unknown after %s and never resends', async mode => {
     sendMode = mode; const params = input(['one.png']);
     expect((await deliverImages(params))[0].delivery).toBe('unknown');
+    expect(store.readImageDeliveries(turn.turnId)[0].messageId).toBeUndefined();
     expect((await deliverImages(params))[0].delivery).toBe('unknown');
     expect(requests.filter(r => r.path === '/v1/bot/sendMessage')).toHaveLength(1);
   });
@@ -126,5 +131,25 @@ describe('native image pipeline against a local HTTP service', () => {
     params.artifacts[1].disposition = 'external';
     expect((await deliverImages(params)).map(r => r.delivery)).toEqual(['duplicate', 'external']);
     expect(requests).toEqual([]);
+  });
+  it.each(['jpeg', 'gif'])('ADV-95-001/002: rejects adversarial %s at generation with zero HTTP requests', format => {
+    const params = input([format === 'jpeg' ? 'fake.jpg' : 'fake.gif']);
+    const bytes = format === 'jpeg' ? Buffer.from('ffd8ffc00008080001000100ffdaffd9', 'hex')
+      : Buffer.from('R0lGODdhAQABAIEAAP///wAAAAAAAAAAACwAAAAAAQABAAAIBAABBAQAOw==', 'base64');
+    if (format === 'gif') { const pos = bytes.indexOf(0x2c); bytes.writeUInt16LE(65535, pos + 5); bytes.writeUInt16LE(65535, pos + 7); }
+    writeFileSync(join(params.scope.directory, params.artifacts[0].path), bytes);
+    return deliverImages(params).then(report => {
+      expect(report[0]).toMatchObject({ generation: 'failed', upload: 'not_started', delivery: 'not_started' });
+      expect(requests).toEqual([]);
+    });
+  });
+  it('RVW-5: expiry of the presign budget does not cancel the independent PUT', async () => {
+    const presignBudget = new AbortController(); const putBudget = new AbortController();
+    vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(presignBudget.signal).mockReturnValueOnce(putBudget.signal);
+    onPut = () => presignBudget.abort();
+    const url = await uploadArtifact({ apiUrl, botToken: 'TOKEN', name: 'x.png', mime: 'image/png', bytes: png,
+      signal: turn.signal, check: () => turn.assertPublishable() });
+    expect(url).toBe(apiUrl + '/image.png?signature=PRIVATE');
+    expect(requests.map(r => r.path.split('?')[0])).toEqual(['/v1/bot/upload/presigned', '/put']);
   });
 });

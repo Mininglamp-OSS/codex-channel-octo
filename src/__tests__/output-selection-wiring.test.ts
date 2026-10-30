@@ -61,6 +61,7 @@ import { resolveMentions } from '../mention-utils.js';
 import { handleMessage, startBot } from '../index.js';
 import { sendMessage, getGroupMembers } from '../octo/api.js';
 import { uploadArtifact, sendNativeImage } from '../octo/media.js';
+import * as artifactFiles from '../artifact-files.js';
 import { ChannelType, MessageType, type BotMessage } from '../octo/types.js';
 import type { Config } from '../config.js';
 import { TRUNCATION_SUFFIX } from '../output-selection.js';
@@ -116,7 +117,7 @@ function script(steps: Step[]): void {
 }
 const start = (attempt = 0): AgentOutputEvent => ({ kind: 'attempt_start', attempt, reason: 'initial', continues: null });
 const end = (attempt = 0): AgentOutputEvent => ({ kind: 'attempt_end', attempt, terminal: 'completed' });
-const m = (itemId: string, seq: number, text: string, attempt = 0): AgentOutputEvent => ({
+const m = (itemId: string, seq: number, text: string, attempt = 0): Extract<AgentOutputEvent, { kind: 'message' }> => ({
   kind: 'message', attempt, itemId, seq, text, phase: 'unknown',
 });
 const w = (itemId: string, seq: number, attempt = 0): AgentOutputEvent => ({
@@ -206,12 +207,26 @@ describe('output selection wiring', () => {
       await run(config, group ? groupMsg('send an image') : dm('send an image'));
       expect(sentContents()[0]).toBe('Your image.');
       expect(sentContents()[1]).toContain(`delivery=${fail ? 'unknown' : 'confirmed'}`);
+      const summarySignal = vi.mocked(sendMessage).mock.calls[1][0].signal;
+      expect(summarySignal).toBe(vi.mocked(sendNativeImage).mock.calls[0][0].signal);
       expect(historyInputs()[0]).toBe(sentContents().join('\n\n'));
       expect(vi.mocked(sendMessage).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(uploadArtifact).mock.invocationCallOrder[0]);
       expect(vi.mocked(sendNativeImage).mock.calls[0][0]).toMatchObject({ channelId: group ? GROUP : USER_UID, channelType: group ? 2 : 1 });
       expect(vi.mocked(queryAgentEvents)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(sendNativeImage)).toHaveBeenCalledTimes(1);
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  it('RVW-4: export scope creation failure does not block a text answer', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cco-image-scope-failure-'));
+    const config = makeConfig({ cwd: root }, { nativeImages: { enabled: true }, sandboxMode: 'workspace-write', allowWorkspaceWrite: true });
+    setup(config);
+    const create = vi.spyOn(artifactFiles, 'createArtifactScope').mockImplementationOnce(() => { throw new Error('SECRET filesystem path'); });
+    script([start(), m('answer', 0, 'A plain text answer.'), end()]);
+    try {
+      await run(config);
+      expect(sentContents()).toEqual(['A plain text answer.']);
+      expect(vi.mocked(queryAgentEvents).mock.calls[0][4]?.nativeImageOutput).toBeUndefined();
+    } finally { create.mockRestore(); rmSync(root, { recursive: true, force: true }); }
   });
 
   it('publishes and stores only the short tail after long unlabeled output', async () => {
