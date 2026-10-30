@@ -15,7 +15,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DbAdapter } from '../db-adapter.js';
 import type { CardChannelType, WallClock } from './contracts.js';
-import { canonicalEnvelope } from './topology.js';
 import {
   CARD_TABLES,
   EVENT_SCOPE_PREFIX,
@@ -1606,13 +1605,13 @@ export class CardStore {
       if (!w) continue;
       try {
         // Snapshot the verifier's result before inspecting it; never retain mutable authority.
-        const snapshot = canonicalEnvelope(w);
+        const snapshot = canonicalProof(w);
         w = JSON.parse(snapshot) as RetirementWitness;
         const replay = this.getEventReplay(w.identity.eventId);
         const cursor = this.readCursor(w.identity.scope);
         if (w.installationRef !== installationRef || w.lineageId !== manifest.lineageId
           || w.protectedGraphSha256 !== manifest.sha256 || !w.identity.scope.startsWith(EVENT_SCOPE_PREFIX)
-          || replay.kind !== 'retained' || !replay.final || canonicalEnvelope(w.identity) !== canonicalEnvelope(replay.identity)
+          || replay.kind !== 'retained' || !replay.final || canonicalProof(w.identity) !== canonicalProof(replay.identity)
           || w.outcome !== replay.final.outcome || w.createdAt !== replay.final.createdAt || w.retainUntil !== replay.final.retainUntil
           || w.retainUntil > now || w.createdAt + RETENTION_MS > now
           || !Number.isSafeInteger(w.issuedAt) || w.issuedAt > now || w.issuedAt < 0
@@ -1672,7 +1671,7 @@ export class CardStore {
       for (const id of eligible) {
         const v = verified.get(id)!;
         try {
-          if (v.witness.expiresAt <= this.now() || canonicalEnvelope(verifier.verify(v.reference)) !== v.snapshot) return false;
+          if (v.witness.expiresAt <= this.now() || canonicalProof(verifier.verify(v.reference)) !== v.snapshot) return false;
         } catch { return false; }
       }
       return true;
@@ -2164,6 +2163,56 @@ const TABLE_KEYS: Readonly<Record<CardTable, readonly string[]>> = {
 };
 
 export type ProtectedGraphRows = Readonly<Record<CardTable, ReadonlyArray<Readonly<Record<string, unknown>>>>>;
+
+/**
+ * Strict canonical form of retirement evidence and replay identities, with
+ * the same rules as the topology envelope (plain data only: no accessors,
+ * symbols, cycles, non-finite numbers or lone surrogates). Kept local so the
+ * store module has no runtime dependency outside its schema layer.
+ */
+function canonicalProof(value: unknown): string {
+  const active = new Set<object>();
+  let nodes = 0;
+  function visit(v: unknown, depth: number): string {
+    if (++nodes > 10000 || depth > 32) throw new Error('invalid_envelope');
+    if (v === null) return 'null';
+    if (typeof v === 'boolean') return v ? 'true' : 'false';
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v) || Object.is(v, -0)) throw new Error('invalid_envelope');
+      return JSON.stringify(v);
+    }
+    if (typeof v === 'string') {
+      if (/[\ud800-\udfff]/u.test(v.replace(/[\ud800-\udbff][\udc00-\udfff]/gu, ''))) throw new Error('invalid_envelope');
+      return JSON.stringify(v);
+    }
+    if (typeof v !== 'object' || active.has(v)) throw new Error('invalid_envelope');
+    const array = Array.isArray(v);
+    if (!array && Object.getPrototypeOf(v) !== Object.prototype && Object.getPrototypeOf(v) !== null) throw new Error('invalid_envelope');
+    if (Object.getOwnPropertySymbols(v).length) throw new Error('invalid_envelope');
+    active.add(v);
+    const keys = Object.keys(v);
+    let out: string;
+    if (array) {
+      if (keys.length !== v.length || keys.some((k, i) => k !== String(i))) throw new Error('invalid_envelope');
+      out = '[' + keys.map((k) => {
+        const d = Object.getOwnPropertyDescriptor(v, k);
+        if (!d || !('value' in d)) throw new Error('invalid_envelope');
+        return visit(d.value, depth + 1);
+      }).join(',') + ']';
+    } else {
+      if (Object.getOwnPropertyNames(v).length !== keys.length) throw new Error('invalid_envelope');
+      out = '{' + keys.sort().map((k) => {
+        const d = Object.getOwnPropertyDescriptor(v, k);
+        if (!d || !('value' in d)) throw new Error('invalid_envelope');
+        return JSON.stringify(k) + ':' + visit(d.value, depth + 1);
+      }).join(',') + '}';
+    }
+    active.delete(v);
+    if (Buffer.byteLength(out, 'utf8') > 65536) throw new Error('invalid_envelope');
+    return out;
+  }
+  return visit(value, 0);
+}
 
 function canonical(row: Readonly<Record<string, unknown>>): string {
   return JSON.stringify(Object.keys(row).sort().map((k) => [k, row[k]]));
