@@ -1,5 +1,6 @@
 import { attachErrorDetails } from './error-details.js';
 import { nativeErrorMessage } from './native-error.js';
+import { imageArtifactInstructions } from './artifacts.js';
 import { types as utilTypes } from 'node:util';
 import { rememberSdkFailure, inheritSdkDiagnostic, type SdkDiagnosticRun } from './private-diagnostics.js';
 import { recover, type RecoveryConfig } from './agent-recovery.js';
@@ -326,6 +327,8 @@ export type AgentOutputEvent =
  *   - `groupInstructions`: per-group operator instructions (GROUP.md).
  */
 export interface QueryAgentOptions {
+  /** Host-created current-turn protocol; never shared in AGENTS.md. */
+  nativeImageOutput?: { requestId: string; directory: string };
   privateMemoryContext?: SafeText;
   resume?: string;
   onSessionId?: (id: string, prompt: string) => void;
@@ -497,7 +500,9 @@ export async function* queryAgentEvents(
   /** Identity precedes all background/request text on every initial or recovery run. */
   const frameTurn = (message: string): string => {
     const anchored = message.split(/\r\n|[\r\n\u2028\u2029]/).some((line) => line === CURRENT_MESSAGE_ANCHOR) ? message : `${CURRENT_MESSAGE_ANCHOR}\n${message}`;
-    return `${SECURITY_PROMPT_PREFIX}\n\n${senderContext}\n---\n\n${memoryContext}${interruptionContext(opts?.interruptedTurn)}${anchored}`;
+    const images = opts?.nativeImageOutput;
+    const imageContext = images ? imageArtifactInstructions(images.requestId, images.directory) : '';
+    return `${SECURITY_PROMPT_PREFIX}\n\n${senderContext}\n---\n\n${memoryContext}${interruptionContext(opts?.interruptedTurn)}${imageContext}${anchored}`;
   };
   const promptText = frameTurn(userMessage);
 

@@ -92,6 +92,13 @@ describe('maxResponseChars validation', () => {
 });
 
 describe('sdk.outputSelection validation', () => {
+  it.each([{ enabled: 'true' }, { maxBytes: 0 }, { maxBytes: 1.5 }, { maxBytes: 52428801 }, null])('rejects invalid native image options %j', nativeImages => {
+    expect(() => boot({ sdk: { nativeImages } })).toThrow('sdk.nativeImages');
+  });
+  it('keeps native images opt-in and inherits configured size limits', () => {
+    expect(boot({})[0].sdk.nativeImages?.enabled).not.toBe(true);
+    expect(boot({ sdk: { nativeImages: { enabled: true, maxBytes: 1048576 } } })[0].sdk.nativeImages).toEqual({ enabled: true, maxBytes: 1048576 });
+  });
   it.each(['final', 'phase', 'heuristic', 'legacy'])('accepts %s', (mode) => {
     const [bot] = boot({ sdk: { outputSelection: mode } });
     expect(bot.sdk.outputSelection).toBe(mode);

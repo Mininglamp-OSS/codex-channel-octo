@@ -150,7 +150,7 @@ export function splitMessage(
 
 export interface DeliveryPart { clientMsgNo: string; state: 'confirmed' | 'unknown'; messageId?: string; }
 export interface DeliveryReport { parts: DeliveryPart[]; }
-function confirmedMessageId(value: unknown): string | undefined {
+export function confirmedMessageId(value: unknown): string | undefined {
   const id = typeof value === 'string' ? value : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : '';
   // parseOctoJson preserves large numeric tokens as strings, including malformed
   // leading-zero tokens. Only canonical positive decimal int64 identities may

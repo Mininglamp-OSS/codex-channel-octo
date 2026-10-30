@@ -75,6 +75,16 @@ npm install -g @mininglamp-oss/codex-channel-octo
 
 ## 配置
 
+### 原生出站图片（需显式启用）
+
+设置 `sdk.nativeImages.enabled:true`，配合可写 sandbox 和 `final` 输出选择，
+即可将明确声明的 PNG/JPEG/GIF artifact 作为原生图片投递到当前会话。
+先发送文字，再按顺序发送最多四张图片，最后逐项报告状态。
+正文中的路径、Markdown 图片或 URL 不会触发上传。入站图片下载、channel 原生
+出站图片、外部 octo-cli 技能分别配置和授权；此功能不提供图片生成模型。
+详见[配置、协议、限制与待验收项](docs/native-images.md)。服务端限制、GIF 动画
+行为以及真实私聊/群聊预览仍待独立身份人工验证。
+
 服务器说明使用独立的 `[Server document — ...]` 数据标记，不复用伪造标记 `[Group context]` 或聊天记录标签。新会话的空文档不注入提示；仅对之前真正收到文档的续接 SDK 线程发送撤回，新线程重试不补入空文档。慢速刷新期间再次编辑时保留最后成功核验的快照，不静默丢弃。正文角色/章节标记被转义，VT/FF/NEL 转换为换行，这是有意的输入改写。
 
 两层配置,bot-first:

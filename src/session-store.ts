@@ -5,6 +5,7 @@
 import type { DbAdapter, PreparedStatement } from './db-adapter.js';
 import type { ThreadProblem } from './error-details.js';
 import { escapeRoleLabels, sanitizeDisplayName } from './prompt-safety.js';
+import type { ImageDelivery } from './image-delivery.js';
 
 export interface Session {
   id: string;
@@ -51,6 +52,12 @@ CREATE TABLE IF NOT EXISTS delivery_parts (
   turn_id TEXT NOT NULL, part_index INTEGER NOT NULL, client_msg_no TEXT NOT NULL UNIQUE,
   payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', message_id TEXT,
   PRIMARY KEY(turn_id, part_index)
+);
+CREATE TABLE IF NOT EXISTS image_deliveries (
+  turn_id TEXT NOT NULL, artifact_id TEXT NOT NULL, part_index INTEGER NOT NULL,
+  generation TEXT NOT NULL, upload TEXT NOT NULL, delivery TEXT NOT NULL,
+  client_msg_no TEXT NOT NULL, message_id TEXT,
+  PRIMARY KEY(turn_id, artifact_id)
 );
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -198,8 +205,25 @@ export class SessionStore {
   saveTurnOutput(turnId: string, session: string, text: string, seq?: number, bot?: string): void {
     this.adapter.prepare('INSERT INTO turn_outputs(turn_id,session_key,content,message_seq,bot_name,created_at) VALUES (?,?,?,?,?,?)').run(turnId, session, text, seq ?? null, bot ?? null, Date.now());
   }
+  appendTurnOutputStatus(turnId: string, status: string): void {
+    this.adapter.prepare("UPDATE turn_outputs SET content=content || char(10) || char(10) || ? WHERE turn_id=? AND state='generated'").run(status, turnId);
+  }
   saveDeliveryPart(turnId: string, index: number, clientMsgNo: string, payload: string): void {
     this.adapter.prepare('INSERT INTO delivery_parts(turn_id,part_index,client_msg_no,payload) VALUES (?,?,?,?)').run(turnId, index, clientMsgNo, payload);
+  }
+  saveImageDeliveries(turnId: string, images: ReadonlyArray<ImageDelivery>): void {
+    this.adapter.transaction(() => images.forEach((r, i) => {
+      this.adapter.prepare('INSERT INTO image_deliveries VALUES (?,?,?,?,?,?,?,?)')
+        .run(turnId, r.id, i, r.generation, r.upload, r.delivery, r.clientMsgNo, r.messageId ?? null);
+    }))();
+  }
+  updateImageDelivery(turnId: string, r: ImageDelivery): void {
+    this.adapter.prepare('UPDATE image_deliveries SET generation=?, upload=?, delivery=?, message_id=? WHERE turn_id=? AND artifact_id=?')
+      .run(r.generation, r.upload, r.delivery, r.messageId ?? null, turnId, r.id);
+  }
+  readImageDeliveries(turnId: string): ImageDelivery[] {
+    return this.adapter.prepare('SELECT artifact_id AS id, generation, upload, delivery, client_msg_no AS clientMsgNo, message_id AS messageId FROM image_deliveries WHERE turn_id=? ORDER BY part_index')
+      .all(turnId) as ImageDelivery[];
   }
   saveDeliveryParts(turnId: string, parts: Array<{ clientMsgNo: string; payload: string }>): void {
     this.adapter.transaction(() => parts.forEach((part,index) => this.saveDeliveryPart(turnId,index,part.clientMsgNo,part.payload)))();
@@ -376,6 +400,7 @@ export class SessionStore {
       AND NOT EXISTS (SELECT 1 FROM turn_execution e
         WHERE e.turn_id=o.turn_id AND e.state IN ('active','quarantined'))`;
     this.adapter.prepare(`DELETE FROM delivery_parts WHERE turn_id IN (${expiredOutput})`).run(cutoff);
+    this.adapter.prepare(`DELETE FROM image_deliveries WHERE turn_id IN (${expiredOutput})`).run(cutoff);
     this.adapter.prepare(`DELETE FROM turn_outputs WHERE turn_id IN (${expiredOutput})`).run(cutoff);
     const result = this.deleteExpired.run(cutoff);
     // Expire the SDK-session mapping on the same 7-day TTL. sdk_sessions is a
@@ -390,6 +415,7 @@ export class SessionStore {
   }
 
   deleteSession(sessionId: string): void {
+    this.adapter.prepare('DELETE FROM image_deliveries WHERE turn_id IN (SELECT turn_id FROM turn_outputs WHERE session_key=?)').run(sessionId);
     this.adapter.prepare('DELETE FROM delivery_parts WHERE turn_id IN (SELECT turn_id FROM turn_outputs WHERE session_key=?)').run(sessionId);
     this.adapter.prepare('DELETE FROM turn_outputs WHERE session_key=?').run(sessionId);
     this.deleteSessionStmt.run(sessionId);

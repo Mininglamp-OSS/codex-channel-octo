@@ -50,6 +50,7 @@
  */
 
 import type { AgentOutputEvent, MessagePhase } from './agent-bridge.js';
+import { decodeArtifactEnvelope, type ImageArtifact } from './artifacts.js';
 
 /** Truncation suffix appended to an over-limit reply. Shared with stream-relay. */
 export const TRUNCATION_SUFFIX = '\n\n[response truncated]';
@@ -87,8 +88,7 @@ export interface SelectedOutput {
    * compatibility modes retain their historical cross-pool non-empty count. */
   droppedMessageCount: number;
   truncated: boolean;
-  /** Reserved slot: there is no outbound attachment producer at this version. */
-  artifacts: ReadonlyArray<never>;
+  artifacts: ReadonlyArray<ImageArtifact>;
 }
 
 /** Length floor of the substantive-loss guard (R2 only). */
@@ -166,6 +166,7 @@ function joinedLength(msgs: CollectedMessage[], sep: string): number {
 export class OutputCollector {
   private readonly attempts = new Map<number, AttemptRecord>();
   private finalAttempt: number | undefined;
+  private artifactRequestId?: string;
 
   push(ev: AgentOutputEvent): void {
     switch (ev.kind) {
@@ -214,8 +215,11 @@ export class OutputCollector {
     return this.attempts.size;
   }
 
-  select(opts: { mode: OutputSelectionMode; maxChars: number }): SelectedOutput {
+  select(opts: { mode: OutputSelectionMode; maxChars: number; artifactRequestId?: string }): SelectedOutput {
     const F = this.finalAttempt === undefined ? undefined : this.attempts.get(this.finalAttempt);
+    // Only complete primary final-mode runs may authorize artifacts. Compatibility
+    // joins, lineage and partial replies must not acquire new upload semantics.
+    this.artifactRequestId = opts.mode === 'final' && F?.terminal === 'completed' ? opts.artifactRequestId : undefined;
     if (!F) return this.finish([], 'empty', 'primary', 0, opts.maxChars, JOIN);
 
     const P = this.nonEmptyMessages(F);
@@ -325,7 +329,9 @@ export class OutputCollector {
     sep: string,
   ): SelectedOutput {
     const joined = selected.map((m) => m.text).join(sep);
-    const capped = capSelected(joined, maxChars);
+    const decoded = this.artifactRequestId && pool === 'primary' && !source.includes('partial') && !source.startsWith('commentary')
+      ? decodeArtifactEnvelope(joined, this.artifactRequestId) : { text: joined, artifacts: [] };
+    const capped = capSelected(decoded.text, maxChars);
     return {
       text: capped.text,
       source,
@@ -333,7 +339,7 @@ export class OutputCollector {
       messageIds: selected.map((m) => m.itemId),
       droppedMessageCount: eligibleCount - selected.length,
       truncated: capped.truncated,
-      artifacts: [],
+      artifacts: decoded.artifacts,
     };
   }
 }

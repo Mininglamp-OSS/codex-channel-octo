@@ -5,7 +5,7 @@
  * the agent bridge are mocked; the bridge is scripted with typed events.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,6 +30,10 @@ vi.mock('../octo/socket.js', () => ({
   WKSocket: vi.fn().mockImplementation(() => ({
     connect: vi.fn(), disconnectAndWait: vi.fn().mockResolvedValue(undefined),
   })),
+}));
+vi.mock('../octo/media.js', () => ({
+  uploadArtifact: vi.fn().mockResolvedValue('https://cdn.example/image.png'),
+  sendNativeImage: vi.fn().mockResolvedValue({ message_id: '456' }),
 }));
 
 vi.mock('../media-inbound.js', async (importOriginal) => {
@@ -56,6 +60,7 @@ import { queryAgentEvents, type AgentOutputEvent } from '../agent-bridge.js';
 import { resolveMentions } from '../mention-utils.js';
 import { handleMessage, startBot } from '../index.js';
 import { sendMessage, getGroupMembers } from '../octo/api.js';
+import { uploadArtifact, sendNativeImage } from '../octo/media.js';
 import { ChannelType, MessageType, type BotMessage } from '../octo/types.js';
 import type { Config } from '../config.js';
 import { TRUNCATION_SUFFIX } from '../output-selection.js';
@@ -181,6 +186,32 @@ describe('output selection wiring', () => {
     expect(historyInputs()).toEqual(['two']);
     expect(sentContents()).toEqual(['two']);
     expect(relayInputs()).toEqual(['two']);
+  });
+  it.each([{ group: false, fail: false }, { group: true, fail: false }, { group: false, fail: true }])('wires current-turn images after text without model replay (%j)', async ({ group, fail }) => {
+    const root = mkdtempSync(join(tmpdir(), 'cco-images-wiring-'));
+    const config = makeConfig({ cwd: root }, { nativeImages: { enabled: true }, sandboxMode: 'workspace-write', allowWorkspaceWrite: true });
+    setup(config);
+    if (fail) vi.mocked(sendNativeImage).mockRejectedValueOnce(new Error('SECRET signed-url contents'));
+    vi.mocked(queryAgentEvents).mockImplementation(async function* (_body, _config, _session, _tool, opts) {
+      const output = opts!.nativeImageOutput!;
+      expect(output.requestId).toBeTruthy();
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64');
+      writeFileSync(join(output.directory, 'one.png'), png);
+      yield start();
+      yield m('image', 0, JSON.stringify({ octo_output: 1, requestId: output.requestId, text: 'Your image.',
+        artifacts: [{ id: 'one', kind: 'image', path: 'one.png', disposition: 'relay' }] }));
+      yield end();
+    });
+    try {
+      await run(config, group ? groupMsg('send an image') : dm('send an image'));
+      expect(sentContents()[0]).toBe('Your image.');
+      expect(sentContents()[1]).toContain(`delivery=${fail ? 'unknown' : 'confirmed'}`);
+      expect(historyInputs()[0]).toBe(sentContents().join('\n\n'));
+      expect(vi.mocked(sendMessage).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(uploadArtifact).mock.invocationCallOrder[0]);
+      expect(vi.mocked(sendNativeImage).mock.calls[0][0]).toMatchObject({ channelId: group ? GROUP : USER_UID, channelType: group ? 2 : 1 });
+      expect(vi.mocked(queryAgentEvents)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(sendNativeImage)).toHaveBeenCalledTimes(1);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it('publishes and stores only the short tail after long unlabeled output', async () => {
