@@ -28,11 +28,29 @@ import {
 import { basename, dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
 import type { DbAdapter } from '../db-adapter.js';
+import { decodeStrictUtf8, readPrivateRegularFile } from './safe-file.js';
 
 // ─── Versioning ─────────────────────────────────────────────────────────────
 
 export const CARD_SCHEMA_FAMILY = 'card_v1';
-export const CARD_SCHEMA_VERSION = 1;
+/** Stable replay namespace; a stream change requires explicit reconciliation. */
+export const EVENT_SCOPE_PREFIX = 'card-event-v1:';
+/**
+ * Version 2 is the intent-capable store: the DDL is unchanged and only
+ * `card_meta` gains `intent_legacy`, the exact set of automatic cards that
+ * were live when the store was upgraded from version 1. An older binary sees
+ * a newer version and leaves cards inert (DTI-2.1 §2.2).
+ *
+ * Version 3 (SC-1) adds the nullable app-server settlement and late-outcome
+ * audit columns to `card_explicit_requests` ({@link CARD_V3_DDL}); no
+ * existing column, constraint or trigger changes.
+ * Version 4 adds the success-only settings ledger and replay consistency guards.
+ */
+export const CARD_SCHEMA_VERSION = 4;
+/** Older versions this binary can upgrade in place. */
+const CARD_SCHEMA_VERSION_V1 = 1;
+const CARD_SCHEMA_VERSION_V2 = 2;
+const CARD_SCHEMA_VERSION_V3 = 3;
 export const CARD_EXPLICIT_LEDGER_VERSION = 1;
 export const CARD_META_CREATED_BY = 'codex-channel-octo';
 
@@ -50,6 +68,7 @@ export const CARD_TABLES = [
   'card_event_cursor',
   'card_handler_generations',
   'card_explicit_requests',
+  'card_event_invalidations',
 ] as const;
 export type CardTable = (typeof CARD_TABLES)[number];
 
@@ -252,6 +271,74 @@ WHEN NEW.body_digest IS NOT OLD.body_digest OR NEW.opcode IS NOT OLD.opcode
 BEGIN SELECT RAISE(ABORT, 'card_explicit_requests record is immutable'); END`,
 ];
 
+/**
+ * Version 3 additions (SC-1), applied after {@link CARD_V1_DDL} on both a
+ * fresh install and an upgrade so the stored SQL is identical either way.
+ * `settled_by` marks a row the app-server dispatcher finished; once such a
+ * row is `ambiguous` its state never changes again, and a late transport
+ * outcome is written once to the `late_*` audit columns only.
+ */
+export const CARD_V3_DDL: readonly string[] = [
+  `ALTER TABLE card_explicit_requests ADD COLUMN settled_by TEXT CHECK(settled_by IS NULL OR settled_by = 'app_server')`,
+  `ALTER TABLE card_explicit_requests ADD COLUMN late_outcome TEXT CHECK(late_outcome IS NULL OR late_outcome IN ('acked','failed'))`,
+  `ALTER TABLE card_explicit_requests ADD COLUMN late_message_id TEXT`,
+  `ALTER TABLE card_explicit_requests ADD COLUMN late_at INTEGER`,
+  `CREATE TRIGGER IF NOT EXISTS trg_card_explicit_requests_settled
+BEFORE UPDATE ON card_explicit_requests
+WHEN (OLD.settled_by IS NOT NULL AND NEW.settled_by IS NOT OLD.settled_by)
+  OR (OLD.settled_by IS NOT NULL AND OLD.state = 'ambiguous' AND NEW.state IS NOT OLD.state)
+  OR (OLD.late_outcome IS NOT NULL AND (NEW.late_outcome IS NOT OLD.late_outcome
+    OR NEW.late_message_id IS NOT OLD.late_message_id OR NEW.late_at IS NOT OLD.late_at))
+  OR (NEW.late_outcome IS NOT NULL AND (NEW.settled_by IS NULL OR NEW.state <> 'ambiguous' OR NEW.late_at IS NULL))
+  OR (NEW.late_outcome IS NULL AND (NEW.late_message_id IS NOT NULL OR NEW.late_at IS NOT NULL))
+  OR (NEW.late_message_id IS NOT NULL AND NEW.late_outcome IS NOT 'acked')
+BEGIN SELECT RAISE(ABORT, 'card_explicit_requests settlement is immutable'); END`,
+];
+
+/** Additive settings success and immutable replay identity; historical DDL is unchanged. */
+export const CARD_V4_DDL: readonly string[] = [
+  `CREATE TABLE card_event_invalidations (
+  event_id TEXT PRIMARY KEY,
+  consumer_scope TEXT NOT NULL,
+  event_class TEXT NOT NULL CHECK(event_class = 'bot_setting_updated'),
+  settings_scope TEXT NOT NULL CHECK(settings_scope = 'bot_setting'),
+  position_ref TEXT NOT NULL,
+  previous_position_ref TEXT,
+  envelope_digest TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  retain_until INTEGER NOT NULL CHECK(retain_until >= created_at + 86400000),
+  UNIQUE(consumer_scope, position_ref)
+)`,
+  `CREATE TRIGGER trg_card_event_invalidations_final BEFORE UPDATE ON card_event_invalidations
+BEGIN SELECT RAISE(ABORT, 'card_event_invalidations are final'); END`,
+  `CREATE TRIGGER trg_card_event_invalidations_exclusive BEFORE INSERT ON card_event_invalidations
+WHEN EXISTS (SELECT 1 FROM card_event_dispositions WHERE event_id = NEW.event_id)
+  OR EXISTS (SELECT 1 FROM card_event_attempts WHERE event_id = NEW.event_id)
+BEGIN SELECT RAISE(ABORT, 'contradictory event ledger'); END`,
+  `CREATE TRIGGER trg_card_event_dispositions_exclusive BEFORE INSERT ON card_event_dispositions
+WHEN EXISTS (SELECT 1 FROM card_event_invalidations WHERE event_id = NEW.event_id)
+BEGIN SELECT RAISE(ABORT, 'contradictory event ledger'); END`,
+  `CREATE TRIGGER trg_card_event_attempts_exclusive BEFORE INSERT ON card_event_attempts
+WHEN EXISTS (SELECT 1 FROM card_event_invalidations WHERE event_id = NEW.event_id)
+BEGIN SELECT RAISE(ABORT, 'contradictory event ledger'); END`,
+  `CREATE TRIGGER trg_card_event_attempts_identity BEFORE UPDATE ON card_event_attempts
+WHEN NEW.event_id IS NOT OLD.event_id OR NEW.consumer_scope IS NOT OLD.consumer_scope
+  OR NEW.event_class IS NOT OLD.event_class OR NEW.session_id IS NOT OLD.session_id
+  OR NEW.message_id IS NOT OLD.message_id OR NEW.position_ref IS NOT OLD.position_ref
+  OR NEW.previous_position_ref IS NOT OLD.previous_position_ref OR NEW.envelope_digest IS NOT OLD.envelope_digest
+  OR EXISTS (SELECT 1 FROM card_event_invalidations WHERE event_id = NEW.event_id)
+BEGIN SELECT RAISE(ABORT, 'event replay identity is immutable'); END`,
+];
+
+function ddlFor(version: 1 | 2 | 3 | 4): readonly string[] {
+  return [...CARD_V1_DDL, ...(version >= 3 ? CARD_V3_DDL : []), ...(version >= 4 ? CARD_V4_DDL : [])];
+}
+
+/** Historical inspection must never query tables that did not exist yet. */
+export function cardTablesFor(version: number): readonly CardTable[] {
+  return version >= 4 ? CARD_TABLES : CARD_TABLES.filter((t) => t !== 'card_event_invalidations');
+}
+
 // ─── Reference schema and hash ──────────────────────────────────────────────
 
 export interface SchemaObject {
@@ -274,14 +361,18 @@ function readCardObjects(adapter: DbAdapter): SchemaObject[] {
   return rows.map((r) => ({ type: r.type, name: r.name, tblName: r.tblName, sql: r.sql ?? '' }));
 }
 
-let referenceCache: { objects: SchemaObject[]; hash: string } | null = null;
+const referenceCache = new Map<number, { objects: SchemaObject[]; hash: string }>();
 
-/** The exact card object set produced by `CARD_V1_DDL` on a pristine database. */
-export function referenceSchema(): { objects: readonly SchemaObject[]; hash: string } {
-  if (referenceCache) return referenceCache;
+/**
+ * The exact card object set of `version` (default: current) on a pristine
+ * database: `CARD_V1_DDL` for versions 1 and 2, plus `CARD_V3_DDL` for 3.
+ */
+export function referenceSchema(version: 1 | 2 | 3 | 4 = CARD_SCHEMA_VERSION): { objects: readonly SchemaObject[]; hash: string } {
+  const cached = referenceCache.get(version);
+  if (cached) return cached;
   const db = new Database(':memory:');
   try {
-    for (const stmt of CARD_V1_DDL) db.exec(stmt);
+    for (const stmt of ddlFor(version)) db.exec(stmt);
     const objects = (db
       .prepare(
         `SELECT type, name, tbl_name AS tblName, sql FROM sqlite_master
@@ -289,8 +380,9 @@ export function referenceSchema(): { objects: readonly SchemaObject[]; hash: str
       )
       .all() as Array<{ type: string; name: string; tblName: string; sql: string | null }>)
       .map((r) => ({ type: r.type, name: r.name, tblName: r.tblName, sql: r.sql ?? '' }));
-    referenceCache = { objects, hash: hashObjects(objects) };
-    return referenceCache;
+    const ref = { objects, hash: hashObjects(objects) };
+    referenceCache.set(version, ref);
+    return ref;
   } finally {
     db.close();
   }
@@ -306,13 +398,19 @@ function hashObjects(objects: readonly SchemaObject[]): string {
 
 export interface CardMeta {
   readonly schemaFamily: string;
-  readonly schemaVersion: number;
+  readonly schemaVersion: 1 | 2 | 3 | 4;
   readonly explicitLedgerVersion: number;
   readonly schemaHash: string;
   readonly lineageId: string;
   readonly installationRef: string;
   readonly createdBy: string;
   readonly createdAt: number;
+  /**
+   * Automatic cards written before durable terminal intent existed; never
+   * adopted, given intent or edited by recovery. Empty for version 1 until
+   * the upgrade records it.
+   */
+  readonly legacyIntentCards: ReadonlySet<string>;
 }
 
 export type SchemaInspection =
@@ -333,6 +431,41 @@ const META_KEYS = [
   'created_at',
 ] as const;
 
+/** Version 2 key holding the exact legacy automatic card set. */
+export const INTENT_LEGACY_KEY = 'intent_legacy';
+export const INTENT_LEGACY_FORMAT = 1;
+export const MAX_INTENT_LEGACY_CARDS = 2048;
+const MAX_CARD_ID_BYTES = 1024;
+
+/** Canonical `intent_legacy` text: sorted, unique ids. */
+export function serializeIntentLegacy(cards: Iterable<string>): string {
+  const ids = [...new Set(cards)].sort();
+  return JSON.stringify({ format: INTENT_LEGACY_FORMAT, cards: ids });
+}
+
+/**
+ * Parse `intent_legacy`. Only the exact canonical serialization is accepted,
+ * so ordering, duplicates, extra keys and whitespace are all rejected.
+ */
+export function parseIntentLegacy(text: string): ReadonlySet<string> | null {
+  let v: unknown;
+  try {
+    v = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  if (Object.keys(o).length !== 2 || o.format !== INTENT_LEGACY_FORMAT || !Array.isArray(o.cards)) return null;
+  const cards = o.cards as unknown[];
+  if (cards.length > MAX_INTENT_LEGACY_CARDS) return null;
+  for (const id of cards) {
+    if (typeof id !== 'string' || id.length === 0 || Buffer.byteLength(id, 'utf8') > MAX_CARD_ID_BYTES) return null;
+  }
+  if (serializeIntentLegacy(cards as string[]) !== text) return null;
+  return new Set(cards as string[]);
+}
+
 function readMetaRaw(adapter: DbAdapter): Map<string, string> {
   const rows = adapter.prepare('SELECT k, v FROM card_meta').all() as Array<{ k: unknown; v: unknown }>;
   const out = new Map<string, string>();
@@ -352,12 +485,25 @@ function parseMeta(raw: Map<string, string>): CardMeta | 'newer' | null {
   if (ledger !== undefined && DECIMAL.test(ledger) && Number(ledger) > CARD_EXPLICIT_LEDGER_VERSION) return 'newer';
   const family = raw.get('schema_family');
   if (family !== undefined && family !== CARD_SCHEMA_FAMILY && /^card_v[0-9]+$/.test(family)) return 'newer';
-  if (raw.size !== META_KEYS.length) return null;
+  // Version 1 has exactly the base keys; versions 2 through 4 add exactly `intent_legacy`.
+  let schemaVersion: 1 | 2 | 3 | 4;
+  if (version === String(CARD_SCHEMA_VERSION_V1)) schemaVersion = 1;
+  else if (version === String(CARD_SCHEMA_VERSION_V2)) schemaVersion = 2;
+  else if (version === String(CARD_SCHEMA_VERSION_V3)) schemaVersion = 3;
+  else if (version === String(CARD_SCHEMA_VERSION)) schemaVersion = 4;
+  else return null;
+  if (raw.size !== META_KEYS.length + (schemaVersion >= 2 ? 1 : 0)) return null;
   for (const k of META_KEYS) if (!raw.has(k)) return null;
+  let legacyIntentCards: ReadonlySet<string> = new Set<string>();
+  if (schemaVersion >= 2) {
+    const legacy = raw.get(INTENT_LEGACY_KEY);
+    const parsed = legacy === undefined ? null : parseIntentLegacy(legacy);
+    if (parsed === null) return null;
+    legacyIntentCards = parsed;
+  }
   const createdAt = raw.get('created_at') as string;
   if (
     family !== CARD_SCHEMA_FAMILY ||
-    version !== String(CARD_SCHEMA_VERSION) ||
     ledger !== String(CARD_EXPLICIT_LEDGER_VERSION) ||
     raw.get('created_by') !== CARD_META_CREATED_BY ||
     !DECIMAL.test(createdAt)
@@ -369,13 +515,14 @@ function parseMeta(raw: Map<string, string>): CardMeta | 'newer' | null {
   if (!isSafeRef(lineageId) || !isSafeRef(installationRef)) return null;
   return {
     schemaFamily: family,
-    schemaVersion: CARD_SCHEMA_VERSION,
+    schemaVersion,
     explicitLedgerVersion: CARD_EXPLICIT_LEDGER_VERSION,
     schemaHash: raw.get('schema_hash') as string,
     lineageId,
     installationRef,
     createdBy: CARD_META_CREATED_BY,
     createdAt: Number(createdAt),
+    legacyIntentCards,
   };
 }
 
@@ -396,6 +543,9 @@ export function inspectCardSchema(adapter: DbAdapter): SchemaInspection {
 
   // A newer binary may have rewritten or extended the schema; check its
   // declared version first so the rejection names the real cause.
+  // The declared version selects the reference; anything unparsable is
+  // compared against the current one and then fails on its metadata.
+  let declared: 1 | 2 | 3 | 4 = CARD_SCHEMA_VERSION;
   if (actual.some((o) => o.type === 'table' && o.name === 'card_meta')) {
     let raw: Map<string, string> | null = null;
     try {
@@ -408,9 +558,10 @@ export function inspectCardSchema(adapter: DbAdapter): SchemaInspection {
       const v = raw.get('schema_version');
       return { state: 'newer', schemaVersion: v !== undefined && DECIMAL.test(v) ? Number(v) : CARD_SCHEMA_VERSION + 1 };
     }
+    if (parsed !== null) declared = parsed.schemaVersion;
   }
 
-  const ref = referenceSchema();
+  const ref = referenceSchema(declared);
   const refByKey = new Map(ref.objects.map((o) => [`${o.type}:${o.name}`, o]));
   const actualByKey = new Map(actual.map((o) => [`${o.type}:${o.name}`, o]));
   for (const key of actualByKey.keys()) {
@@ -434,7 +585,7 @@ export function inspectCardSchema(adapter: DbAdapter): SchemaInspection {
     return { state: 'unknown', detail: 'meta_invalid' };
   }
   const meta = parseMeta(raw);
-  if (meta === null || meta === 'newer' || meta.schemaHash !== ref.hash) {
+  if (meta === null || meta === 'newer' || meta.schemaVersion !== declared || meta.schemaHash !== ref.hash) {
     return { state: 'unknown', detail: 'meta_invalid' };
   }
   return { state: 'complete', meta };
@@ -452,14 +603,22 @@ export type InvariantViolation =
   | 'admission_session_state'
   | 'session_card_kind'
   | 'disposition_admission'
-  | 'cursor_halt';
+  | 'cursor_halt'
+  | 'terminal_intent_shape'
+  | 'intent_legacy_conflict'
+  | 'event_ledger_conflict'
+  | 'event_identity_conflict';
+
+/** Ids listed in `intent_legacy`; no rows for a version 1 store. */
+export const LEGACY_IDS_SQL = `SELECT value FROM json_each((SELECT v FROM card_meta WHERE k = '${INTENT_LEGACY_KEY}'), '$.cards')`;
 
 /** Full integrity, FK closure and cross-row invariant check of the card graph. */
 export function checkCardInvariants(adapter: DbAdapter): InvariantViolation[] {
   const out: InvariantViolation[] = [];
   const integrity = adapter.prepare('PRAGMA integrity_check').all() as Array<Record<string, unknown>>;
   if (integrity.length !== 1 || Object.values(integrity[0] ?? {})[0] !== 'ok') out.push('integrity_check');
-  for (const table of CARD_TABLES) {
+  const version = Number((adapter.prepare("SELECT v FROM card_meta WHERE k = 'schema_version'").get() as { v: string } | undefined)?.v);
+  for (const table of cardTablesFor(version)) {
     if (adapter.prepare(`PRAGMA foreign_key_check(${table})`).all().length > 0) {
       out.push('foreign_key');
       break;
@@ -517,13 +676,36 @@ export function checkCardInvariants(adapter: DbAdapter): InvariantViolation[] {
   if (one(`SELECT 1 FROM card_event_cursor WHERE halted_reason IS NOT NULL AND length(halted_reason) = 0`)) {
     out.push('cursor_halt');
   }
+  // A live row may carry a terminal reason only as the durable intent of a
+  // bound automatic card that has reserved its terminal sequence.
+  if (
+    one(`SELECT 1 FROM card_messages WHERE terminal_at IS NULL AND terminal_reason IS NOT NULL
+         AND NOT (kind = 'automatic' AND message_id IS NOT NULL AND seq_reserved >= 1 AND state IN ('active','answering'))`)
+  ) {
+    out.push('terminal_intent_shape');
+  }
+  if (
+    one(`SELECT 1 FROM card_messages m WHERE m.terminal_at IS NULL AND m.terminal_reason IS NOT NULL
+         AND m.card_id IN (${LEGACY_IDS_SQL})`)
+  ) {
+    out.push('intent_legacy_conflict');
+  }
+  if (version >= 4) {
+    if (one(`SELECT 1 FROM card_event_invalidations i WHERE
+      EXISTS (SELECT 1 FROM card_event_dispositions d WHERE d.event_id = i.event_id)
+      OR EXISTS (SELECT 1 FROM card_event_attempts a WHERE a.event_id = i.event_id)`)) out.push('event_ledger_conflict');
+    if (one(`SELECT 1 FROM card_event_dispositions d JOIN card_event_attempts a USING(event_id)
+      WHERE d.consumer_scope IS NOT a.consumer_scope OR d.event_class IS NOT a.event_class
+        OR d.session_id IS NOT a.session_id`)) out.push('event_identity_conflict');
+  }
   return out;
 }
 
 /** Rows in the protected card graph, excluding `card_meta`. */
 export function countProtectedRows(adapter: DbAdapter): number {
   let total = 0;
-  for (const table of CARD_TABLES) {
+  const version = Number((adapter.prepare("SELECT v FROM card_meta WHERE k = 'schema_version'").get() as { v: string } | undefined)?.v);
+  for (const table of cardTablesFor(version)) {
     if (table === 'card_meta') continue;
     total += (adapter.prepare(`SELECT count(*) AS c FROM ${table}`).get() as { c: number }).c;
   }
@@ -551,9 +733,11 @@ export function migrateCardSchema(adapter: DbAdapter, input: MigrationInput): Ca
   const ref = referenceSchema();
   adapter.exec('BEGIN IMMEDIATE');
   try {
-    for (const stmt of CARD_V1_DDL) adapter.exec(stmt);
+    // A partial install has no metadata yet; only a fresh family gets the v3 columns.
+    const fresh = readCardObjects(adapter).length === 0;
+    for (const stmt of fresh ? ddlFor(CARD_SCHEMA_VERSION) : CARD_V1_DDL) adapter.exec(stmt);
     const insert = adapter.prepare('INSERT OR IGNORE INTO card_meta (k, v) VALUES (?, ?)');
-    const values: Record<(typeof META_KEYS)[number], string> = {
+    const values: Record<(typeof META_KEYS)[number] | typeof INTENT_LEGACY_KEY, string> = {
       schema_family: CARD_SCHEMA_FAMILY,
       schema_version: String(CARD_SCHEMA_VERSION),
       explicit_ledger_version: String(CARD_EXPLICIT_LEDGER_VERSION),
@@ -562,8 +746,10 @@ export function migrateCardSchema(adapter: DbAdapter, input: MigrationInput): Ca
       installation_ref: input.installationRef,
       created_by: CARD_META_CREATED_BY,
       created_at: String(Math.trunc(input.nowMs)),
+      // A fresh store has no card written without intent.
+      intent_legacy: serializeIntentLegacy([]),
     };
-    for (const k of META_KEYS) insert.run(k, values[k]);
+    for (const k of [...META_KEYS, INTENT_LEGACY_KEY] as const) insert.run(k, values[k]);
     const inspected = inspectCardSchema(adapter);
     if (inspected.state !== 'complete') throw new Error(`card schema not complete after migration: ${inspected.state}`);
     if (inspected.meta.installationRef !== input.installationRef) {
@@ -577,7 +763,105 @@ export function migrateCardSchema(adapter: DbAdapter, input: MigrationInput): Ca
   }
 }
 
+/**
+ * Upgrade a complete version 1 store to version 2 in one write transaction:
+ * record every live automatic card as legacy, then bump the version. More
+ * than `MAX_INTENT_LEGACY_CARDS` legacy cards, a lineage change or any
+ * invariant violation throws and rolls back, leaving version 1 untouched.
+ */
+export function upgradeCardSchemaV1toV2(adapter: DbAdapter, expectedLineageId: string): CardMeta {
+  if (adapter.inTransaction) throw new Error('card migration cannot run inside a transaction');
+  adapter.exec('BEGIN IMMEDIATE');
+  try {
+    const before = inspectCardSchema(adapter);
+    if (before.state !== 'complete' || before.meta.schemaVersion !== 1 || before.meta.lineageId !== expectedLineageId) {
+      throw new Error('card schema is not the expected version 1 store');
+    }
+    const legacy = (adapter
+      .prepare(`SELECT card_id FROM card_messages WHERE kind = 'automatic' AND terminal_at IS NULL ORDER BY card_id`)
+      .all() as Array<{ card_id: string }>).map((r) => r.card_id);
+    if (legacy.length > MAX_INTENT_LEGACY_CARDS) throw new Error('too many legacy automatic cards');
+    adapter.prepare('INSERT INTO card_meta (k, v) VALUES (?, ?)').run(INTENT_LEGACY_KEY, serializeIntentLegacy(legacy));
+    const bumped = adapter
+      .prepare(`UPDATE card_meta SET v = ? WHERE k = 'schema_version' AND v = ?`)
+      .run(String(CARD_SCHEMA_VERSION_V2), String(CARD_SCHEMA_VERSION_V1)).changes;
+    if (bumped !== 1) throw new Error('card schema version changed during upgrade');
+    const after = inspectCardSchema(adapter);
+    if (after.state !== 'complete' || after.meta.schemaVersion !== 2 || after.meta.lineageId !== expectedLineageId) {
+      throw new Error('card schema not complete after upgrade');
+    }
+    if (checkCardInvariants(adapter).length > 0) throw new Error('card invariants failed after upgrade');
+    adapter.exec('COMMIT');
+    return after.meta;
+  } catch (err) {
+    if (adapter.inTransaction) adapter.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
+ * Upgrade a complete version 2 store to version 3 (SC-1) in one write
+ * transaction: add the nullable settlement/audit columns and their trigger,
+ * then bump the version and schema hash. Existing rows keep every value
+ * (the new columns are NULL). Any failure rolls back to version 2.
+ */
+export function upgradeCardSchemaV2toV3(adapter: DbAdapter, expectedLineageId: string): CardMeta {
+  if (adapter.inTransaction) throw new Error('card migration cannot run inside a transaction');
+  adapter.exec('BEGIN IMMEDIATE');
+  try {
+    const before = inspectCardSchema(adapter);
+    if (before.state !== 'complete' || before.meta.schemaVersion !== 2 || before.meta.lineageId !== expectedLineageId) {
+      throw new Error('card schema is not the expected version 2 store');
+    }
+    for (const stmt of CARD_V3_DDL) adapter.exec(stmt);
+    const set = adapter.prepare(`UPDATE card_meta SET v = ? WHERE k = ? AND v = ?`);
+    if (set.run(String(CARD_SCHEMA_VERSION_V3), 'schema_version', String(CARD_SCHEMA_VERSION_V2)).changes !== 1
+      || set.run(referenceSchema(3).hash, 'schema_hash', referenceSchema(2).hash).changes !== 1) {
+      throw new Error('card schema metadata changed during upgrade');
+    }
+    const after = inspectCardSchema(adapter);
+    if (after.state !== 'complete' || after.meta.schemaVersion !== 3 || after.meta.lineageId !== expectedLineageId) {
+      throw new Error('card schema not complete after upgrade');
+    }
+    if (checkCardInvariants(adapter).length > 0) throw new Error('card invariants failed after upgrade');
+    adapter.exec('COMMIT');
+    return after.meta;
+  } catch (err) {
+    if (adapter.inTransaction) adapter.exec('ROLLBACK');
+    throw err;
+  }
+}
+
 // ─── Online backup ──────────────────────────────────────────────────────────
+
+/** Additive success ledger; all historical objects and existing facts remain intact. */
+export function upgradeCardSchemaV3toV4(adapter: DbAdapter, expectedLineageId: string): CardMeta {
+  if (adapter.inTransaction) throw new Error('card migration cannot run inside a transaction');
+  adapter.exec('BEGIN IMMEDIATE');
+  try {
+    const before = inspectCardSchema(adapter);
+    if (before.state !== 'complete' || before.meta.schemaVersion !== 3 || before.meta.lineageId !== expectedLineageId) {
+      throw new Error('card schema is not the expected version 3 store');
+    }
+    for (const stmt of CARD_V4_DDL) adapter.exec(stmt);
+    const set = adapter.prepare('UPDATE card_meta SET v = ? WHERE k = ? AND v = ?');
+    if (set.run('4', 'schema_version', '3').changes !== 1
+      || set.run(referenceSchema(4).hash, 'schema_hash', referenceSchema(3).hash).changes !== 1) {
+      throw new Error('card schema metadata changed during upgrade');
+    }
+    const after = inspectCardSchema(adapter);
+    if (after.state !== 'complete' || after.meta.schemaVersion !== 4
+      || after.meta.installationRef !== before.meta.installationRef || after.meta.lineageId !== expectedLineageId
+      || checkCardInvariants(adapter).length > 0) throw new Error('card schema not complete after upgrade');
+    adapter.exec('COMMIT');
+    return after.meta;
+  } catch (error) {
+    if (adapter.inTransaction) adapter.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export const UPGRADE_V4_BACKUP_LABEL = 'pre-card_v1-s4';
 
 export interface BackupReceipt {
   /** File name only; directories are deployment-private. */
@@ -596,19 +880,29 @@ function ensurePrivateDir(dir: string): void {
   chmodSync(dir, 0o700);
 }
 
+/** Backup label of the first install; unchanged so its file name stays the same. */
+export const FIRST_INSTALL_BACKUP_LABEL = `pre-${CARD_SCHEMA_FAMILY}`;
+/** Backup label of the version 1 → 2 upgrade. */
+export const UPGRADE_V2_BACKUP_LABEL = `pre-${CARD_SCHEMA_FAMILY}-s2`;
+/** Backup label before the SC-1 upgrade to version 3. */
+export const UPGRADE_V3_BACKUP_LABEL = `pre-${CARD_SCHEMA_FAMILY}-s3`;
+
 /**
- * Online pre-mutation backup: `<backupDir>/cc-octo.pre-card_v1.<utc>.db`,
- * mode 0600 inside a 0700 directory. The destination is created exclusively
- * before SQLite writes into it, and the copy must pass `integrity_check`
- * before the receipt is returned.
+ * Online pre-mutation backup: `<backupDir>/cc-octo.<label>.<utc>.db`
+ * (`pre-card_v1` by default), mode 0600 inside a 0700 directory. The
+ * destination is created exclusively before SQLite writes into it, and the
+ * copy must pass `integrity_check` before the receipt is returned.
  */
 export async function backupBeforeMigration(
   adapter: DbAdapter,
   backupDir: string,
   nowMs: number,
+  label: string = FIRST_INSTALL_BACKUP_LABEL,
 ): Promise<BackupReceipt> {
+  if (label !== FIRST_INSTALL_BACKUP_LABEL && label !== UPGRADE_V2_BACKUP_LABEL && label !== UPGRADE_V3_BACKUP_LABEL
+    && label !== UPGRADE_V4_BACKUP_LABEL) throw new Error('invalid backup label');
   ensurePrivateDir(backupDir);
-  const fileName = `cc-octo.pre-${CARD_SCHEMA_FAMILY}.${utcStamp(nowMs)}.db`;
+  const fileName = `cc-octo.${label}.${utcStamp(nowMs)}.db`;
   const path = join(backupDir, fileName);
   const fd = openSync(path, 'wx', 0o600);
   closeSync(fd);
@@ -736,14 +1030,18 @@ export function serializeActivationMarker(marker: ActivationMarker): string {
 export class FileActivationMarker implements ActivationMarkerPort {
   constructor(private readonly path: string) {}
 
+  /**
+   * Read through the shared provenance reader (S2-b): runs on the startup path
+   * under the Bot lock, so it never follows a symlink or blocks on a FIFO, and
+   * accepts only a private regular file within the marker's own byte bound.
+   * Missing is `absent`; anything else unreadable or malformed is `invalid`.
+   */
   read(): MarkerRead {
-    let text: string;
-    try {
-      text = readFileSync(this.path, 'utf8');
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { state: 'absent' };
-      return { state: 'invalid' };
-    }
+    const file = readPrivateRegularFile(this.path, MAX_MARKER_BYTES);
+    if (file.kind === 'missing') return { state: 'absent' };
+    if (file.kind === 'invalid') return { state: 'invalid' };
+    const text = decodeStrictUtf8(file.bytes);
+    if (text === null) return { state: 'invalid' };
     const marker = parseActivationMarker(text);
     return marker ? { state: 'present', marker } : { state: 'invalid' };
   }

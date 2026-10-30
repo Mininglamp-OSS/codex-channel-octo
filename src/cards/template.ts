@@ -1,10 +1,15 @@
 /** Exact Registry selection, independent from authored profile negotiation. */
-import type { CardProfileWire, PinnedTemplate, SafeReasonCode, ViewSpec } from "./contracts.js";
+import type { CardProfileName, CardProfileWire, PinnedTemplate, SafeReasonCode, ViewSpec } from "./contracts.js";
 import { closedRecord, measureStructure, profileString, stringList } from "./limits.js";
 
 const ID = "ai.reasoning-process";
-const VIEW_CONTRACT = { active: { version: "v2", states: ["reasoning", "answering"] },
-  error: { version: "v2", states: ["error"] }, result: { version: "v1", states: ["completed", "stopped"] } } as const;
+/**
+ * Each view's `wire_profile` must equal the canonical card profile name exactly
+ * (server `pkg/cardmsg` ProfileV1/ProfileV2); no alias, prefix or case folding.
+ */
+const VIEW_CONTRACT = { active: { version: "octo/v2", states: ["reasoning", "answering"] },
+  error: { version: "octo/v2", states: ["error"] }, result: { version: "octo/v1", states: ["completed", "stopped"] },
+} as const satisfies Record<string, { version: CardProfileName; states: readonly string[] }>;
 
 export function selectTemplate(profile: CardProfileWire): PinnedTemplate | SafeReasonCode {
   const raw: unknown = profile;
