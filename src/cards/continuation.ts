@@ -5,7 +5,7 @@ import { MessageType } from '../octo/types.js';
 import { sanitizePromptBody } from '../prompt-safety.js';
 import type { AutomaticTurn } from './lifecycle.js';
 import type { AdmissionReservation, ButtonSpec, ContinuationPort, ContinuationTurn, InputSpec, JsonObject } from './contracts.js';
-import type { CardSessionRecord } from './store.js';
+import type { CardSessionRecord, CardStore } from './store.js';
 import { canonicalEnvelope } from './topology.js';
 
 export interface TrustedContinuation {
@@ -19,6 +19,17 @@ export interface TrustedContinuation {
   readonly settle: (outcome: 'completed' | 'failed' | 'ambiguous') => void;
 }
 const trusted = new WeakMap<object, TrustedContinuation>();
+const dispatched = new WeakSet<object>();
+
+/** Startup reconciliation consumes durable claims; it never recreates a callable capability. */
+export function reconcileContinuation(store: Pick<CardStore, 'getAdmissionForSession' | 'markAdmissionAmbiguous'>,
+  sessionId: string): 'absent' | 'interrupted' | 'terminal' {
+  const admission = store.getAdmissionForSession(sessionId);
+  if (!admission) return 'absent';
+  if (admission.state === 'completed' || admission.state === 'failed') return 'terminal';
+  if (admission.state === 'admitted') store.markAdmissionAmbiguous(admission.admissionId);
+  return 'interrupted';
+}
 
 export function getContinuation(value: unknown): TrustedContinuation | undefined {
   return value !== null && typeof value === 'object' ? trusted.get(value) : undefined;
@@ -72,7 +83,8 @@ export function createContinuation(port: ContinuationPort): ContinuationPort {
     preflightContinuation: (turn: ContinuationTurn) => port.preflightContinuation(turn),
     async dispatchContinuation(turn: ContinuationTurn, reservation: AdmissionReservation) {
       const detail = getContinuation(turn);
-      if (!detail || !turn.admissionId) return;
+      if (!detail || !turn.admissionId || dispatched.has(turn)) return;
+      dispatched.add(turn);
       try {
         if (await detail.authorize() && detail.current()) await port.dispatchContinuation(turn, reservation);
       } finally {

@@ -1,7 +1,7 @@
 /** Requester-only WP12 admission. T0/retry/ACK remain owned by the event consumer. */
 import { createHash } from 'node:crypto';
 import type { ButtonSpec, ContinuationPort, ContinuationTurn, InputSpec, Limits } from './contracts.js';
-import { createContinuation, getContinuation, prepareContinuation } from './continuation.js';
+import { createContinuation, getContinuation, prepareContinuation, reconcileContinuation } from './continuation.js';
 import type { FakeActionHandler, FakeActionResult, FakeEvent, FakeEventSource, FakeStatusObserver } from './event-consumer.js';
 import { createInputNormalizer } from './input-normalize.js';
 import { validateInteractiveArgs } from './interactive-schema.js';
@@ -44,6 +44,12 @@ const hold = (): FakeActionResult => ({ kind: 'hold' });
 const retry = (): FakeActionResult => ({ kind: 'retry' });
 const hash = (value: unknown): string => createHash('sha256').update(canonicalEnvelope(value)).digest('hex');
 
+/** No callback payload or router return can turn a recovered claim back into pending work. */
+export function reconcileActionAdmission(store: Pick<CardStore, 'getAdmissionForSession' | 'markAdmissionAmbiguous'>,
+  sessionId: string): 'absent' | 'interrupted' | 'terminal' {
+  return reconcileContinuation(store, sessionId);
+}
+
 export function createActionAdmission(options: ActionAdmissionOptions): FakeActionHandler & { readonly statusObserver: FakeStatusObserver } {
   async function run(incoming: FakeEvent, signal: AbortSignal,
     notice?: { readonly status: 'Retrying' | 'Failed'; readonly current: () => boolean }): Promise<FakeActionResult> {
@@ -74,7 +80,11 @@ export function createActionAdmission(options: ActionAdmissionOptions): FakeActi
         && (session.channelType === 5 ? session.topicScope === session.channelId : session.topicScope === null);
     };
     const current = (): boolean => {
-      try { return source() && options.authenticate(event).actorUid === actor && contextMatches(); } catch { return false; }
+      try {
+        if (!source() || options.authenticate(event).actorUid !== actor || !contextMatches()) return false;
+        const message = options.store.getMessage(session.cardId);
+        return !!message && message.messageId === body.messageId && !['sending', 'ambiguous'].includes(message.state);
+      } catch { return false; }
     };
     if (!current()) return final('unauthorized');
     const authorized = async (): Promise<'allowed' | 'denied' | 'unavailable' | 'hold'> => {
@@ -110,7 +120,7 @@ export function createActionAdmission(options: ActionAdmissionOptions): FakeActi
     } catch { return hold(); }
     const show = async (status: ActionStatus, controls: boolean): Promise<void> => {
       const frameCurrent = (): boolean => {
-        if (!current() || !options.currentPolicy()) return false;
+        if (!current() || !options.currentPolicy() || options.store.unresolvedSendKinds().includes('interactive')) return false;
         const latest = options.store.getSession(session.sessionId);
         const admission = options.store.getAdmissionForSession(session.sessionId);
         if (!latest) return false;

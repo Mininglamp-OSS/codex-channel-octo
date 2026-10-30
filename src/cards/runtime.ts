@@ -59,6 +59,7 @@ import {
   prepareAutomaticRecovery,
   recoveryGrants,
   runAutomaticRecovery,
+  runInteractionRecovery,
   scanAutomaticRecovery,
   type AutomaticRecoveryResult,
   type CardQueueFactory,
@@ -382,6 +383,9 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
   });
   registry.register(queue);
   registry.register(policyOwner);
+  // Subsystem startup already reconciled claims. Maintenance is registered
+  // before any intake is constructed and fenced before the store lease retires.
+  if (ledgerRecovered(subsystem.store)) registry.register(runInteractionRecovery(subsystem.store, timers));
 
   // Explicit tools. G-b: with no op there is no host, listener or bootstrap
   // directory at all; G-g: the host also refuses a store whose ledger was not
@@ -471,7 +475,8 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
       currentPolicy: () => !closing && pacer.gate(api.origin).eligible && policy.authorize('interaction', { botRef }).allowed,
       limits: () => { const auth = policy.authorize('interaction', { botRef }); return auth.allowed ? auth.limits : undefined; },
       edit: async edit => {
-        if (closing || edit.signal.aborted || !pacer.gate(api.origin).eligible || !edit.current()) return;
+        if (closing || edit.signal.aborted || !pacer.gate(api.origin).eligible || !edit.current()
+          || subsystem.store.unresolvedSendKinds().includes('interactive')) return;
         const auth = policy.authorize('interaction', { botRef });
         if (!auth.allowed) return;
         const built = buildInteractiveCard({ title: edit.status, inputs: edit.controls ? edit.contract.inputs : [], buttons: edit.controls ? edit.contract.buttons : [] },
@@ -481,7 +486,8 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
         if (seq.kind !== 'reserved') return;
         try {
           if (closing || edit.signal.aborted || !pacer.gate(api.origin).eligible || !edit.current()
-            || !policy.authorize('interaction', { botRef }).allowed) return;
+            || !policy.authorize('interaction', { botRef }).allowed
+            || subsystem.store.unresolvedSendKinds().includes('interactive')) return;
           const ack = await api.editAuthored({ route: { channelId: edit.session.channelId, channelType: edit.session.channelType as 1 | 2 | 5 },
             messageId: edit.messageId, ...built.authored, plain: built.plain, seq: seq.seq, transient: false }, { signal: edit.signal });
           if (!closing && !edit.signal.aborted && edit.current() && ack.messageId === edit.messageId && ack.seq === seq.seq) subsystem.store.ackSequence(edit.session.cardId, seq.seq);

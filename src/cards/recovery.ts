@@ -45,10 +45,12 @@ import type { BackupReceipt, CardMeta, InvariantViolation } from "./migrations.j
 import { FileActivationMarker, isSafeStoreRef } from "./migrations.js";
 import type { TimerPort } from "./pacer.js";
 import type { Authorization, CardPolicy } from "./policy.js";
+import { reconcileActionAdmission } from './action-admission.js';
 import { buildClosureFrame, type RegistryFrame } from "./registry-builder.js";
 import { decodeStrictUtf8, readPrivateRegularFile } from "./safe-file.js";
 import {
   initializeCardStore,
+  readProtectedGraph,
   type CardMessageRecord,
   type CardStore,
   type CardStoreDisabledReason,
@@ -56,6 +58,7 @@ import {
   type CardTerminalReason,
   type LedgerRecovery,
   type LiveAutomaticCard,
+  type ProtectedGraphRows,
 } from "./store.js";
 import {
   createWriteQueue,
@@ -188,6 +191,14 @@ export async function openCardSubsystem(options: CardSubsystemOptions): Promise<
     store.retire();
     return disabled("invariant_failed", ledger.violations);
   }
+  try {
+    // Local interaction reconciliation follows provenance/ledger recovery and
+    // precedes every queue, tool host and consumer. No source or dispatch call.
+    recoverInteractions(store, readProtectedGraph(options.adapter));
+  } catch {
+    store.retire();
+    return disabled("startup_failed");
+  }
   recoveredLedgers.add(store);
 
   const queueFactory: CardQueueFactory = (queueOptions) => createWriteQueue({ ...queueOptions, store });
@@ -199,6 +210,63 @@ export async function openCardSubsystem(options: CardSubsystemOptions): Promise<
     ...(init.backup !== undefined ? { backup: init.backup } : {}),
     ledger,
     queueFactory,
+  });
+}
+
+export interface InteractionRecoveryReport {
+  readonly pending: number;
+  readonly retryWait: number;
+  readonly interrupted: number;
+  readonly terminal: number;
+  readonly unresolvedSend: number;
+  /** Local expiry obligations only; a row id is never transport authorization. */
+  readonly expiredCards: readonly string[];
+}
+
+export function recoverInteractions(store: CardStore, graph: ProtectedGraphRows): InteractionRecoveryReport {
+  let pending = 0, retryWait = 0, interrupted = 0, terminal = 0, unresolvedSend = 0;
+  for (const row of graph.card_sessions) {
+    const state = reconcileActionAdmission(store, String(row.session_id));
+    if (state === 'interrupted') interrupted++;
+    else if (state === 'terminal') terminal++;
+    else if (row.status === 'pending') pending++;
+    else if (row.status === 'retry_wait') retryWait++;
+    else if (row.status === 'sending' || row.status === 'ambiguous') unresolvedSend++;
+  }
+  return Object.freeze({ pending, retryWait, interrupted, terminal, unresolvedSend,
+    expiredCards: Object.freeze(store.expireSessions()) });
+}
+
+/** Owns only local maintenance. Missing transport/retirement authority always retains evidence. */
+export function runInteractionRecovery(store: CardStore, timers: TimerPort): CardResourceOwner {
+  let closed = false, sweep: unknown, cleanup: unknown;
+  const active = (): boolean => !closed && !store.retired;
+  const scheduleSweep = (): void => {
+    sweep = timers.setTimeout(() => {
+      sweep = undefined;
+      if (!active()) return;
+      try { store.expireSessions(); } catch { /* a failed sweep grants no edit or admission */ }
+      if (active()) scheduleSweep();
+    }, 60_000);
+  };
+  const scheduleCleanup = (): void => {
+    cleanup = timers.setTimeout(() => {
+      cleanup = undefined;
+      if (!active()) return;
+      try { store.cleanup(); } catch { /* retain protected records on failure */ }
+      if (active()) scheduleCleanup();
+    }, 3_600_000);
+  };
+  scheduleSweep(); scheduleCleanup();
+  return Object.freeze({ kind: 'recovery' as const,
+    close(): void {
+      if (closed) return;
+      closed = true;
+      if (sweep !== undefined) timers.clearTimeout(sweep);
+      if (cleanup !== undefined) timers.clearTimeout(cleanup);
+      sweep = cleanup = undefined;
+    },
+    async drain() { return Object.freeze({ settled: 0, aborted: 0, unresolved: 0 }); },
   });
 }
 

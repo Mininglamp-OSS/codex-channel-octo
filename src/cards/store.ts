@@ -15,6 +15,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { DbAdapter } from '../db-adapter.js';
 import type { CardChannelType, WallClock } from './contracts.js';
+import { canonicalEnvelope } from './topology.js';
 import {
   CARD_TABLES,
   EVENT_SCOPE_PREFIX,
@@ -251,6 +252,35 @@ export interface CardStoreOptions {
   readonly newId?: () => string;
   /** Active interactive session capacity (T-reserve). */
   readonly sessionCapacity?: number;
+  /** Trusted independent source/restore authority. Never supplied by an event or cleanup request. */
+  readonly retirementVerifier?: RetirementVerifier;
+}
+
+/** Authenticated evidence, obtained independently of the party requesting cleanup. */
+export interface RetirementWitness {
+  readonly installationRef: string;
+  readonly lineageId: string;
+  readonly protectedGraphSha256: string;
+  readonly identity: AttemptStartInput | SettingsEventIdentity;
+  readonly outcome: FinalDisposition | 'invalidated';
+  readonly createdAt: number;
+  readonly retainUntil: number;
+  readonly topology: CursorTopology;
+  readonly confirmedPosition: string;
+  readonly issuedAt: number;
+  readonly expiresAt: number;
+  /** Opaque, independently checked fences; elapsed time/ACK alone cannot mint them. */
+  readonly sourceFence: string;
+  readonly restoreFence: string;
+  readonly ownerFence: string;
+  readonly replayExcluded: true;
+  readonly restoreExcluded: true;
+  readonly activeOwnersExcluded: true;
+}
+
+export interface RetirementVerifier {
+  /** Synchronous current authentication of source, restore and owner fences; undefined means retain. */
+  verify(reference: string): RetirementWitness | undefined;
 }
 
 // ─── Row mapping ────────────────────────────────────────────────────────────
@@ -670,6 +700,7 @@ export class CardStore {
   private readonly clock: WallClock;
   private readonly newId: () => string;
   private readonly capacity: number;
+  private readonly optionsRetirementVerifier: RetirementVerifier | undefined;
   private closed = false;
 
   constructor(
@@ -679,6 +710,7 @@ export class CardStore {
     this.clock = options.clock;
     this.newId = options.newId ?? randomUUID;
     this.capacity = options.sessionCapacity ?? ACTIVE_SESSION_CAPACITY;
+    this.optionsRetirementVerifier = options.retirementVerifier;
     if (!Number.isSafeInteger(this.capacity) || this.capacity < 1) throw new CardStoreError('invalid_input');
   }
 
@@ -1447,11 +1479,9 @@ export class CardStore {
   }
 
   /**
-   * T4: fixed-deadline expiry of pending/retry sessions, and of `sending`
-   * sessions stranded by a crash between reservation and first transport,
-   * which would otherwise hold active capacity forever. Ambiguous work is
-   * never reclaimed. Returns cards owed a closure edit, i.e. those with an
-   * acknowledged message identity; an expired stranded send has none.
+   * T4: fixed-deadline expiry of bound pending/retry sessions. Unresolved
+   * initial sends retain ownership and N2 suspension regardless of age.
+   * Returns acknowledged cards owed a best-effort closure edit.
    */
   expireSessions(): string[] {
     return this.tx(() => {
@@ -1459,7 +1489,8 @@ export class CardStore {
       const rows = this.adapter
         .prepare(
           `SELECT s.session_id, s.card_id, m.message_id FROM card_sessions s JOIN card_messages m USING(card_id)
-           WHERE s.status IN ('sending','pending','retry_wait') AND s.expires_at <= ?`,
+           WHERE s.status IN ('pending','retry_wait') AND s.expires_at <= ?
+             AND m.message_id IS NOT NULL AND m.state NOT IN ('sending','ambiguous')`,
         )
         .all(now) as Array<{ session_id: string; card_id: string; message_id: string | null }>;
       for (const r of rows) {
@@ -1482,14 +1513,17 @@ export class CardStore {
    * past `retain_until` are removed; ambiguous, admitted, charged/reserved or
    * otherwise unresolved records are never deleted to free capacity.
    */
-  cleanup(): CleanupReport {
+  cleanup(retirementReferences: readonly string[] = []): CleanupReport {
+    if (!Array.isArray(retirementReferences) || retirementReferences.length > 1000) throw new CardStoreError('invalid_input');
+    retirementReferences.forEach(ref => text(ref));
     return this.tx(() => {
       const now = this.now();
+      const proven = this.retireProvenEvents(retirementReferences, now);
       const terminalSession = `s.status IN ('completed','failed','dead_letter','expired') AND s.retain_until < ${now}`;
       // No durable source replay/restore retirement proof exists yet. Keep all
       // replay identities and their finals, including confirmed older events;
       // timestamps and lexical cursor comparisons cannot establish safe pruning.
-      const attempts = 0;
+      const attempts = proven.attempts;
       // Admitted dispositions leave together with their settled admission, and
       // only when no other retained event still pins the session, so the
       // session is pruned in the same pass and never outlives its admission.
@@ -1511,7 +1545,7 @@ export class CardStore {
         this.run('DELETE FROM card_admissions WHERE admission_id = ?', a.admission_id);
         this.run('DELETE FROM card_event_dispositions WHERE event_id = ?', a.event_id);
       }
-      const dispositions = admitted.length + this.run(
+      const dispositions = proven.dispositions + admitted.length + this.run(
         `DELETE FROM card_event_dispositions AS d WHERE d.retain_until < ? AND d.disposition <> 'admitted'
            AND substr(d.consumer_scope, 1, ${EVENT_SCOPE_PREFIX.length}) <> '${EVENT_SCOPE_PREFIX}'
            AND NOT EXISTS (SELECT 1 FROM card_event_attempts t WHERE t.event_id = d.event_id)
@@ -1549,13 +1583,116 @@ export class CardStore {
       return {
         attempts,
         dispositions,
-        admissions: admitted.length,
-        requests,
-        sessions,
-        messages,
+        admissions: proven.admissions + admitted.length,
+        requests: proven.requests + requests,
+        sessions: proven.sessions + sessions,
+        messages: proven.messages + messages,
         generations,
       };
     });
+  }
+
+  /** Runs only inside cleanup's single write transaction; never orders opaque positions. */
+  private retireProvenEvents(references: readonly string[], now: number): CleanupReport {
+    const counts = { attempts: 0, dispositions: 0, admissions: 0, requests: 0, sessions: 0, messages: 0, generations: 0 };
+    const verifier = this.optionsRetirementVerifier;
+    if (!verifier || references.length === 0) return counts;
+    const graph = readProtectedGraph(this.adapter), manifest = manifestProtectedGraph(graph);
+    const installationRef = graph.card_meta.find(r => r.k === 'installation_ref')?.v;
+    const verified = new Map<string, { reference: string; witness: RetirementWitness; snapshot: string }>();
+    for (const reference of new Set(references)) {
+      let w: RetirementWitness | undefined;
+      try { w = verifier.verify(reference); } catch { continue; }
+      if (!w) continue;
+      try {
+        // Snapshot the verifier's result before inspecting it; never retain mutable authority.
+        const snapshot = canonicalEnvelope(w);
+        w = JSON.parse(snapshot) as RetirementWitness;
+        const replay = this.getEventReplay(w.identity.eventId);
+        const cursor = this.readCursor(w.identity.scope);
+        if (w.installationRef !== installationRef || w.lineageId !== manifest.lineageId
+          || w.protectedGraphSha256 !== manifest.sha256 || !w.identity.scope.startsWith(EVENT_SCOPE_PREFIX)
+          || replay.kind !== 'retained' || !replay.final || canonicalEnvelope(w.identity) !== canonicalEnvelope(replay.identity)
+          || w.outcome !== replay.final.outcome || w.createdAt !== replay.final.createdAt || w.retainUntil !== replay.final.retainUntil
+          || w.retainUntil > now || w.createdAt + RETENTION_MS > now
+          || !Number.isSafeInteger(w.issuedAt) || w.issuedAt > now || w.issuedAt < 0
+          || !Number.isSafeInteger(w.expiresAt) || w.expiresAt <= now
+          || !cursor || cursor.haltedReason !== null || cursor.topology !== w.topology
+          || cursor.cursor === null || cursor.cursor !== cursor.ackedThrough || w.confirmedPosition !== cursor.ackedThrough
+          || w.replayExcluded !== true || w.restoreExcluded !== true || w.activeOwnersExcluded !== true
+          || ![w.sourceFence, w.restoreFence, w.ownerFence].every(v => typeof v === 'string' && v.length > 0)) continue;
+        // Conflicting references for an event cannot be combined into authority.
+        const prior = verified.get(w.identity.eventId);
+        if (prior && prior.snapshot !== snapshot) return counts;
+        verified.set(w.identity.eventId, { reference, witness: w, snapshot });
+      } catch { /* malformed or unavailable authority retains the graph */ }
+    }
+    const eligible = new Set<string>();
+    const sessions = new Set<string>();
+    for (const [id, { witness: w }] of verified) {
+      const sessionId = 'sessionId' in w.identity ? w.identity.sessionId : null;
+      if (sessionId !== null) {
+        const s = this.getSession(sessionId);
+        const a = this.getAdmissionForSession(sessionId);
+        if (!s || !['completed', 'failed', 'dead_letter', 'expired'].includes(s.status)
+          || s.terminalAt === null || s.terminalAt + RETENTION_MS > now || s.retainUntil === null || s.retainUntil > now
+          || (a && (!['completed', 'failed'].includes(a.state) || a.settledAt === null || a.settledAt + RETENTION_MS > now))) continue;
+        const m = this.getMessage(s.cardId);
+        if (!m || m.messageId === null || m.state === 'sending' || m.state === 'ambiguous' || m.seqReserved !== m.seqAcked) continue;
+        // Any other retained event, live generation or explicit send still pins the entire graph.
+        const events = graph.card_event_attempts.filter(r => r.session_id === sessionId)
+          .concat(graph.card_event_dispositions.filter(r => r.session_id === sessionId));
+        if (events.some(r => !verified.has(String(r.event_id)))
+          || graph.card_handler_generations.some(g => [s.originGeneration, a?.continuationGeneration].includes(String(g.generation))
+            && (g.state !== 'closed' || typeof g.retain_until !== 'number' || g.retain_until > now))
+          || graph.card_explicit_requests.some(r => {
+            if (r.card_id !== s.cardId) return false;
+            const g = graph.card_handler_generations.find(g => g.generation === r.generation);
+            return !['acked', 'failed', 'cancelled'].includes(String(r.state)) || !g || g.state !== 'closed'
+              || typeof g.retain_until !== 'number' || g.retain_until > now
+              || typeof g.closed_at !== 'number' || g.closed_at + RETENTION_MS > now;
+          })) continue;
+        sessions.add(sessionId);
+      }
+      eligible.add(id);
+    }
+    // All proofs for a session must themselves have passed the terminal checks.
+    for (const sessionId of [...sessions]) {
+      if (graph.card_event_attempts.concat(graph.card_event_dispositions)
+        .some(r => r.session_id === sessionId && !eligible.has(String(r.event_id)))) {
+        sessions.delete(sessionId);
+        for (const id of [...eligible]) {
+          const w = verified.get(id)!.witness;
+          if ('sessionId' in w.identity && w.identity.sessionId === sessionId) eligible.delete(id);
+        }
+      }
+    }
+    const current = (): boolean => {
+      if (this.closed) return false;
+      for (const id of eligible) {
+        const v = verified.get(id)!;
+        try {
+          if (v.witness.expiresAt <= this.now() || canonicalEnvelope(verifier.verify(v.reference)) !== v.snapshot) return false;
+        } catch { return false; }
+      }
+      return true;
+    };
+    if (!current()) return counts;
+    for (const sessionId of sessions) counts.admissions += this.run('DELETE FROM card_admissions WHERE session_id = ?', sessionId);
+    for (const id of eligible) {
+      counts.dispositions += this.run('DELETE FROM card_event_dispositions WHERE event_id = ?', id);
+      counts.dispositions += this.run('DELETE FROM card_event_invalidations WHERE event_id = ?', id);
+      counts.attempts += this.run('DELETE FROM card_event_attempts WHERE event_id = ?', id);
+    }
+    for (const sessionId of sessions) {
+      const s = this.getSession(sessionId)!;
+      counts.requests += this.run('DELETE FROM card_explicit_requests WHERE card_id = ?', s.cardId);
+      counts.sessions += this.run('DELETE FROM card_sessions WHERE session_id = ?', sessionId);
+      counts.messages += this.run('DELETE FROM card_messages WHERE card_id = ?', s.cardId);
+    }
+    // Lost authority after a deletion rolls back the entire cleanup, including its children.
+    if (!current()) throw new Rollback<CleanupReport>({ attempts: 0, dispositions: 0, admissions: 0, requests: 0, sessions: 0, messages: 0, generations: 0 });
+    return counts;
   }
 
   // ── explicit-invocation ledger (§4.1a) ──

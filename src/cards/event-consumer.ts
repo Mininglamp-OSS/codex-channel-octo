@@ -234,7 +234,9 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
     const resume = replay.kind === 'retained' && replay.attempt?.phase === 'started'
       && localAttempt === replay.attempt.number;
     if (replay.kind === 'retained' && replay.attempt?.phase === 'started' && !resume) {
-      if (options.startedOwner?.(action) !== 'retired') return { kind: 'held' };
+      let owner: 'live' | 'retired' | 'unknown' = 'unknown';
+      try { owner = options.startedOwner?.(action) ?? 'unknown'; } catch { /* unknown owners stay held */ }
+      if (owner !== 'retired') return { kind: 'held' };
       wait = authority(); if (wait) return wait;
       const recovered = store.recordAttemptFailure({ eventId, reasonCode: 'interrupted', cursor: advance });
       if (recovered.kind === 'retry_wait' || recovered.kind === 'dead_letter') {
@@ -271,6 +273,13 @@ export function createFakeEventConsumer(options: FakeConsumerOptions): FakeEvent
       // A handler's own hold may hide ambiguous work and cannot grant a rerun.
       if (!handlerStarted) settledHold = { eventId, attemptNo: start.attemptNo };
       return { kind: 'held' };
+    }
+    // A handler may lose its return after committing T2. Durable admission
+    // wins over return/throw classification; never charge another failure.
+    const committed = store.getEventReplay(eventId);
+    if (committed.kind === 'retained' && committed.final) {
+      if (canonicalEnvelope(committed.identity) !== canonicalEnvelope(action)) return halt('replay_identity');
+      return ack(event);
     }
     if (result.kind === 'retry') {
       const failure = store.recordAttemptFailure({ eventId, reasonCode: 'pre_admission', cursor: advance });
