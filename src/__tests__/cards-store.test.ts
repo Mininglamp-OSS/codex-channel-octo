@@ -1504,7 +1504,7 @@ describe('R1: restore comparator ranks admission and session progress', () => {
   });
 });
 
-describe('stranded sending sessions: fixed-deadline expiry releases capacity', () => {
+describe('unresolved initial sends: fixed-deadline expiry preserves N2 suspension', () => {
   function fillWithSending(capacity: number): Array<{ cardId: string; sessionId: string }> {
     store = newStore({ sessionCapacity: capacity });
     const out = [];
@@ -1513,35 +1513,37 @@ describe('stranded sending sessions: fixed-deadline expiry releases capacity', (
     return out;
   }
 
-  it('[regression] before, exactly at and after the fixed deadline', () => {
-    const rows = fillWithSending(3);
-    // One millisecond before expires_at: nothing is reclaimed and capacity stays full.
-    now = T0 + DAY - 1;
-    expect(store.expireSessions()).toEqual([]);
-    for (const r of rows) expect(store.getSession(r.sessionId)?.status).toBe('sending');
-    expect(store.activeSessions()).toBe(3);
-    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract })).toEqual({ kind: 'capacity_full' });
-    // Exactly at expires_at the stranded rows terminalize; they never had an identity, so no closure edit is owed.
-    now = T0 + DAY;
-    expect(store.expireSessions()).toEqual([]);
+  function expectUnresolved(rows: Array<{ cardId: string; sessionId: string }>, s: CardStore = store): void {
     for (const r of rows) {
-      expect(store.getSession(r.sessionId)).toMatchObject({ status: 'expired', terminalAt: now, retainUntil: now + DAY });
-      expect(store.getMessage(r.cardId)).toMatchObject({ state: 'expired', terminalReason: 'expired', messageId: null, terminalAt: now, retainUntil: now + DAY });
+      // The transport may have accepted the send: ownership, the original deadline and N2 suspension all hold.
+      expect(s.getSession(r.sessionId)).toMatchObject({ status: 'sending', expiresAt: T0 + DAY, terminalAt: null, retainUntil: null });
+      expect(s.getMessage(r.cardId)).toMatchObject({ state: 'sending', messageId: null, terminalAt: null, terminalReason: null });
     }
-    expect(store.activeSessions()).toBe(0);
-    expect(store.checkInvariants()).toEqual([]);
-    // After the deadline new work fits again.
-    now = T0 + DAY + 1;
-    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract }).kind).toBe('reserved');
+    expect(s.unresolvedSendKinds()).toEqual(['interactive']);
+  }
+
+  it('[regression] before, exactly at and after the fixed deadline an unresolved send is never expired', () => {
+    const rows = fillWithSending(3);
+    for (const at of [T0 + DAY - 1, T0 + DAY, T0 + DAY + 1]) {
+      now = at;
+      // No closure edit is owed and nothing terminalizes without transport evidence.
+      expect(store.expireSessions()).toEqual([]);
+      expectUnresolved(rows);
+      // Unresolved sends keep their capacity; it is never released to admit new work.
+      expect(store.activeSessions()).toBe(3);
+      expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract })).toEqual({ kind: 'capacity_full' });
+      expect(store.checkInvariants()).toEqual([]);
+    }
   });
 
-  it('[regression] well after the deadline a full stranded capacity is released in one pass', () => {
+  it('[regression] well after the deadline unresolved capacity stays held in one pass and across cleanup', () => {
     const rows = fillWithSending(2);
     now = T0 + 3 * DAY;
-    store.expireSessions();
-    expect(store.activeSessions()).toBe(0);
-    for (const r of rows) expect(store.getSession(r.sessionId)?.status).toBe('expired');
-    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract }).kind).toBe('reserved');
+    expect(store.expireSessions()).toEqual([]);
+    store.cleanup();
+    expectUnresolved(rows);
+    expect(store.activeSessions()).toBe(2);
+    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract })).toEqual({ kind: 'capacity_full' });
   });
 
   it('[control] expiry is idempotent: a repeated pass changes nothing', () => {
@@ -1554,12 +1556,24 @@ describe('stranded sending sessions: fixed-deadline expiry releases capacity', (
     expect(readProtectedGraph(adapter)).toEqual(once);
   });
 
-  it('[regression] a late acknowledgement of an expired stranded send is rejected as terminal', () => {
+  it('[regression] a late acknowledgement after the deadline binds the identity but is never admittable', () => {
     const [r] = fillWithSending(1);
     now = T0 + DAY;
-    store.expireSessions();
-    expect(store.ackMessage({ cardId: r.cardId, messageId: 'm-late', currentResetEpoch: 0, policyAllows: true })).toEqual({ kind: 'invalid_state', state: 'expired' });
-    expect(store.getSession(r.sessionId)?.status).toBe('expired');
+    expect(store.expireSessions()).toEqual([]);
+    // The accepted message identity is never lost to a premature terminal state.
+    now = T0 + DAY + 5;
+    expect(store.ackMessage({ cardId: r.cardId, messageId: 'm-late', currentResetEpoch: 0, policyAllows: true }))
+      .toEqual({ kind: 'bound', admittable: false, reason: 'expired' });
+    expect(store.getMessage(r.cardId)).toMatchObject({ state: 'expired', terminalReason: 'expired', messageId: 'm-late', terminalAt: now, retainUntil: now + DAY });
+    // The original deadline is kept (no renewal) and the session terminalizes only now, with the identity bound.
+    expect(store.getSession(r.sessionId)).toMatchObject({ status: 'expired', expiresAt: T0 + DAY, terminalAt: now, retainUntil: now + DAY });
+    expect(store.unresolvedSendKinds()).toEqual([]);
+    expect(store.expireSessions()).toEqual([]);
+    // A repeated acknowledgement is idempotent and a conflicting identity is refused.
+    expect(store.ackMessage({ cardId: r.cardId, messageId: 'm-late', currentResetEpoch: 0, policyAllows: true })).toEqual({ kind: 'already_bound' });
+    expect(store.ackMessage({ cardId: r.cardId, messageId: 'm-other', currentResetEpoch: 0, policyAllows: true })).toEqual({ kind: 'identity_conflict' });
+    expect(store.activeSessions()).toBe(0);
+    expect(store.checkInvariants()).toEqual([]);
   });
 
   it('[control] ambiguous work is never reclaimed by expiry, before or after the deadline', async () => {
@@ -1583,7 +1597,7 @@ describe('stranded sending sessions: fixed-deadline expiry releases capacity', (
     expect(store.checkInvariants()).toEqual([]);
   });
 
-  it('[regression] crash-shaped: stranded rows survive a restart, then expire, stay ready and clean up', async () => {
+  it('[regression] crash-shaped: unresolved rows survive restarts past the deadline, stay ready and are retained', async () => {
     const marker = join(root, 'recovery', 'stranded-marker.json');
     provisionFirstInstallMarker(marker, 'install-a', T0);
     const dbPath = join(root, 'stranded.db');
@@ -1608,29 +1622,36 @@ describe('stranded sending sessions: fixed-deadline expiry releases capacity', (
     s.expireSessions();
     expect(s.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'crash-3', contract })).toEqual({ kind: 'capacity_full' });
     a.close();
-    // Process 3 restarts after the deadline: the store-owned expiry releases capacity.
+    // Process 3 restarts after the deadline: unresolved sends keep ownership, deadline and N2 suspension.
     now = T0 + DAY + 1;
     ({ a, s } = await open());
-    s.expireSessions();
-    s.expireSessions();
-    for (const r of stranded) expect(s.getSession(r.sessionId)?.status).toBe('expired');
-    expect(s.activeSessions()).toBe(0);
+    expect(s.expireSessions()).toEqual([]);
+    expect(s.expireSessions()).toEqual([]);
+    for (const r of stranded) {
+      expect(s.getSession(r.sessionId)).toMatchObject({ status: 'sending', expiresAt: r.expiresAt, terminalAt: null });
+      expect(s.getMessage(r.cardId)).toMatchObject({ state: 'sending', messageId: null, terminalAt: null });
+    }
+    expect(s.unresolvedSendKinds()).toEqual(['interactive']);
+    expect(s.activeSessions()).toBe(2);
     expect(s.checkInvariants()).toEqual([]);
-    expect(s.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'crash-3', contract }).kind).toBe('reserved');
+    expect(s.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'crash-3', contract })).toEqual({ kind: 'capacity_full' });
     a.close();
-    // Process 4: restart stays ready; retention cleanup converges on the expired rows.
+    // Process 4: restart stays ready; retention cleanup never deletes unresolved rows.
     now = T0 + 2 * DAY + 2;
     ({ a, s } = await open());
+    expect(s.expireSessions()).toEqual([]);
     s.cleanup();
     s.cleanup();
     for (const r of stranded) {
-      expect(s.getSession(r.sessionId)).toBeNull();
-      expect(s.getMessage(r.cardId)).toBeNull();
+      expect(s.getSession(r.sessionId)?.status).toBe('sending');
+      expect(s.getMessage(r.cardId)?.state).toBe('sending');
     }
+    expect(s.unresolvedSendKinds()).toEqual(['interactive']);
     expect(s.checkInvariants()).toEqual([]);
-    expect(s.activeSessions()).toBe(1);
+    expect(s.activeSessions()).toBe(2);
     a.close();
     ({ a, s } = await open());
+    expect(s.unresolvedSendKinds()).toEqual(['interactive']);
     expect(s.checkInvariants()).toEqual([]);
     a.close();
   });
