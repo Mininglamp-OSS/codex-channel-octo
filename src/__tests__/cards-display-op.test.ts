@@ -179,12 +179,12 @@ describe('production registration (B5) and fail-closed live profile', () => {
     expect(BASELINE_DISPLAY_CAPABILITIES.limits).toEqual(LIMITS);
   });
 
-  it('the live profile negotiates display over its known elements only (D-W2 Option A); interaction stays disabled', () => {
+  it('the archived v2 profile enables interaction while keeping display elements closed', () => {
     const p = parseProfile(projectCardProfile(liveProfileJson() as unknown as JsonValue));
     expect(p.display.state).toBe('enabled');
     expect(p.display.elements.has('Image')).toBe(false);
     expect(p.display.elements.has('ImageSet')).toBe(false);
-    expect(p.interaction.state).toBe('disabled');
+    expect(p.interaction.state).toBe('enabled');
   });
 });
 
