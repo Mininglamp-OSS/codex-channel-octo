@@ -41,16 +41,16 @@ describe("live card profile wire_profile contract", () => {
     expect(negotiate(p).automatic.state).toBe("enabled");
   });
 
-  it("negotiates display over the known live elements only (D-W2 Option A) and keeps interaction fail-closed", () => {
+  it("negotiates closed display elements and v2 interaction from the archived profile", () => {
     const p = parsedLive();
-    // Image/ImageSet are outside the client element list: display ignores them, interaction keeps the strict list.
-    expect([p.display.state, p.interaction.state]).toEqual(["enabled", "disabled"]);
+    // Known Image/ImageSet capability extras enable no authored image elements.
+    expect([p.display.state, p.interaction.state]).toEqual(["enabled", "enabled"]);
     expect([...p.display.elements].sort()).toEqual(["ActionSet", "ColumnSet", "Container", "FactSet", "RichTextBlock", "Table", "TextBlock"]);
-    expect(p.reasons).toEqual(["profile_incompatible"]);
+    expect(p.reasons).toEqual([]);
     // TextBlock stays mandatory for display.
     expect(parsedLive(body => { body.elements = body.elements.filter(e => e !== "TextBlock") as never; }).display.state).toBe("disabled");
-    // Interaction stays strict: Action.Submit alone does not enable it while unknown elements remain.
-    expect(parsedLive(body => { (body.actions as string[]).push("Action.Submit"); }).interaction.state).toBe("disabled");
+    // A literal Action.Submit is also compatible without changing the display subset.
+    expect(parsedLive(body => { (body.actions as string[]).push("Action.Submit"); }).interaction.state).toBe("enabled");
     // Actions stay strict for display.
     expect(parsedLive(body => { (body.actions as string[]).push("Action.Execute"); }).display.state).toBe("disabled");
   });
