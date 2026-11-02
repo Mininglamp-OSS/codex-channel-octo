@@ -577,6 +577,107 @@ describe('T2 admission, T3 settle and T4 expiry (AC-015.1, AC-017.1)', () => {
   });
 });
 
+describe('WP11 settings replay ledger', () => {
+  const settings = { eventId: 'settings-1', scope: 'scope-a', eventClass: 'bot_setting_updated' as const,
+    settingsScope: 'bot_setting' as const, positionRef: 'p11', previousPositionRef: null, envelopeDigest: 'digest-1' };
+  it('atomically commits settings success and exposes coherent durable replay identity', () => {
+    store.initCursor('scope-a', 'T-PART');
+    expect(store.getEventReplay('settings-1')).toEqual({ kind: 'absent' });
+    expect(store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') })).toEqual({ kind: 'recorded' });
+    expect(store.getEventReplay('settings-1')).toMatchObject({ kind: 'retained', identity: settings,
+      final: { outcome: 'invalidated', createdAt: T0, retainUntil: T0 + DAY } });
+    expect(store.readCursor('scope-a')?.cursor).toBe('p11');
+    expect(store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') })).toEqual({ kind: 'already_final', disposition: 'invalidated' });
+    expect(store.recordEventInvalidation({ ...settings, envelopeDigest: 'changed', cursor: cursor(null, 'p11') })).toEqual({ kind: 'conflict' });
+    expect(count('card_sessions')).toBe(0);
+    expect(count('card_admissions')).toBe(0);
+  });
+  it('rolls success back on cursor CAS failure and forbids cross-ledger action mutations', () => {
+    store.initCursor('scope-a', 'T-PART');
+    expect(store.recordEventInvalidation({ ...settings, cursor: cursor('wrong', 'p11') })).toEqual({ kind: 'cursor_conflict' });
+    expect(count('card_event_invalidations')).toBe(0);
+    expect(store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') }).kind).toBe('recorded');
+    expect(store.recordAttemptStart({ ...settings, messageId: 'm', sessionId: null })).toEqual({ kind: 'conflict' });
+    expect(store.recordDisposition({ ...settings, sessionId: null, disposition: 'invalid', cursor: cursor(null, 'p11') })).toEqual({ kind: 'conflict' });
+  });
+  it('pins settings and action identity through cleanup and reopen with unconfirmed ACK', () => {
+    store.initCursor('scope-a', 'T-PART');
+    store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') });
+    now += 3 * DAY;
+    store.cleanup();
+    store = newStore();
+    expect(store.getEventReplay(settings.eventId).kind).toBe('retained');
+    expect(store.readCursor('scope-a')?.ackedThrough).toBeNull();
+  });
+  it('treats historical finals without identity as inconsistent', () => {
+    store.initCursor('scope-a', 'T-PART');
+    store.recordDisposition({ ...ev('old', null), disposition: 'invalid', cursor: cursor(null, 'p1') });
+    expect(store.getEventReplay('old')).toEqual({ kind: 'inconsistent', code: 'missing_identity' });
+  });
+  it.each(['event_id', 'consumer_scope', 'event_class', 'settings_scope', 'position_ref', 'previous_position_ref',
+    'envelope_digest', 'created_at', 'retain_until'])('protects settings %s against SQL rewrites and restore changes', (field) => {
+    store.initCursor('scope-a', 'T-PART'); store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') });
+    const tail = readProtectedGraph(adapter);
+    expect(() => adapter.prepare(`UPDATE card_event_invalidations SET ${field} = ? WHERE event_id = ?`).run('changed', settings.eventId)).toThrow(/final/);
+    const changed = structuredClone(tail) as unknown as Record<string, Record<string, unknown>[]>;
+    changed.card_event_invalidations[0][field] = 'changed';
+    expect(compareProtectedGraph(changed as unknown as typeof tail, tail)).not.toEqual([]);
+    expect(manifestProtectedGraph(changed as unknown as typeof tail).sha256).not.toBe(manifestProtectedGraph(tail).sha256);
+  });
+  it.each(['event_id', 'consumer_scope', 'event_class', 'session_id', 'message_id', 'position_ref', 'previous_position_ref',
+    'envelope_digest'])('protects action identity %s through final shortcuts, SQL and restore', (field) => {
+    store.initCursor('scope-a', 'T-PART');
+    const identity = { ...ev('e', null), messageId: 'message', positionRef: 'p', previousPositionRef: null, envelopeDigest: 'digest' };
+    store.recordAttemptStart(identity);
+    store.recordDisposition({ ...identity, disposition: 'invalid', cursor: cursor(null, 'p') });
+    const tail = readProtectedGraph(adapter);
+    expect(() => adapter.prepare(`UPDATE card_event_attempts SET ${field} = ? WHERE event_id = 'e'`).run('changed')).toThrow(/immutable/);
+    const changed = structuredClone(tail) as unknown as Record<string, Record<string, unknown>[]>;
+    changed.card_event_attempts[0][field] = 'changed';
+    expect(compareProtectedGraph(changed as unknown as typeof tail, tail)).not.toEqual([]);
+    expect(store.recordAttemptStart({ ...identity, envelopeDigest: 'changed' })).toEqual({ kind: 'conflict' });
+    now += 3 * DAY; store.cleanup();
+    expect(store.getEventReplay('e')).toMatchObject({ kind: 'retained', identity, final: { outcome: 'invalid' } });
+  });
+  it('excludes contradictory finals through direct inserts in either order', () => {
+    store.initCursor('scope-a', 'T-PART'); store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') });
+    const insertAction = adapter.prepare(`INSERT INTO card_event_dispositions(event_id,consumer_scope,event_class,disposition,created_at,retain_until)
+      VALUES (?, 'scope-a', 'card_action', 'invalid', ?, ?)`);
+    expect(() => insertAction.run(settings.eventId, now, now + DAY)).toThrow(/contradictory/);
+    insertAction.run('action', now, now + DAY);
+    expect(() => adapter.prepare(`INSERT INTO card_event_invalidations(event_id,consumer_scope,event_class,settings_scope,
+      position_ref,envelope_digest,created_at,retain_until) VALUES ('action','scope-a','bot_setting_updated','bot_setting','p12','d',?,?)`)
+      .run(now, now + DAY)).toThrow(/contradictory/);
+    expect(store.checkInvariants()).toEqual([]);
+  });
+  it('keeps replay reads closed and storage failures fail-closed through the public port', () => {
+    const broken = new Proxy(adapter, { get(target, prop) {
+      if (prop === 'prepare') return () => { throw new Error('read fault'); };
+      const value = Reflect.get(target, prop, target) as unknown;
+      return typeof value === 'function' ? (value as (...p: unknown[]) => unknown).bind(target) : value;
+    } });
+    const s = new CardStore(broken, { clock });
+    try { s.getEventReplay('e'); throw new Error('expected failure'); } catch (error) { expect(error).toMatchObject({ code: 'storage_failure' }); }
+    s.retire();
+    try { s.getEventReplay('e'); throw new Error('expected failure'); } catch (error) { expect(error).toMatchObject({ code: 'closed' }); }
+  });
+  it('restores settings success and terminal action identity from a real online SQLite backup', async () => {
+    store.initCursor('scope-a', 'T-PART'); store.recordEventInvalidation({ ...settings, cursor: cursor(null, 'p11') });
+    store.recordAck('scope-a', 'p11');
+    const identity = { ...ev('action', null), messageId: 'message', positionRef: 'p12', previousPositionRef: 'p11', envelopeDigest: 'digest' };
+    store.recordSendWait(identity); store.recordDisposition({ ...identity, disposition: 'invalid', cursor: cursor('p11', 'p12') });
+    const path = join(root, 'online-backup.db'); await adapter.backup(path);
+    const restored = createAdapter(path);
+    try {
+      const copy = new CardStore(restored, { clock });
+      expect(copy.getEventReplay(settings.eventId)).toEqual(store.getEventReplay(settings.eventId));
+      expect(copy.getEventReplay(identity.eventId)).toEqual(store.getEventReplay(identity.eventId));
+      expect(compareProtectedGraph(readProtectedGraph(restored), readProtectedGraph(adapter))).toEqual([]);
+      expect(manifestProtectedGraph(readProtectedGraph(restored))).toEqual(manifestProtectedGraph(readProtectedGraph(adapter)));
+    } finally { restored.close(); }
+  });
+});
+
 describe('retention cleanup', () => {
   it('deletes child-first only after retention and never removes unresolved work', () => {
     store.initCursor('scope-a', 'T-EXCL');
@@ -1403,7 +1504,7 @@ describe('R1: restore comparator ranks admission and session progress', () => {
   });
 });
 
-describe('stranded sending sessions: fixed-deadline expiry releases capacity', () => {
+describe('unresolved initial sends: fixed-deadline expiry preserves N2 suspension', () => {
   function fillWithSending(capacity: number): Array<{ cardId: string; sessionId: string }> {
     store = newStore({ sessionCapacity: capacity });
     const out = [];
@@ -1412,35 +1513,37 @@ describe('stranded sending sessions: fixed-deadline expiry releases capacity', (
     return out;
   }
 
-  it('[regression] before, exactly at and after the fixed deadline', () => {
-    const rows = fillWithSending(3);
-    // One millisecond before expires_at: nothing is reclaimed and capacity stays full.
-    now = T0 + DAY - 1;
-    expect(store.expireSessions()).toEqual([]);
-    for (const r of rows) expect(store.getSession(r.sessionId)?.status).toBe('sending');
-    expect(store.activeSessions()).toBe(3);
-    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract })).toEqual({ kind: 'capacity_full' });
-    // Exactly at expires_at the stranded rows terminalize; they never had an identity, so no closure edit is owed.
-    now = T0 + DAY;
-    expect(store.expireSessions()).toEqual([]);
+  function expectUnresolved(rows: Array<{ cardId: string; sessionId: string }>, s: CardStore = store): void {
     for (const r of rows) {
-      expect(store.getSession(r.sessionId)).toMatchObject({ status: 'expired', terminalAt: now, retainUntil: now + DAY });
-      expect(store.getMessage(r.cardId)).toMatchObject({ state: 'expired', terminalReason: 'expired', messageId: null, terminalAt: now, retainUntil: now + DAY });
+      // The transport may have accepted the send: ownership, the original deadline and N2 suspension all hold.
+      expect(s.getSession(r.sessionId)).toMatchObject({ status: 'sending', expiresAt: T0 + DAY, terminalAt: null, retainUntil: null });
+      expect(s.getMessage(r.cardId)).toMatchObject({ state: 'sending', messageId: null, terminalAt: null, terminalReason: null });
     }
-    expect(store.activeSessions()).toBe(0);
-    expect(store.checkInvariants()).toEqual([]);
-    // After the deadline new work fits again.
-    now = T0 + DAY + 1;
-    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract }).kind).toBe('reserved');
+    expect(s.unresolvedSendKinds()).toEqual(['interactive']);
+  }
+
+  it('[regression] before, exactly at and after the fixed deadline an unresolved send is never expired', () => {
+    const rows = fillWithSending(3);
+    for (const at of [T0 + DAY - 1, T0 + DAY, T0 + DAY + 1]) {
+      now = at;
+      // No closure edit is owed and nothing terminalizes without transport evidence.
+      expect(store.expireSessions()).toEqual([]);
+      expectUnresolved(rows);
+      // Unresolved sends keep their capacity; it is never released to admit new work.
+      expect(store.activeSessions()).toBe(3);
+      expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract })).toEqual({ kind: 'capacity_full' });
+      expect(store.checkInvariants()).toEqual([]);
+    }
   });
 
-  it('[regression] well after the deadline a full stranded capacity is released in one pass', () => {
+  it('[regression] well after the deadline unresolved capacity stays held in one pass and across cleanup', () => {
     const rows = fillWithSending(2);
     now = T0 + 3 * DAY;
-    store.expireSessions();
-    expect(store.activeSessions()).toBe(0);
-    for (const r of rows) expect(store.getSession(r.sessionId)?.status).toBe('expired');
-    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract }).kind).toBe('reserved');
+    expect(store.expireSessions()).toEqual([]);
+    store.cleanup();
+    expectUnresolved(rows);
+    expect(store.activeSessions()).toBe(2);
+    expect(store.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'stranded-x', contract })).toEqual({ kind: 'capacity_full' });
   });
 
   it('[control] expiry is idempotent: a repeated pass changes nothing', () => {
@@ -1453,12 +1556,24 @@ describe('stranded sending sessions: fixed-deadline expiry releases capacity', (
     expect(readProtectedGraph(adapter)).toEqual(once);
   });
 
-  it('[regression] a late acknowledgement of an expired stranded send is rejected as terminal', () => {
+  it('[regression] a late acknowledgement after the deadline binds the identity but is never admittable', () => {
     const [r] = fillWithSending(1);
     now = T0 + DAY;
-    store.expireSessions();
-    expect(store.ackMessage({ cardId: r.cardId, messageId: 'm-late', currentResetEpoch: 0, policyAllows: true })).toEqual({ kind: 'invalid_state', state: 'expired' });
-    expect(store.getSession(r.sessionId)?.status).toBe('expired');
+    expect(store.expireSessions()).toEqual([]);
+    // The accepted message identity is never lost to a premature terminal state.
+    now = T0 + DAY + 5;
+    expect(store.ackMessage({ cardId: r.cardId, messageId: 'm-late', currentResetEpoch: 0, policyAllows: true }))
+      .toEqual({ kind: 'bound', admittable: false, reason: 'expired' });
+    expect(store.getMessage(r.cardId)).toMatchObject({ state: 'expired', terminalReason: 'expired', messageId: 'm-late', terminalAt: now, retainUntil: now + DAY });
+    // The original deadline is kept (no renewal) and the session terminalizes only now, with the identity bound.
+    expect(store.getSession(r.sessionId)).toMatchObject({ status: 'expired', expiresAt: T0 + DAY, terminalAt: now, retainUntil: now + DAY });
+    expect(store.unresolvedSendKinds()).toEqual([]);
+    expect(store.expireSessions()).toEqual([]);
+    // A repeated acknowledgement is idempotent and a conflicting identity is refused.
+    expect(store.ackMessage({ cardId: r.cardId, messageId: 'm-late', currentResetEpoch: 0, policyAllows: true })).toEqual({ kind: 'already_bound' });
+    expect(store.ackMessage({ cardId: r.cardId, messageId: 'm-other', currentResetEpoch: 0, policyAllows: true })).toEqual({ kind: 'identity_conflict' });
+    expect(store.activeSessions()).toBe(0);
+    expect(store.checkInvariants()).toEqual([]);
   });
 
   it('[control] ambiguous work is never reclaimed by expiry, before or after the deadline', async () => {
@@ -1482,7 +1597,7 @@ describe('stranded sending sessions: fixed-deadline expiry releases capacity', (
     expect(store.checkInvariants()).toEqual([]);
   });
 
-  it('[regression] crash-shaped: stranded rows survive a restart, then expire, stay ready and clean up', async () => {
+  it('[regression] crash-shaped: unresolved rows survive restarts past the deadline, stay ready and are retained', async () => {
     const marker = join(root, 'recovery', 'stranded-marker.json');
     provisionFirstInstallMarker(marker, 'install-a', T0);
     const dbPath = join(root, 'stranded.db');
@@ -1507,30 +1622,150 @@ describe('stranded sending sessions: fixed-deadline expiry releases capacity', (
     s.expireSessions();
     expect(s.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'crash-3', contract })).toEqual({ kind: 'capacity_full' });
     a.close();
-    // Process 3 restarts after the deadline: the store-owned expiry releases capacity.
+    // Process 3 restarts after the deadline: unresolved sends keep ownership, deadline and N2 suspension.
     now = T0 + DAY + 1;
     ({ a, s } = await open());
-    s.expireSessions();
-    s.expireSessions();
-    for (const r of stranded) expect(s.getSession(r.sessionId)?.status).toBe('expired');
-    expect(s.activeSessions()).toBe(0);
+    expect(s.expireSessions()).toEqual([]);
+    expect(s.expireSessions()).toEqual([]);
+    for (const r of stranded) {
+      expect(s.getSession(r.sessionId)).toMatchObject({ status: 'sending', expiresAt: r.expiresAt, terminalAt: null });
+      expect(s.getMessage(r.cardId)).toMatchObject({ state: 'sending', messageId: null, terminalAt: null });
+    }
+    expect(s.unresolvedSendKinds()).toEqual(['interactive']);
+    expect(s.activeSessions()).toBe(2);
     expect(s.checkInvariants()).toEqual([]);
-    expect(s.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'crash-3', contract }).kind).toBe('reserved');
+    expect(s.reserveSession({ binding, bodyDigest: 'd', clientMsgNo: 'crash-3', contract })).toEqual({ kind: 'capacity_full' });
     a.close();
-    // Process 4: restart stays ready; retention cleanup converges on the expired rows.
+    // Process 4: restart stays ready; retention cleanup never deletes unresolved rows.
     now = T0 + 2 * DAY + 2;
     ({ a, s } = await open());
+    expect(s.expireSessions()).toEqual([]);
     s.cleanup();
     s.cleanup();
     for (const r of stranded) {
-      expect(s.getSession(r.sessionId)).toBeNull();
-      expect(s.getMessage(r.cardId)).toBeNull();
+      expect(s.getSession(r.sessionId)?.status).toBe('sending');
+      expect(s.getMessage(r.cardId)?.state).toBe('sending');
     }
+    expect(s.unresolvedSendKinds()).toEqual(['interactive']);
     expect(s.checkInvariants()).toEqual([]);
-    expect(s.activeSessions()).toBe(1);
+    expect(s.activeSessions()).toBe(2);
     a.close();
     ({ a, s } = await open());
+    expect(s.unresolvedSendKinds()).toEqual(['interactive']);
     expect(s.checkInvariants()).toEqual([]);
     a.close();
+  });
+});
+
+describe('markTerminal: durable automatic terminal (WP-06 correction)', () => {
+  function activeAutomatic(name: string, kind: 'automatic' | 'display' = 'automatic'): string {
+    const r = store.reserveMessage({ kind, binding, bodyDigest: `digest-${name}`, clientMsgNo: `cmn-${name}` });
+    if (r.kind !== 'reserved') throw new Error('reserve failed');
+    expect(store.ackMessage({ cardId: r.cardId, messageId: `msg-${name}`, currentResetEpoch: 0, policyAllows: true }))
+      .toEqual({ kind: 'bound', admittable: false });
+    return r.cardId;
+  }
+
+  it('active → done with terminal_reason completed, terminal_at, retain_until and updated_at', () => {
+    const id = activeAutomatic('a');
+    now = T0 + 5000;
+    expect(store.markTerminal(id, 'completed')).toEqual({ kind: 'updated' });
+    const row = store.getMessage(id)!;
+    expect(row).toMatchObject({ state: 'done', terminalReason: 'completed', terminalAt: T0 + 5000, retainUntil: T0 + 5000 + DAY, messageId: 'msg-a' });
+    const updated = (adapter.prepare('SELECT updated_at FROM card_messages WHERE card_id = ?').get(id) as { updated_at: number }).updated_at;
+    expect(updated).toBe(T0 + 5000);
+  });
+
+  for (const reason of ['failed', 'interrupted', 'timed_out', 'policy_revoked'] as const) {
+    it(`active → error with terminal_reason ${reason}`, () => {
+      const id = activeAutomatic(reason);
+      expect(store.markTerminal(id, reason)).toEqual({ kind: 'updated' });
+      expect(store.getMessage(id)).toMatchObject({ state: 'error', terminalReason: reason });
+    });
+  }
+
+  it('repeating the same outcome is idempotent and does not move terminal_at', () => {
+    const id = activeAutomatic('idem');
+    expect(store.markTerminal(id, 'timed_out')).toEqual({ kind: 'updated' });
+    const first = store.getMessage(id)!;
+    now = T0 + 60_000;
+    expect(store.markTerminal(id, 'timed_out')).toEqual({ kind: 'already_terminal' });
+    expect(store.getMessage(id)).toEqual(first);
+  });
+
+  it('a conflicting terminal outcome is absorbed with no mutation', () => {
+    const id = activeAutomatic('conflict');
+    expect(store.markTerminal(id, 'completed')).toEqual({ kind: 'updated' });
+    const before = store.getMessage(id)!;
+    for (const other of ['failed', 'interrupted', 'timed_out', 'policy_revoked'] as const) {
+      expect(store.markTerminal(id, other)).toEqual({ kind: 'invalid_state', state: 'done' });
+    }
+    expect(store.getMessage(id)).toEqual(before);
+    const err = activeAutomatic('conflict-2');
+    store.markTerminal(err, 'failed');
+    expect(store.markTerminal(err, 'completed')).toEqual({ kind: 'invalid_state', state: 'error' });
+    expect(store.markTerminal(err, 'timed_out')).toEqual({ kind: 'invalid_state', state: 'error' });
+    expect(store.getMessage(err)).toMatchObject({ state: 'error', terminalReason: 'failed' });
+  });
+
+  it('rejects sending and ambiguous rows: N2 is never lifted and no outcome is invented', () => {
+    const sending = store.reserveMessage({ kind: 'automatic', binding, bodyDigest: 'd-s', clientMsgNo: 'cmn-s' });
+    if (sending.kind !== 'reserved') throw new Error('fixture');
+    expect(store.markTerminal(sending.cardId, 'completed')).toEqual({ kind: 'invalid_state', state: 'sending' });
+    const amb = store.reserveMessage({ kind: 'automatic', binding, bodyDigest: 'd-a', clientMsgNo: 'cmn-amb' });
+    if (amb.kind !== 'reserved') throw new Error('fixture');
+    store.markSendAmbiguous(amb.cardId);
+    expect(store.markTerminal(amb.cardId, 'failed')).toEqual({ kind: 'invalid_state', state: 'ambiguous' });
+    expect(store.unresolvedSendKinds()).toEqual(['automatic']);
+    expect(store.getMessage(sending.cardId)?.terminalAt).toBeNull();
+    expect(store.getMessage(amb.cardId)?.terminalAt).toBeNull();
+  });
+
+  it('rejects display and interactive kinds and other terminal rows', () => {
+    const display = activeAutomatic('disp', 'display');
+    expect(store.markTerminal(display, 'completed')).toEqual({ kind: 'invalid_state', state: 'active' });
+    expect(store.getMessage(display)?.state).toBe('active');
+    const inter = pendingSession('inter');
+    expect(store.markTerminal(inter.cardId, 'completed')).toEqual({ kind: 'invalid_state', state: 'active' });
+    const failed = store.reserveMessage({ kind: 'automatic', binding, bodyDigest: 'd-f', clientMsgNo: 'cmn-f' });
+    if (failed.kind !== 'reserved') throw new Error('fixture');
+    store.markSendFailed(failed.cardId);
+    expect(store.markTerminal(failed.cardId, 'failed')).toEqual({ kind: 'invalid_state', state: 'error' });
+    expect(store.markTerminal('missing', 'completed')).toEqual({ kind: 'not_found' });
+  });
+
+  it('rejects the interactive-only expired reason and unknown reasons as invalid input', () => {
+    const id = activeAutomatic('bad');
+    expect(() => store.markTerminal(id, 'expired')).toThrow(CardStoreError);
+    expect(() => store.markTerminal(id, 'nope' as never)).toThrow(CardStoreError);
+    expect(store.getMessage(id)?.state).toBe('active');
+  });
+
+  it('a terminal row stops further sequence reservation', () => {
+    const id = activeAutomatic('seq');
+    expect(store.reserveSequence(id)).toEqual({ kind: 'reserved', seq: 1 });
+    expect(store.ackSequence(id, 1)).toEqual({ kind: 'acked', seqAcked: 1 });
+    store.markTerminal(id, 'completed');
+    expect(store.reserveSequence(id)).toEqual({ kind: 'invalid_state', state: 'done' });
+  });
+
+  it('cleanup prunes a durable terminal only after retention; a nonterminal active row is never pruned', () => {
+    const done = activeAutomatic('prune');
+    const live = activeAutomatic('live');
+    store.markTerminal(done, 'completed');
+    now = T0 + DAY - 1;
+    expect(store.cleanup().messages).toBe(0);
+    now = T0 + DAY + 1;
+    expect(store.cleanup().messages).toBe(1);
+    expect(store.getMessage(done)).toBeNull();
+    expect(store.getMessage(live)?.state).toBe('active');
+    expect(store.checkInvariants()).toEqual([]);
+  });
+
+  it('a retired store refuses without touching SQL', () => {
+    const id = activeAutomatic('retired');
+    store.retire();
+    expect(() => store.markTerminal(id, 'completed')).toThrow(CardStoreError);
+    expect(newStore().getMessage(id)?.state).toBe('active');
   });
 });

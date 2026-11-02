@@ -130,7 +130,7 @@ beforeAll(() => {
   const req = createRequire(import.meta.url);
   const sqliteUrl = pathToFileURL(req.resolve('better-sqlite3')).href;
   const outRoot = join(root, 'out');
-  for (const rel of ['db-adapter.ts', 'cards/migrations.ts', 'cards/store.ts', 'cards/contracts.ts']) transpile(rel, outRoot, sqliteUrl);
+  for (const rel of ['db-adapter.ts', 'cards/migrations.ts', 'cards/safe-file.ts', 'cards/store.ts', 'cards/contracts.ts']) transpile(rel, outRoot, sqliteUrl);
   storeUrl = pathToFileURL(join(outRoot, 'cards', 'store.js')).href;
 });
 

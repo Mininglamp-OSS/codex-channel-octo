@@ -448,7 +448,8 @@ describe('T25: one canonical options contract', () => {
     expectTypeOf<Extract<keyof QueryAgentOptions, 'onResumeFailed' | 'fallbackRetryPrompt'>>().toEqualTypeOf<never>();
     expectTypeOf<QueryAgentOptions>().toEqualTypeOf<{
       resume?: string;
-      onSessionId?: (id: string, prompt: string) => void;
+      onSessionId?: (id: string, prompt: string, toolsetDigest?: string | null) => void;
+      threadToolsetDigest?: string | null;
       groupInstructions?: string;
       senderContext?: import('../prompt-safety.js').SafeText;
       signal?: AbortSignal;
@@ -459,6 +460,8 @@ describe('T25: one canonical options contract', () => {
       privateMemoryContext?: import('../prompt-safety.js').SafeText;
       onManagedExecution?: (execution: import('../execution-scope.js').ManagedExecution) => void;
       interruptedTurn?: import('../turn-context.js').InterruptedTurn;
+      itemStates?: boolean;
+      cardInjection?: import('../cards/tool-host.js').CardInjectionLaunch;
     }>();
   });
 
@@ -706,5 +709,110 @@ describe('single-read event types across progress paths',()=>{
     const output=[];for await(const value of queryAgentEvents('request',cfg(),undefined,()=>{})) output.push(value);
     expect(reads).toBe(1);expect(output).toContainEqual(expect.objectContaining({kind:'message',text:'done'}));
    }
+  });
+});
+
+describe('item_state events (WP-06, opt-in)', () => {
+  type ItemStateEvent = Extract<AgentOutputEvent, { kind: 'item_state' }>;
+  const states = (out: AgentOutputEvent[]): ItemStateEvent[] => out.filter((e): e is ItemStateEvent => e.kind === 'item_state');
+  const workRun = () => async function* () {
+    yield started('t1');
+    yield item('r', 'reasoning', 'started', { text: 'PRIVATE_REASONING' });
+    yield item('c', 'command_execution', 'started', { command: 'SECRET_ENV=1 git push https://u:SECRET_PW@h/x', status: 'in_progress' });
+    yield item('c', 'command_execution', 'updated', { command: 'SECRET_ENV=1 git push', aggregated_output: 'SECRET_OUT', status: 'in_progress' });
+    yield item('c', 'command_execution', 'completed', { command: 'SECRET_ENV=1 git push', aggregated_output: 'SECRET_OUT', exit_code: 0, status: 'completed' });
+    yield item('f', 'file_change', 'completed', { changes: [{ path: '/home/u/SECRET_PATH', kind: 'add' }], status: 'failed' });
+    yield item('w', 'web_search', 'started', { query: 'SECRET_QUERY' });
+    yield item('m', 'mcp_tool_call', 'started', { server: 'SECRET_SERVER', tool: 'SECRET_TOOL', arguments: { a: 'SECRET_ARG' }, status: 'in_progress' });
+    yield item('t', 'todo_list', 'started', { items: [{ text: 'PRIVATE_TODO', completed: false }] });
+    yield msg('a', 'answer');
+    yield turnDone;
+  };
+
+  it('without the opt-in the event stream carries no item_state (card-off parity)', async () => {
+    scriptedRuns = [workRun()];
+    const out = await events();
+    expect(states(out)).toEqual([]);
+    expect(out.map((e) => e.kind)).toEqual(['attempt_start', 'work', 'work', 'work', 'work', 'message', 'attempt_end']);
+  });
+
+  it('with the opt-in every non-item event is unchanged and item_state events are added', async () => {
+    scriptedRuns = [workRun()];
+    const plain = await events();
+    runIdx = 0; scriptedRuns = [workRun()];
+    const withStates = await events({ itemStates: true });
+    expect(withStates.filter((e) => e.kind !== 'item_state')).toEqual(plain);
+  });
+
+  it('reduces items at the bridge: typed phase/status, first-sight seq, reducer facts only', async () => {
+    scriptedRuns = [workRun()];
+    const out = await events({ itemStates: true });
+    const work = new Map(out.filter((e) => e.kind === 'work').map((e) => [(e as { itemId: string }).itemId, (e as { seq: number }).seq]));
+    expect(states(out).map((e) => [e.itemId, e.itemType, e.phase, e.status ?? null])).toEqual([
+      ['r', 'reasoning', 'started', null],
+      ['c', 'command_execution', 'started', 'in_progress'],
+      ['c', 'command_execution', 'updated', 'in_progress'],
+      ['c', 'command_execution', 'completed', 'completed'],
+      ['f', 'file_change', 'completed', 'failed'],
+      ['w', 'web_search', 'started', null],
+      ['m', 'mcp_tool_call', 'started', 'in_progress'],
+      ['t', 'todo_list', 'started', null],
+    ]);
+    for (const e of states(out)) {
+      expect(e.attempt).toBe(0);
+      // Work items reuse the bridge's first-sight identity; activity items take no selection position.
+      expect(e.seq).toBe(work.get(e.itemId) ?? -1);
+    }
+    const command = states(out).find((e) => e.itemId === 'c' && e.phase === 'completed')!;
+    expect(command.safe).toMatchObject({ category: 'command', program: 'git', exitClass: 'ok' });
+    expect(states(out).find((e) => e.itemId === 'f')!.safe).toMatchObject({ category: 'file_change', fileCount: 1 });
+    expect(states(out).find((e) => e.itemId === 'm')!.safe).toEqual({ category: 'tool' });
+    const text = JSON.stringify(states(out));
+    for (const s of ['SECRET', 'PRIVATE', '/home/u']) expect(text).not.toContain(s);
+  });
+
+  it('item_state does not change selection: the collector ignores it', async () => {
+    scriptedRuns = [workRun()];
+    const out = await events({ itemStates: true });
+    const withStates = new OutputCollector();
+    const without = new OutputCollector();
+    for (const e of out) { withStates.push(e); if (e.kind !== 'item_state') without.push(e); }
+    const opts = { mode: DEFAULT_OUTPUT_SELECTION_MODE, maxChars: 524288 } as const;
+    expect(withStates.select(opts)).toEqual(without.select(opts));
+    expect(withStates.select(opts).text).toBe('answer');
+  });
+
+  it('a retry attempt carries its own attempt number', async () => {
+    scriptedRuns = [
+      async function* () { throw Object.assign(new Error('synthetic'), { code: 'EAGAIN', syscall: 'spawn proxy' }); },
+      async function* () { yield started('t2'); yield item('c', 'command_execution', 'started', { command: 'ls', status: 'in_progress' }); yield msg('a', 'ok'); yield turnDone; },
+    ];
+    const config = cfg(); config.sdk.recovery = { enabled: true, baseDelayMs: 1, maxDelayMs: 1 };
+    const out: AgentOutputEvent[] = [];
+    for await (const e of queryAgentEvents('hi', config, undefined, undefined, { itemStates: true })) out.push(e);
+    expect(states(out).map((e) => [e.attempt, e.itemId])).toEqual([[1, 'c']]);
+  });
+
+  it('keeps the single-read event discriminant with the opt-in', async () => {
+    for (const type of ['item.started', 'item.updated', 'item.completed']) {
+      let reads = 0;
+      const event = { get type() { if (++reads > 1) throw Error('PRIVATE_SECOND_READ'); return type; },
+        item: { id: 'progress', type: 'command_execution', command: 'synthetic', status: 'in_progress' } };
+      runIdx = 0; scriptedRuns = [async function* () { yield event; yield msg('final', 'done'); yield turnDone; }];
+      const out = await events({ itemStates: true });
+      expect(reads).toBe(1);
+      expect(states(out).map((e) => e.phase)).toEqual([type.slice('item.'.length)]);
+    }
+  });
+
+  it('agent messages and error items never produce item_state', async () => {
+    scriptedRuns = [async function* () {
+      yield started('t'); yield msg('a', 'PRIVATE_ANSWER');
+      yield item('e', 'error', 'completed', { message: 'Model metadata for `x` not found. Defaulting to fallback metadata.' });
+      yield turnDone;
+    }];
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = await events({ itemStates: true });
+    expect(states(out)).toEqual([]);
   });
 });
