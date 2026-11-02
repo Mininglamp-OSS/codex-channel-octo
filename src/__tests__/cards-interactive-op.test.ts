@@ -216,7 +216,7 @@ describe('budgeted informational degradation', () => {
     expect(sends).toBe(1);
   });
   it('still detects a corrupted request/message relationship', async () => {
-    const r = await rig(() => profile({ actions: [] }), { send: async () => ({ kind: 'acked', messageId: '9204' }) });
+    const r = await rig(() => profile({ profiles: ['octo/v1'] }), { send: async () => ({ kind: 'acked', messageId: '9204' }) });
     r.call(1); await r.time.advance(0);
     expect(r.store.checkInvariants()).toEqual([]);
     r.adapter.prepare("UPDATE card_messages SET kind = 'display'").run();
@@ -248,7 +248,7 @@ describe('budgeted informational degradation', () => {
     r.call(1); await r.time.advance(0); expect(r.net.sends()).toHaveLength(1);
   });
   it.each(['throw', 'incompatible'])('degrades %s once to acknowledged ordinary text, without a session', async mode => {
-    const r = await rig(() => { if (mode === 'throw') throw new TypeError('offline'); return profile({ actions: [] }); });
+    const r = await rig(() => { if (mode === 'throw') throw new TypeError('offline'); return profile({ profiles: ['octo/v1'] }); });
     r.net.reply({ status: 200, body: { message_id: '9201' } });
     r.call(1); await r.time.advance(0);
     expect(r.replies[0]).toEqual({ status: 'degraded', message_id: '9201', interaction_available: false, reason: mode === 'throw' ? 'profile_unavailable' : 'profile_incompatible' });
@@ -261,7 +261,7 @@ describe('budgeted informational degradation', () => {
     r.call(1); await r.time.advance(0); expect(r.net.sends()).toHaveLength(1);
   });
   it.each(['enabled', 'throw', 'incompatible'])('rejects final visible-label collisions before reservation under %s capability', async mode => {
-    const r = await rig(() => { if (mode === 'throw') throw new TypeError('offline'); return mode === 'incompatible' ? profile({ actions: [] }) : profile(); });
+    const r = await rig(() => { if (mode === 'throw') throw new TypeError('offline'); return mode === 'incompatible' ? profile({ profiles: ['octo/v1'] }) : profile(); });
     r.call(1, 'interactive', { ...args, inputs: [{ id: 'pick', kind: 'choice', label: 'Pick', required: true, multiple: false, min: 1, max: 1,
       options: [{ id: 'a', label: 'www.example.com' }, { id: 'b', label: 'www[.]example.com' }] }] });
     await r.time.advance(0);

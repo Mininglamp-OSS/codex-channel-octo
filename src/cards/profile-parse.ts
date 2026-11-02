@@ -7,6 +7,8 @@ export type NormalizedProfile = Pick<PolicySnapshot, "automatic" | "display" | "
 const KEYS = ["available", "enabled", "profiles", "card_version", "elements", "inputs", "actions", "limits", "templating", "config"];
 const CONFIG_KEYS = ["card_enabled", "reasoning_enabled", "reasoning_template_ref", "display_enabled", "interaction_enabled"];
 const ELEMENTS = ["TextBlock", "RichTextBlock", "FactSet", "Container", "ColumnSet", "Table", "ActionSet"];
+/** Known server capability extras are compatible with interaction, but never authored or negotiated. */
+const INTERACTION_ELEMENTS = [...ELEMENTS, "Image", "ImageSet"];
 const ACTIONS = ["Action.OpenUrl", "Action.ToggleVisibility", "Action.CopyToClipboard", "Action.Submit"];
 /** The local actions a display card may carry; Action.Submit is interaction only. */
 const DISPLAY_ACTIONS: readonly DisplayActionKind[] = ["Action.OpenUrl", "Action.ToggleVisibility", "Action.CopyToClipboard"];
@@ -73,18 +75,19 @@ export function parseProfile(value: unknown): NormalizedProfile {
     const template = selectTemplate(value as CardProfileWire);
     const auto = config.reasoning_enabled && typeof template !== "string" && limits.payloadValid;
     const profilesOK = allowedList(value.profiles, ["octo/v1", "octo/v2"]);
-    const elementsOK = allowedList(value.elements, ELEMENTS) && value.elements.includes("TextBlock");
+    const elementsOK = allowedList(value.elements, INTERACTION_ELEMENTS) && value.elements.includes("TextBlock");
     const actionsOK = allowedList(value.actions, ACTIONS);
     const layoutOK = value.card_version === "1.5" && elementsOK && limits.payloadValid && limits.layoutValid;
-    // Display only (D-W2 Option A): advertised elements outside the closed list are ignored, never negotiated or
-    // emitted; TextBlock stays mandatory. Interaction keeps the strict list, and actions stay strict for both.
+    // Display (D-W2 Option A) intersects authored elements; interaction accepts only the known capability list.
+    // Neither emits capability extras; TextBlock stays mandatory, and actions stay strict for both.
     const displayElements = stringList(value.elements) ? value.elements.filter(e => ELEMENTS.includes(e)) : [];
     const displayLayoutOK = value.card_version === "1.5" && displayElements.includes("TextBlock") && limits.payloadValid && limits.layoutValid;
     // Display carries exactly the advertised local actions (an unknown action has already failed `actionsOK`).
     const displayActions = actionsOK ? DISPLAY_ACTIONS.filter(a => (value.actions as readonly string[]).includes(a)) : [];
     const display = config.display_enabled && profilesOK && (value.profiles as readonly string[]).includes("octo/v1") && displayLayoutOK && actionsOK;
+    // octo/v2 declares Submit support; the server's actions list advertises local display actions.
     const interaction = config.interaction_enabled && profilesOK && (value.profiles as readonly string[]).includes("octo/v2")
-      && layoutOK && actionsOK && (value.actions as readonly string[]).includes("Action.Submit")
+      && layoutOK && actionsOK
       && allowedList(value.inputs, Object.keys(INPUTS)) && limits.inputsValid;
     if (!config.reasoning_enabled || !config.display_enabled || !config.interaction_enabled) reasons.add("capability_disabled");
     if (config.reasoning_enabled && !auto) reasons.add(typeof template === "string" ? "template_incompatible" : "profile_incompatible");
