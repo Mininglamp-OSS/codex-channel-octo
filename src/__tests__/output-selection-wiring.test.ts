@@ -5,7 +5,7 @@
  * the agent bridge are mocked; the bridge is scripted with typed events.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -61,6 +61,7 @@ import { resolveMentions } from '../mention-utils.js';
 import { handleMessage, startBot } from '../index.js';
 import { sendMessage, getGroupMembers } from '../octo/api.js';
 import { uploadArtifact, sendNativeImage } from '../octo/media.js';
+import { TurnContext } from '../turn-context.js';
 import * as artifactFiles from '../artifact-files.js';
 import { ChannelType, MessageType, type BotMessage } from '../octo/types.js';
 import type { Config } from '../config.js';
@@ -216,6 +217,54 @@ describe('output selection wiring', () => {
       expect(vi.mocked(sendNativeImage)).toHaveBeenCalledTimes(1);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+  it.each(['success', 'empty', 'text-only', 'inference-failure', 'text-failure', 'upload-failure', 'send-failure', 'cancel-upload', 'late-send', 'timeout'])(
+    'F-PR96-P1-SCOPE-LEAK: releases scopes after %s, never during an active send', async mode => {
+      const root = mkdtempSync(join(tmpdir(), 'cco-scope-lifetime-'));
+      const config = makeConfig({ cwd: root }, { nativeImages: { enabled: true }, sandboxMode: 'workspace-write', allowWorkspaceWrite: true });
+      setup(config);
+      const state: { active?: TurnContext } = {};
+      const original = TurnContext.prototype.assertPublishable;
+      const publish = vi.spyOn(TurnContext.prototype, 'assertPublishable').mockImplementation(function (this: TurnContext) {
+        state.active = this; return original.call(this);
+      });
+      const directories: string[] = [];
+      const presentDuringSend: boolean[] = [];
+      vi.mocked(queryAgentEvents).mockImplementation(async function* (_body, _config, _session, _tool, opts) {
+        const output = opts!.nativeImageOutput!; directories.push(output.directory);
+        writeFileSync(join(output.directory, 'one.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
+        if (mode === 'inference-failure') throw new Error('generation failed');
+        if (mode === 'timeout') { Object.defineProperty(state.active!, 'deadline', { value: 0 }); }
+        yield start();
+        if (mode !== 'empty') yield m('image', 0, mode === 'text-only' ? 'Text only.' : JSON.stringify({ octo_output: 1, requestId: output.requestId, text: 'Image.',
+          artifacts: [{ id: 'one', kind: 'image', path: 'one.png', disposition: 'relay' }] }));
+        yield end();
+      });
+      if (mode === 'text-failure') vi.mocked(sendMessage).mockRejectedValueOnce(new Error('text failed'));
+      if (mode === 'upload-failure') vi.mocked(uploadArtifact).mockRejectedValueOnce(new Error('upload failed'));
+      if (mode === 'send-failure') vi.mocked(sendNativeImage).mockRejectedValueOnce(new Error('send failed'));
+      if (mode === 'cancel-upload') vi.mocked(uploadArtifact).mockImplementationOnce(async () => {
+        state.active!.cancel(); throw new DOMException('cancelled', 'AbortError');
+      });
+      if (mode === 'success' || mode === 'late-send') vi.mocked(sendNativeImage).mockImplementation(async () => {
+        // Cancellation revokes publishing immediately, but a late callback
+        // still owns its scope until this in-flight operation settles.
+        if (mode === 'late-send') state.active!.cancel();
+        await new Promise(resolve => setTimeout(resolve, 2));
+        presentDuringSend.push(directories.every(directory => existsSync(directory)));
+        return { message_id: '456', client_msg_no: 'test-image', message_seq: 1 };
+      });
+      try {
+        for (let i = 0; i < (mode === 'success' ? 3 : 1); i++) {
+          await run(config);
+          expect(vi.mocked(queryAgentEvents)).toHaveBeenCalledTimes(i + 1);
+          expect(directories).toHaveLength(1);
+          expect(directories.every(directory => !existsSync(directory))).toBe(true);
+          directories.length = 0;
+          if (mode === 'success' || mode === 'late-send') expect(presentDuringSend).toEqual(Array(i + 1).fill(true));
+        }
+      } finally { publish.mockRestore(); vi.mocked(sendNativeImage).mockResolvedValue({ message_id: '456', client_msg_no: 'test-image', message_seq: 1 }); rmSync(root, { recursive: true, force: true }); }
+    });
+
   it('RVW-4: export scope creation failure does not block a text answer', async () => {
     const root = mkdtempSync(join(tmpdir(), 'cco-image-scope-failure-'));
     const config = makeConfig({ cwd: root }, { nativeImages: { enabled: true }, sandboxMode: 'workspace-write', allowWorkspaceWrite: true });

@@ -8,7 +8,7 @@ import type { TurnContext } from './turn-context.js';
 
 export interface ImageDelivery {
   id: string;
-  generation: 'ready' | 'failed';
+  generation: 'ready' | 'failed' | 'failed_unsupported_jpeg_sof';
   upload: 'not_started' | 'unknown' | 'confirmed' | 'failed';
   delivery: 'not_started' | 'unknown' | 'confirmed' | 'external' | 'duplicate';
   clientMsgNo: string;
@@ -30,15 +30,19 @@ export async function deliverImages(params: {
   const snapshots = new Map<string, ReturnType<typeof snapshotImage>>();
   // Validate every file before any upload; external entries suppress relay
   // copies by digest even when the external entry appears later in the array.
+  const unsupported = new Set<string>();
   const external = new Set<string>(); const seen = new Set<string>();
   for (const a of params.artifacts) {
     check();
     try { const image = snapshotImage(params.scope, a.path, params.maxBytes); snapshots.set(a.id, image); if (a.disposition === 'external') external.add(image.digest); }
-    catch { /* Per-item generation failure is recorded below. */ }
+    catch (error) {
+      if (error instanceof ArtifactError && error.code === 'unsupported_jpeg_sof') unsupported.add(a.id);
+      // All diagnostics are fixed codes; file paths and parser errors stay private.
+    }
   }
   for (const a of params.artifacts) {
     const image = snapshots.get(a.id);
-    report.push({ id: a.id, clientMsgNo: randomUUID(), generation: image ? 'ready' : 'failed', upload: 'not_started',
+    report.push({ id: a.id, clientMsgNo: randomUUID(), generation: image ? 'ready' : unsupported.has(a.id) ? 'failed_unsupported_jpeg_sof' : 'failed', upload: 'not_started',
       delivery: a.disposition === 'external' ? 'external' : 'not_started' });
   }
   check(); store.saveImageDeliveries(turn.turnId, report);

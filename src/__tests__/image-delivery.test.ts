@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createAdapter } from '../db-adapter.js';
 import { SessionStore } from '../session-store.js';
 import { TurnContext } from '../turn-context.js';
 import { createArtifactScope } from '../artifact-files.js';
-import { deliverImages } from '../image-delivery.js';
+import { deliverImages, imageDeliverySummary } from '../image-delivery.js';
 import type { ImageArtifact } from '../artifacts.js';
 import { uploadArtifact } from '../octo/media.js';
 
@@ -142,6 +142,17 @@ describe('native image pipeline against a local HTTP service', () => {
       expect(report[0]).toMatchObject({ generation: 'failed', upload: 'not_started', delivery: 'not_started' });
       expect(requests).toEqual([]);
     });
+  });
+  it('F-PR96-P2-JPEG-SOF: persists and reports the explicit unsupported encoding without HTTP', async () => {
+    const params = input(['unsupported.jpg']);
+    const jpeg = readFileSync(new URL('./fixtures/native-image.jpg', import.meta.url));
+    const sof = jpeg.indexOf(Buffer.from([0xff, 0xc0])); jpeg[sof + 1] = 0xc3;
+    writeFileSync(join(params.scope.directory, 'unsupported.jpg'), jpeg);
+    const report = await deliverImages(params);
+    expect(report[0]).toMatchObject({ generation: 'failed_unsupported_jpeg_sof', upload: 'not_started', delivery: 'not_started' });
+    expect(imageDeliverySummary(report)).toContain('generation=failed_unsupported_jpeg_sof');
+    expect(await deliverImages(params)).toEqual(report);
+    expect(requests).toEqual([]);
   });
   it('RVW-5: expiry of the presign budget does not cancel the independent PUT', async () => {
     const presignBudget = new AbortController(); const putBudget = new AbortController();

@@ -46,7 +46,7 @@ import { handleCommand } from './commands.js';
 import { loadGroupConfig } from './group-config.js';
 import { canLoadPrivateMemory, loadPrivateMemory, privateMemorySessionKey } from './private-memory.js';
 import { buildSenderContext } from './sender-context.js';
-import { createArtifactScope, type ArtifactScope } from './artifact-files.js';
+import { cleanupArtifactScope, createArtifactScope, type ArtifactScope } from './artifact-files.js';
 import { DEFAULT_IMAGE_BYTES } from './artifacts.js';
 import { deliverImages, imageDeliverySummary } from './image-delivery.js';
 import { isConversationMdEvent } from './conversation-md.js';
@@ -366,6 +366,7 @@ export async function handleMessage(
     let resume: string | undefined;
     let sessionMode: 'start' | 'resume' | undefined;
     let suppressHistory = false;
+    let imageScope: ArtifactScope | undefined;
 
     try {
       // --- Session ---
@@ -792,7 +793,6 @@ export async function handleMessage(
       }
       // Host owns both the destination and the narrow per-turn export scope.
       // Never authorize ordinary model-produced paths across the workspace.
-      let imageScope: ArtifactScope | undefined;
       if (config.sdk.nativeImages?.enabled === true && outputImagesWritable(config)
         && (config.sdk.outputSelection ?? DEFAULT_OUTPUT_SELECTION_MODE) === 'final') {
         try { imageScope = createArtifactScope(resolveSessionCwd(config.cwdBase ?? config.cwd, sessionCtx)); }
@@ -935,6 +935,12 @@ export async function handleMessage(
         });
       } catch {
         /* swallow — don't crash on reply failure */
+      }
+    } finally {
+      // The callback owns the scope from creation through inference and every
+      // awaited delivery. Revoked turns must still release their resources.
+      if (imageScope && !cleanupArtifactScope(imageScope)) {
+        console.warn('[codex-channel-octo] native image export cleanup unavailable');
       }
     }
   });

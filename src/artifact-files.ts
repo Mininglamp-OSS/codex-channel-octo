@@ -1,4 +1,4 @@
-import { constants, closeSync, fstatSync, lstatSync, mkdtempSync, openSync, readSync, realpathSync } from 'node:fs';
+import { constants, closeSync, fstatSync, lstatSync, mkdtempSync, openSync, readSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -15,6 +15,14 @@ export function createArtifactScope(cwd: string): ArtifactScope {
     const st = lstatSync(directory);
     return Object.freeze({ directory, dev: st.dev, ino: st.ino });
   } catch { throw new ArtifactError('generation', 'output_directory_unavailable'); }
+}
+/** Release only the host-created directory, after its owning turn has settled.
+ * Synchronous validation/removal leaves no event-loop gap for a late callback.
+ * Never follow a replacement scope; cleanup errors must not hide turn outcomes.
+ */
+export function cleanupArtifactScope(scope: ArtifactScope): boolean {
+  try { assertScope(scope); rmSync(scope.directory, { recursive: true, force: true }); return true; }
+  catch { return false; }
 }
 const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, i) => {
   let n = i;
@@ -88,6 +96,10 @@ function imageMetadata(b: Buffer): { mime: string; width: number; height: number
       if (marker === 0xd9) {
         if (!dims || !scans || scanned.size !== components.size || offset !== b.length) throw new Error('JPEG incomplete');
         return { mime: 'image/jpeg', ...dims, extensions: ['jpg', 'jpeg'] };
+      }
+      // Only the Huffman DCT SOF0/1/2 subset is supported by this parser.
+      if ([0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+        throw new ArtifactError('generation', 'unsupported_jpeg_sof');
       }
       if (![0xc0, 0xc1, 0xc2, 0xc4, 0xda, 0xdb, 0xdd, 0xfe].includes(marker)
         && !(marker >= 0xe0 && marker <= 0xef)) throw new Error('JPEG unsupported marker');
@@ -195,5 +207,8 @@ export function snapshotImage(scope: ArtifactScope, name: string, maxBytes: numb
     if (!meta.extensions.includes(name.split('.').at(-1)!.toLowerCase()) || meta.width < 1 || meta.height < 1
       || meta.width > 16384 || meta.height > 16384 || meta.width * meta.height > 40_000_000) throw new Error('dimensions/type');
     return { ...snapshot, mime: meta.mime, width: meta.width, height: meta.height };
-  } catch { throw new ArtifactError('generation', 'file_rejected'); }
+  } catch (error) {
+    if (error instanceof ArtifactError && error.code === 'unsupported_jpeg_sof') throw error;
+    throw new ArtifactError('generation', 'file_rejected');
+  }
 }

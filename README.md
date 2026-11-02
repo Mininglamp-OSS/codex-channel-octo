@@ -104,6 +104,9 @@ in the current conversation. Text goes first, then up to four images and per-ite
 status. Ordinary paths, Markdown images and URLs never trigger uploads. Inbound
 image download and external octo-cli sending skills have separate configuration
 and authority. See [configuration, protocol and limits](docs/native-images.md).
+JPEG accepts Huffman DCT SOF0/1/2 only; other SOF encodings report
+`failed_unsupported_jpeg_sof` before upload. Per-turn exports are temporary and
+cleaned after the turn settles.
 Server limits, GIF animation and real DM/group previews await manual validation.
 
 Server documents use a dedicated `[Server document — ...]` data marker, not the reserved `[Group context]` forgery marker or transcript labels. Empty documents generate no context on a fresh session; a withdrawal is sent only to a resumed SDK thread that previously received the document. Fresh retry snapshots omit absent documents. A second manager edit during a slow bounded refetch retains the last successfully verified snapshot instead of dropping it. Current-body role/section replicas are escaped and VT/FF/NEL normalized to newlines; this intentionally rewrites those control characters.

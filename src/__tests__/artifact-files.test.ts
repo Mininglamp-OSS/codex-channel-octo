@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync, symlinkSync, linkSync, rmSync, renameSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync, symlinkSync, linkSync, rmSync, renameSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createArtifactScope, snapshotImage } from '../artifact-files.js';
+import { cleanupArtifactScope, createArtifactScope, snapshotImage } from '../artifact-files.js';
 
 // A real 1x1 PNG; validation must not rely on the extension alone.
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64');
@@ -13,6 +13,23 @@ function setup() {
   return { root, scope: createArtifactScope(root) };
 }
 describe('image authorization and snapshots', () => {
+  it('cleanup removes only its own scope and does not follow child symlinks', () => {
+    const { root, scope } = setup(); const other = createArtifactScope(root);
+    writeFileSync(join(other.directory, 'keep.png'), PNG);
+    symlinkSync(other.directory, join(scope.directory, 'link'));
+    writeFileSync(join(scope.directory, 'x.png'), PNG);
+    expect(cleanupArtifactScope(scope)).toBe(true);
+    expect(existsSync(scope.directory)).toBe(false);
+    expect(readFileSync(join(other.directory, 'keep.png'))).toEqual(PNG);
+  });
+  it('cleanup refuses a replaced scope without deleting either directory', () => {
+    const { root, scope } = setup(); const other = createArtifactScope(root);
+    renameSync(scope.directory, scope.directory + '-old');
+    symlinkSync(other.directory, scope.directory);
+    expect(cleanupArtifactScope(scope)).toBe(false);
+    expect(existsSync(scope.directory + '-old')).toBe(true);
+    expect(existsSync(other.directory)).toBe(true);
+  });
   it('reads exact bytes, sniffs MIME and extracts dimensions', () => {
     const { scope } = setup(); writeFileSync(join(scope.directory, '图片.png'), PNG);
     expect(snapshotImage(scope, '图片.png', 1024)).toMatchObject({ bytes: PNG, mime: 'image/png', width: 1, height: 1 });
@@ -60,6 +77,14 @@ describe('image authorization and snapshots', () => {
     const fake = Buffer.concat([gif.subarray(0, 13), Buffer.from([0x3b])]);
     writeFileSync(join(scope.directory, 'fake.gif'), fake);
     expect(() => snapshotImage(scope, 'fake.gif', 1024)).toThrow('generation:');
+  });
+  it.each([0xc3, 0xc9, 0xca])('F-PR96-P2-JPEG-SOF: explicitly rejects unsupported SOF %i', marker => {
+    const { scope } = setup();
+    const jpeg = readFileSync(new URL('./fixtures/native-image.jpg', import.meta.url));
+    const sof = jpeg.indexOf(Buffer.from([0xff, 0xc0]));
+    expect(sof).toBeGreaterThan(0); jpeg[sof + 1] = marker;
+    writeFileSync(join(scope.directory, 'unsupported.jpg'), jpeg);
+    expect(() => snapshotImage(scope, 'unsupported.jpg', 2048)).toThrow('generation: unsupported_jpeg_sof');
   });
   it('extracts JPEG dimensions from SOF without guessing from the filename', () => {
     const { scope } = setup();

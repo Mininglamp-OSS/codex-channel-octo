@@ -73,10 +73,20 @@ other distinct images. Failed/unknown text delivery stops image delivery.
   Width/height **1..16384**, at most **40 million pixels**. These are conservative
   **client policies, not verified server limits**. A returned presign
   `maxFileSize` is also enforced.
-- Export files stay in the session workspace for inspection/reconciliation.
-  Existing **seven-day idle session TTL** removes them with the workspace;
-  active sessions retain files. Operators may remove completed exports after
-  reconciliation. No detached uploads or cleanup jobs are started.
+- JPEG policy supports Huffman DCT SOF0 (baseline), SOF1 (extended sequential)
+  and SOF2 (progressive) only. Other SOF markers, including lossless SOF3 and
+  arithmetic SOF9/SOF10, fail before upload with
+  `generation=failed_unsupported_jpeg_sof`. Export a supported JPEG or PNG;
+  no re-encoding or silent fallback is performed.
+- The turn owns its export scope and removes it in `finally` once inference and
+  all awaited delivery/report calls settle, including failure, cancellation,
+  timeout, and late acknowledgments. In-flight calls retain their scope until
+  they settle; uploads use captured bytes. Empty/text-only turns also clean up.
+  Cleanup validates directory identity, does not follow replacement scopes, and
+  emits only a fixed warning on failure without masking the turn outcome.
+  Abrupt process termination or refused/failed cleanup still relies on existing
+  **seven-day idle session TTL**; no detached cleanup job is started. Files are
+  temporary, so keep durable generated originals outside the export scope.
 
 If the per-turn export directory cannot be created, image exports are disabled
 for that turn and plain text remains available. Presign has a separate 30-second
@@ -149,3 +159,25 @@ artifact/snapshot/upload/stage seams needed by #95, not #27's complete file scop
 Rollback: disable sdk.nativeImages and restart, or revert this PR. The additive
 SQLite table is ignored by older code; unknown sends still require manual
 reconciliation, never automatic replay.
+
+## COD2-2 review remediation
+
+- `F-PR96-P1-SCOPE-LEAK`: scope creation preceded inference, but no owner
+  released it after delivery. The handler now owns cleanup in `finally`, across
+  text-only/empty output, inference/text/upload/send errors, cancellation,
+  timeout and late acknowledgment. The multi-turn wiring regression first
+  failed on the previous head, then passed with cleanup; it checks that an
+  in-flight send retains its files and completed turns remove their scope.
+  Cleanup tests also preserve sibling directories and refuse replaced scopes.
+- `F-PR96-P2-JPEG-SOF`: the parser already rejected unsupported SOF, but erased
+  the reason as `file_rejected`. The supported subset is now explicit in both
+  READMEs; fixed `unsupported_jpeg_sof` diagnostics survive snapshot validation
+  and persist as `generation=failed_unsupported_jpeg_sof` in reports. SOF3/9/10
+  marker tests first failed on the generic error, then passed with the explicit
+  diagnostic. These are rejection fixtures, not claims of decoding those modes.
+- Test gap: earlier delivery tests removed their temporary roots in teardown,
+  hiding per-turn retention, and only tested baseline/progressive accepted
+  fixtures. Handler tests now assert filesystem lifetime before teardown and
+  verify the unsupported-encoding report survives ledger reentry with zero HTTP.
+  Scope creation call sites were checked: production ownership is confined to
+  the handler; the transport consumes immutable snapshots and owns no directory.
