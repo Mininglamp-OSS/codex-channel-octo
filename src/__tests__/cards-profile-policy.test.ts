@@ -7,6 +7,8 @@ import { CARD_BOUNDS, effectiveLimits, measureEnvelope, measureStructure, normal
 import { profile } from "./fixtures/card-profile.js";
 import { liveProfileJson } from "./fixtures/card-profile-live.js";
 import { projectCardProfile } from "../cards/api.js";
+import { buildInteractiveCard } from "../cards/interactive-builder.js";
+import { validateInteractiveArgs } from "../cards/interactive-schema.js";
 import type { JsonValue } from "../cards/contracts.js";
 
 function states(value: unknown) {
@@ -84,13 +86,14 @@ describe("strict server profile policy", () => {
     [{ card_version: undefined }, ["enabled", "disabled", "disabled"]],
     [{ elements: [] }, ["enabled", "disabled", "disabled"]],
     [{ elements: ["TextBlock"] }, ON],
-    // D-W2 Option A: an unknown element narrows interaction only; display intersects.
-    [{ elements: ["TextBlock", "Image"] }, ["enabled", "enabled", "disabled"]],
+    [{ elements: ["TextBlock", "Image"] }, ON],
+    // Unknown elements still narrow interaction only; display intersects.
+    [{ elements: ["TextBlock", "Media"] }, ["enabled", "enabled", "disabled"]],
     [{ elements: ["Image", "RichTextBlock"] }, ["enabled", "disabled", "disabled"]],
     [{ actions: ["Action.OpenUrl", "Action.Unknown"] }, ["enabled", "disabled", "disabled"]],
     [{ inputs: ["Input.Image"] }, ["enabled", "enabled", "disabled"]],
     [{ inputs: undefined }, ["enabled", "enabled", "disabled"]],
-    [{ actions: ["Action.OpenUrl"] }, ["enabled", "enabled", "disabled"]],
+    [{ actions: ["Action.OpenUrl"] }, ON],
     [{ actions: undefined }, ["enabled", "disabled", "disabled"]],
     [{ templating: undefined }, ["disabled", "enabled", "enabled"]],
     [{ templating: { supported: false } }, ["disabled", "enabled", "enabled"]],
@@ -142,29 +145,117 @@ describe("strict server profile policy", () => {
   });
 });
 
-describe("display element intersection (D-W2 Option A, display only)", () => {
-  const live = () => projectCardProfile(liveProfileJson() as unknown as JsonValue);
+describe("v2 interaction capability compatibility", () => {
+  const localActions = ["Action.OpenUrl", "Action.ToggleVisibility", "Action.CopyToClipboard"];
+  const compatible = () => profile({ actions: [...localActions], elements: ["TextBlock", "Image", "ImageSet"] });
 
-  it("the live profile enables display with exactly its known elements; interaction stays disabled", () => {
-    const p = parseProfile(live());
-    expect(p.display.state).toBe("enabled");
-    expect([...p.display.elements].sort()).toEqual(["ActionSet", "ColumnSet", "Container", "FactSet", "RichTextBlock", "Table", "TextBlock"]);
-    expect(p.interaction.state).toBe("disabled");
-    expect(p.reasons).toContain("profile_incompatible");
+  it.each([[], ["Action.OpenUrl"], ["Action.ToggleVisibility", "Action.CopyToClipboard"], localActions].map(actions => ({ actions })))(
+    "recognizes Submit through v2 with only advertised local actions $actions and no image extras", ({ actions }) => {
+      const wire = profile({ actions });
+      const before = structuredClone(wire);
+      expect(wire.elements).not.toContain("Image");
+      expect(wire.actions).not.toContain("Action.Submit");
+      const parsed = parseProfile(wire);
+      expect(parsed.interaction.state).toBe("enabled");
+      expect([...parsed.display.actions].sort()).toEqual([...actions].sort());
+      expect(wire).toEqual(before);
+    });
+
+  it.each([["Image"], ["ImageSet"], ["Image", "ImageSet"]].map(extras => ({ extras })))(
+    "accepts known non-emitted image extras $extras independently of the Submit gate", ({ extras }) => {
+      const wire = profile({ elements: ["TextBlock", ...extras] });
+      expect(wire.actions).toContain("Action.Submit");
+      const parsed = parseProfile(wire);
+      expect(parsed.interaction.state).toBe("enabled");
+      expect([...parsed.display.elements]).toEqual(["TextBlock"]);
+      expect([...parsed.display.actions]).not.toContain("Action.Submit");
+    });
+
+  it("preserves independent policy, version, TextBlock and unknown capability denials", () => {
+    expect(states(compatible())).toEqual(ON);
+    for (const delta of [
+      { profiles: ["octo/v1"] }, { profiles: [] }, { profiles: ["octo/v1", "octo/v2", "octo/v3"] },
+      { profiles: ["octo/v2", "unknown"] }, { card_version: "1.6" }, { card_version: undefined },
+      { config: { ...profile().config!, interaction_enabled: false } },
+      { elements: ["Image", "ImageSet"] }, { elements: ["TextBlock", "Image", "Media"] },
+      { elements: ["TextBlock", "Image.Unknown"] }, { actions: [...localActions, "Action.Execute"] },
+      { inputs: ["Input.Text", "Input.Unknown"] },
+    ]) {
+      expect(parseProfile({ ...compatible(), ...delta }).interaction.state).toBe("disabled");
+    }
+    const parsed = parseProfile(compatible());
+    expect(negotiate(parsed, { interaction: false }).interaction.state).toBe("disabled");
+    expect(negotiate(parseProfile({ ...compatible(), config: { ...profile().config!, interaction_enabled: false } }),
+      { interaction: true }).interaction.state).toBe("disabled");
   });
 
-  it("interaction stays disabled with Action.Submit added while the unknown Image elements remain", () => {
+  it.each(["profiles", "elements", "actions", "inputs"] as const)(
+    "rejects malformed %s independently on an otherwise compatible v2 profile", key => {
+      const valid = compatible()[key]!;
+      for (const bad of [undefined, null, false, {}, "TextBlock", [1], [""], [" TextBlock"],
+        ["TextBlock\u0000"], ["x".repeat(129)], [...valid, valid[0]], Array(257).fill("TextBlock")]) {
+        expect(parseProfile({ ...compatible(), [key]: bad }).interaction.state).toBe("disabled");
+      }
+    });
+
+  it.each(["max_nodes", "max_depth", "max_payload_bytes", "max_input_text_bytes", "max_inputs_bytes"])(
+    "preserves invalid %s rejection with local actions and image extras", key => {
+      for (const bad of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "2", null, true]) {
+        expect(parseProfile({ ...compatible(), limits: { [key]: bad } }).interaction.state).toBe("disabled");
+      }
+    });
+
+  it("builds a closed v2 card without emitting the advertised image extras", () => {
+    const parsed = parseProfile(compatible());
+    expect(parsed.interaction.state).toBe("enabled");
+    const args = { title: "Decide", inputs: [{ id: "answer", kind: "text" as const, label: "Answer", required: false }],
+      buttons: [{ id: "ok", label: "Continue" }] };
+    const schema = validateInteractiveArgs(args);
+    if (!schema.ok) throw new Error("schema");
+    const built = buildInteractiveCard(schema.value, { caps: parsed.interaction, route: { channelId: "requester", channelType: 1 } });
+    expect(built.ok).toBe(true);
+    if (!built.ok) throw new Error("build");
+    expect(built.authored.profile).toBe("octo/v2");
+    expect(built.authored.card.actions).toEqual([{ type: "Action.Submit", id: "ok", title: "Continue" }]);
+    expect(built.authored.card.body.map(element => element.type)).toEqual(["TextBlock", "TextBlock", "Input.Text"]);
+    expect(validateInteractiveArgs({ ...args, inputs: [{ ...args.inputs[0], kind: "image" }] } as never).ok).toBe(false);
+    expect(validateInteractiveArgs({ ...args, image: "extra" } as never).ok).toBe(false);
+  });
+});
+
+describe("display element intersection with non-emitted capabilities", () => {
+  const live = () => projectCardProfile(liveProfileJson() as unknown as JsonValue);
+
+  it("the archived profile enables interaction and exactly the known display elements without changing its wire lists", () => {
+    const wire = live(); const before = structuredClone(wire);
+    const p = parseProfile(wire);
+    expect(p.display.state).toBe("enabled");
+    expect([...p.display.elements].sort()).toEqual(["ActionSet", "ColumnSet", "Container", "FactSet", "RichTextBlock", "Table", "TextBlock"]);
+    expect(p.interaction.state).toBe("enabled");
+    expect(p.reasons).not.toContain("profile_incompatible");
+    expect([...p.display.actions]).toEqual(wire.actions);
+    expect(wire.actions).not.toContain("Action.Submit");
+    expect(wire).toEqual(before);
+    const raw = liveProfileJson();
+    expect(projectCardProfile(raw as unknown as JsonValue)).toEqual(wire);
+  });
+
+  it("also accepts a literal Action.Submit alongside known image extras without adding it to display", () => {
     const body = liveProfileJson() as unknown as { actions: string[] };
     body.actions.push("Action.Submit");
     const p = parseProfile(projectCardProfile(body as unknown as JsonValue));
     expect(p.display.state).toBe("enabled");
-    expect(p.interaction.state).toBe("disabled");
+    expect(p.interaction.state).toBe("enabled");
+    expect([...p.display.elements]).not.toContain("Image");
+    expect([...p.display.elements]).not.toContain("ImageSet");
+    expect([...p.display.actions]).not.toContain("Action.Submit");
   });
 
   it("unknown elements plus TextBlock give display exactly TextBlock; unknown elements are never negotiated", () => {
     const p = parseProfile(profile({ elements: ["Image", "TextBlock", "ImageSet", "Media"] }));
     expect(p.display.state).toBe("enabled");
     expect([...p.display.elements]).toEqual(["TextBlock"]);
+    expect(p.interaction.state).toBe("disabled");
   });
 
   it("a profile without TextBlock or with an unknown action keeps display disabled", () => {
@@ -210,11 +301,12 @@ describe("display action subset (advertised local actions only)", () => {
     expect(negotiate(parseProfile(profile({ actions: ["Action.OpenUrl"] })), { display: false }).display.actions.size).toBe(1);
   });
 
-  it("interaction negotiation is unchanged by the display action subset", () => {
+  it("interaction uses v2 independently of the advertised display action subset", () => {
     const view = (i: ReturnType<typeof parseProfile>["interaction"]) => ({ ...i, inputs: [...i.inputs] });
     expect(view(parseProfile(profile({ actions: ["Action.OpenUrl", "Action.Submit"] })).interaction))
       .toEqual(view(parseProfile(profile()).interaction));
-    expect(parseProfile(profile({ actions: ["Action.OpenUrl"] })).interaction.state).toBe("disabled");
+    expect(view(parseProfile(profile({ actions: ["Action.OpenUrl"] })).interaction))
+      .toEqual(view(parseProfile(profile()).interaction));
   });
 });
 
