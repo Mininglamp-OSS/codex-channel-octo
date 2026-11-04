@@ -40,7 +40,7 @@ function plural(n: number, noun: string): string {
 
 /** Marker for trailing blocks the fitted card omits. */
 export function omittedBlocksText(n: number): string {
-  return `${ELLIPSIS} ${plural(n, "block")}`;
+  return `Omitted items: ${n}.`;
 }
 
 function omittedLinesText(n: number): string {
@@ -87,7 +87,6 @@ export function fitPlain(text: string, maxBytes: number): string {
 
 function runText(run: RichRun): string {
   switch (run.kind) {
-    case "code": return `\`${u(run.text)}\``;
     case "link": return `${u(run.label)} (${run.url})`;
     default: return u(run.text);
   }

@@ -35,7 +35,7 @@ describe('deterministic plain text (AC-010.3)', () => {
       'Summary',
       'All checks passed.',
       'Second line.',
-      'Note: run `npm test` or read the docs (https://example.com/docs)',
+      'Note: run npm test or read the docs (https://example.com/docs)',
       'Branch: main',
       'Commit: abc',
       'left',
@@ -64,10 +64,25 @@ describe('deterministic plain text (AC-010.3)', () => {
       .toBe('A\n  B\n    x\n    y');
   });
 
-  it('appends the omission marker for blocks the card could not show', () => {
-    expect(omittedBlocksText(1)).toBe('… 1 more block not shown');
-    expect(omittedBlocksText(3)).toBe('… 3 more blocks not shown');
-    expect(renderDisplayPlain({ blocks: [{ kind: 'text', text: 'a' }] }, { omittedBlocks: 2 })).toBe('a\n… 2 more blocks not shown');
+  it('reduces rich runs to literal text in source order (TD C.2)', () => {
+    expect(renderDisplayPlain({ blocks: [{ kind: 'rich_text', runs: [
+      { kind: 'text', text: 'A' }, { kind: 'strong', text: 'B' },
+      { kind: 'emphasis', text: 'C' }, { kind: 'code', text: 'D' },
+    ] }] })).toBe('ABCD');
+  });
+
+  it('preserves authored code characters and LF while neutralizing URLs and mentions', () => {
+    expect(renderDisplayPlain({ blocks: [{ kind: 'rich_text', runs: [
+      { kind: 'code', text: '`😀` *x*\n𠮷 @all http://evil.local www.evil.com javascript:alert(1)' },
+    ] }] })).toBe('`😀` *x*\n𠮷 ＠all http[:]//evil.local www[.]evil.com javascript[:]alert(1)');
+  });
+
+  it('appends the exact TD C.2 omission marker for blocks the card could not show', () => {
+    expect(omittedBlocksText(1)).toBe('Omitted items: 1.');
+    expect(omittedBlocksText(3)).toBe('Omitted items: 3.');
+    expect(renderDisplayPlain({ blocks: [{ kind: 'text', text: 'a' }] }, { omittedBlocks: 2 })).toBe('a\nOmitted items: 2.');
+    expect(renderDisplayPlain({ blocks: [] }, { omittedBlocks: 2 })).toBe('Omitted items: 2.');
+    expect(renderDisplayPlain({ blocks: [{ kind: 'text', text: 'a' }] }, { omittedBlocks: 0 })).toBe('a');
   });
 
   it('neutralizes mentions defensively', () => {
@@ -102,6 +117,23 @@ describe('plain fitting', () => {
     const plain = renderDisplayPlain(big);
     expect(bytes(plain)).toBeLessThanOrEqual(PLAIN_MAX_BYTES);
     expect(plain).toMatch(/… \d+ more lines not shown$/);
+  });
+
+  it('reserves the exact block marker bytes without splitting a Unicode scalar', () => {
+    const plain = renderDisplayPlain({ blocks: [{ kind: 'rich_text', runs: [
+      { kind: 'code', text: '😀'.repeat(100) + '\ntrailing' },
+    ] }] }, { omittedBlocks: 2, maxBytes: 29 });
+    expect(plain).toBe('😀😀…\nOmitted items: 2.');
+    expect(bytes(plain)).toBe(29);
+    expect(Buffer.from(plain).toString('utf8')).toBe(plain);
+  });
+
+  it('keeps literal rich code and LF at the exact plain byte cap beside the marker', () => {
+    const plain = renderDisplayPlain({ blocks: [{ kind: 'rich_text', runs: [
+      { kind: 'code', text: '😀\n𠮷\nx' },
+    ] }] }, { omittedBlocks: 2, maxBytes: 29 });
+    expect(plain).toBe('😀\n𠮷\nx\nOmitted items: 2.');
+    expect(bytes(plain)).toBe(29);
   });
 });
 

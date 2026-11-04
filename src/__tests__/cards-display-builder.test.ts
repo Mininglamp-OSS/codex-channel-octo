@@ -10,10 +10,9 @@ import { describe, expect, it } from 'vitest';
 import { serializeSendAuthored } from '../cards/api.js';
 import type { CardRoute, DisplayBlock, DisplayCardArgs, Limits } from '../cards/contracts.js';
 import {
-  DISPLAY_ACTIONS, DISPLAY_ELEMENTS, buildDisplayCard, measureDisplayCard, type DisplayCapabilities,
+  DISPLAY_ACTIONS, DISPLAY_ELEMENTS, buildDisplayCard, measureDisplayCard, type DisplayAuthored, type DisplayCapabilities,
 } from '../cards/display-builder.js';
 import { normalizeLimits } from '../cards/limits.js';
-import { omittedBlocksText } from '../cards/plain.js';
 
 const ROUTE: CardRoute = { channelId: 'chan-1', channelType: 2 };
 const WORST_CLIENT_MSG_NO = '00000000-0000-0000-0000-000000000000';
@@ -65,6 +64,21 @@ const KITCHEN_SINK: DisplayCardArgs = {
 };
 
 describe('display card body (AC-010.3)', () => {
+  it.each([['full', FULL], ['TextBlock-only', TEXT_ONLY]] as const)('%s keeps plain rich runs literal (TD C.2)', (name, caps) => {
+    const r = built({ blocks: [{ kind: 'rich_text', runs: [
+      { kind: 'text', text: 'A' }, { kind: 'strong', text: 'B' },
+      { kind: 'emphasis', text: 'C' }, { kind: 'code', text: 'D' },
+    ] }] }, caps);
+    expect(r.plain).toBe('ABCD');
+    expect(r.shownBlocks).toBe(1);
+    expect(r.omittedBlocks).toBe(0);
+    expect(r.authored.card.body).toEqual(name === 'full' ? [{ type: 'RichTextBlock', inlines: [
+      { type: 'TextRun', text: 'A' }, { type: 'TextRun', text: 'B', weight: 'Bolder' },
+      { type: 'TextRun', text: 'C', isSubtle: true }, { type: 'TextRun', text: 'D', fontType: 'Monospace' },
+    ] }] : [{ type: 'TextBlock', text: 'A**B**_C_`D`', wrap: true }]);
+    expect(wireBytes(r)).toBeGreaterThan(0);
+  });
+
   it('maps every block kind to the closed octo/v1 element set and passes the wire serializer', () => {
     const r = built(KITCHEN_SINK);
     expect(r.authored.profile).toBe('octo/v1');
@@ -144,9 +158,51 @@ describe('fitting before transport (AC-007.4)', () => {
     expect(r.shownBlocks).toBeGreaterThan(0);
     expect(r.shownBlocks + r.omittedBlocks).toBe(200);
     const last = r.authored.card.body.at(-1) as { text: string };
-    expect(last.text).toBe(omittedBlocksText(r.omittedBlocks));
+    expect(last.text).toBe(`Omitted items: ${r.omittedBlocks}.`);
     expect(wireBytes(r)).toBeLessThanOrEqual(DEFAULT_LIMITS.maxPayloadBytes);
-    expect(r.plain).toContain(omittedBlocksText(r.omittedBlocks));
+    expect(r.plain).toContain(`Omitted items: ${r.omittedBlocks}.`);
+  });
+
+  it.each([['full', FULL], ['TextBlock-only', TEXT_ONLY]] as const)('%s reserves one marker node for exactly two of five flat blocks', (_name, caps) => {
+    const args: DisplayCardArgs = { blocks: ['A', 'B', 'C', 'D', 'E'].map(text) };
+    const r = built(args, { ...caps, limits: { ...DEFAULT_LIMITS, maxNodes: 4 } });
+    expect(r.shownBlocks).toBe(3);
+    expect(r.omittedBlocks).toBe(2);
+    expect(r.authored.card.body).toEqual(['A', 'B', 'C', 'Omitted items: 2.'].map(t => ({ type: 'TextBlock', text: t, wrap: true })));
+    expect(r.plain).toBe('A\nB\nC\nOmitted items: 2.');
+    expect(measureDisplayCard(r.authored.card)).toEqual({ nodes: 4, depth: 1 });
+    expect(wireBytes(r)).toBeGreaterThan(0);
+    const whole = built(args, caps);
+    expect(whole.shownBlocks).toBe(5);
+    expect(whole.omittedBlocks).toBe(0);
+    expect(whole.plain).toBe('A\nB\nC\nD\nE');
+    expect(whole.authored.card.body).toHaveLength(5);
+  });
+
+  it('fits an independently specified envelope at the byte cap and drops a whole block one byte below', () => {
+    const args: DisplayCardArgs = { blocks: [{ kind: 'rich_text', runs: [{ kind: 'code', text: '😀\n𠮷' }] }, text('x'.repeat(1000)), text('tail')] };
+    const authored: DisplayAuthored = { profile: 'octo/v1', card: {
+      type: 'AdaptiveCard', version: '1.5', $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+      body: [
+        { type: 'RichTextBlock', inlines: [{ type: 'TextRun', text: '😀\n𠮷', fontType: 'Monospace' }] },
+        { type: 'TextBlock', text: 'Omitted items: 2.', wrap: true },
+      ],
+    } };
+    const plain = '😀\n𠮷\nOmitted items: 2.';
+    const cap = serializeSendAuthored({ ...authored, route: ROUTE, clientMsgNo: WORST_CLIENT_MSG_NO, plain }).bytes;
+    const caps = { ...FULL, limits: { ...DEFAULT_LIMITS, maxPayloadBytes: cap } };
+    const r = built(args, caps);
+    expect(r.authored).toEqual(authored);
+    expect(r.plain).toBe(plain);
+    expect(r.shownBlocks).toBe(1);
+    expect(r.omittedBlocks).toBe(2);
+    expect(wireBytes(r, cap)).toBe(cap);
+    const smaller = built(args, { ...caps, limits: { ...caps.limits, maxPayloadBytes: cap - 1 } });
+    expect(smaller.shownBlocks).toBe(0);
+    expect(smaller.omittedBlocks).toBe(3);
+    expect(smaller.plain).toBe('Omitted items: 3.');
+    expect(smaller.authored.card.body).toEqual([{ type: 'TextBlock', text: 'Omitted items: 3.', wrap: true }]);
+    expect(wireBytes(smaller, cap - 1)).toBeLessThanOrEqual(cap - 1);
   });
 
   it('honours lower negotiated node, depth and payload limits', () => {
