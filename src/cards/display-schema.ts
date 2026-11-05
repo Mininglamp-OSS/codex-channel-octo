@@ -157,8 +157,8 @@ export function safeLinkUrl(url: string): SafeLink {
   try { parsed = new URL(url); } catch { return { ok: false, rule: "link_invalid" }; }
   if (parsed.protocol !== "https:") return { ok: false, rule: "link_scheme" };
   if (parsed.username !== "" || parsed.password !== "") return { ok: false, rule: "link_credentials" };
-  // Classify the DNS name without its optional root dot; preserve the href.
-  const host = parsed.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  // Classify the hostname without trailing dots; preserve the normalized href.
+  const host = parsed.hostname.replace(/^\[|\]$/g, "").replace(/\.+$/, "");
   if (host === "" || isIP(host) !== 0 || LOCAL_HOST.test(host) || !host.includes(".")) return { ok: false, rule: "link_host" };
   let decoded: string;
   try { decoded = decodeURIComponent(parsed.pathname + parsed.hash); } catch { decoded = parsed.pathname + parsed.hash; }

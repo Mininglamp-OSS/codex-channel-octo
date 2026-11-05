@@ -129,18 +129,18 @@ describe('rejected display cards (AC-010.2)', () => {
 });
 
 describe('safe link schemes', () => {
-  it.each(['localhost', 'service.local', 'service.internal', 'service', '127.0.0.1'])('rejects %s with or without a DNS root dot in both link forms', (host) => {
-    for (const suffix of ['', '.']) {
-      const url = `https://${host}${suffix}/`;
-      expect(safeLinkUrl(url)).toEqual({ ok: false, rule: 'link_host' });
-      expect(err({ blocks: [{ kind: 'link', label: 'visit', url }] }).diagnostics)
-        .toContainEqual({ path: '$.blocks[0].url', rule: 'link_host' });
-      expect(err({ blocks: [{ kind: 'rich_text', runs: [{ kind: 'link', label: 'visit', url }] }] }).diagnostics)
-        .toContainEqual({ path: '$.blocks[0].runs[0].url', rule: 'link_host' });
-    }
+  it.each(['localhost', 'localhost.localdomain', 'service.local', 'service.internal', 'service', '127.0.0.1', '10.0.0.1']
+    .flatMap(host => [0, 1, 2, 3, 8].map(dots => `https://${host}${'.'.repeat(dots)}/`)))('rejects local/IP href %s in both link forms', (url) => {
+    const safe = safeLinkUrl(url);
+    const block = validateDisplayArgs({ blocks: [{ kind: 'link', label: 'visit', url }] });
+    const rich = validateDisplayArgs({ blocks: [{ kind: 'rich_text', runs: [{ kind: 'link', label: 'visit', url }] }] });
+    expect({ safe: safe.ok, block: block.ok, rich: rich.ok }).toEqual({ safe: false, block: false, rich: false });
+    expect(safe).toEqual({ ok: false, rule: 'link_host' });
+    expect(block).toMatchObject({ ok: false, error: { diagnostics: [{ path: '$.blocks[0].url', rule: 'link_host' }] } });
+    expect(rich).toMatchObject({ ok: false, error: { diagnostics: [{ path: '$.blocks[0].runs[0].url', rule: 'link_host' }] } });
   });
 
-  it.each(['example.com', 'example.com.'])('preserves the public href for %s in both link forms', (host) => {
+  it.each([0, 1, 2, 3, 8].map(dots => `example.com${'.'.repeat(dots)}`))('preserves the public href for %s in both link forms', (host) => {
     const url = `https://${host}/docs`;
     expect(safeLinkUrl(url)).toEqual({ ok: true, url });
     const blocks: DisplayBlock[] = [
@@ -148,6 +148,16 @@ describe('safe link schemes', () => {
       { kind: 'rich_text', runs: [{ kind: 'link', label: 'visit', url }] },
     ];
     expect(ok({ blocks })).toEqual({ blocks });
+  });
+
+  it.each([0, 1, 2, 3, 8])('rejects an IPv6 literal with %i trailing dots in both link forms', (dots) => {
+    const url = `https://[::1]${'.'.repeat(dots)}/`;
+    const rule = dots === 0 ? 'link_host' : 'link_invalid';
+    expect(safeLinkUrl(url)).toEqual({ ok: false, rule });
+    expect(err({ blocks: [{ kind: 'link', label: 'visit', url }] }).diagnostics)
+      .toContainEqual({ path: '$.blocks[0].url', rule });
+    expect(err({ blocks: [{ kind: 'rich_text', runs: [{ kind: 'link', label: 'visit', url }] }] }).diagnostics)
+      .toContainEqual({ path: '$.blocks[0].runs[0].url', rule });
   });
 
   it('accepts https and returns the normalized href', () => {
