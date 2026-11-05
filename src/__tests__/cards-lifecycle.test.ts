@@ -28,6 +28,7 @@ import { SessionStore } from "../session-store.js";
 import { profile } from "./fixtures/card-profile.js";
 import { json, manualTime, scriptedFetch, seqOf, type ManualTime } from "./fixtures/card-write-harness.js";
 import { reasoningSchemaErrors } from "./fixtures/reasoning-schema.js";
+import { createTurnObservation, type TurnBoundaryReceipt } from "../agent-bridge.js";
 
 const API = "https://api.example.com";
 const roots: string[] = [];
@@ -111,6 +112,92 @@ function rig(o: { warm?: boolean } = {}) {
 }
 
 type Rig = ReturnType<typeof rig>;
+
+describe('turn boundary receipt controls', () => {
+  it.each([
+    ['started', 2000, 1], ['completed', 1000, 1],
+    ['started', 799, 0], ['completed', 0, 0],
+  ] as const)('%s with %i ms headroom retains %i sends', async (phase, headroom, sends) => {
+    const r = rig(); const t = r.turn(); await r.time.advance(0);
+    const receipts: TurnBoundaryReceipt[] = [];
+    const obs = createTurnObservation({ clock: r.time.now, emit: value => { receipts.push(value); } });
+    obs.admission('coordinator_available'); obs.itemStates(true);
+    t.observe(start()); obs.nativeCommand('sdk', phase); t.observe(cmd('ARG_CANARY', phase));
+    await r.time.advance(headroom);
+    if (phase === 'started') { obs.nativeCommand('sdk', 'completed'); t.observe(cmd('ARG_CANARY', 'completed')); }
+    t.observe(end()); t.signal({ t: 'delivery_report', report: report(1, 1) });
+    obs.settling(); t.settle(); obs.finish(() => t.inspect());
+    await r.settleAll();
+    expect(r.sends()).toHaveLength(sends);
+    expect(r.edits()).toHaveLength(sends);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({ settlementMs: headroom, itemStates: true,
+      coordinator: { mode: 'card', opened: true, reason: 'snapshot' }, policy: 'unknown',
+      firstReservation: { state: 'unknown', atMs: null, reason: 'hook_unavailable' } });
+    expect(receipts[0].command.firstArrivalMs).toBe(0);
+    expect(JSON.stringify(receipts)).not.toContain('ARG_CANARY');
+    // Even known test-ledger state never becomes a production reservation assertion.
+    expect(r.queue.status('card-1')?.storeCardId !== undefined).toBe(sends === 1);
+  });
+
+  it.each(['no_work', 'policy_denied', 'policy_unknown', 'missing_item_states'] as const)('%s preserves unknowns and no send', async condition => {
+    const r = rig({ warm: condition !== 'policy_unknown' }); await r.time.advance(0);
+    if (condition === 'policy_unknown') {
+      r.setProfile(() => { throw new TypeError('synthetic unavailable profile'); });
+      await r.warm();
+    }
+    if (condition === 'policy_denied') {
+      r.setProfile(() => json(200, profile({ config: { card_enabled: true, reasoning_enabled: false,
+        reasoning_template_ref: null, display_enabled: true, interaction_enabled: false } })));
+      await r.time.advance(61_000);
+      await r.warm();
+    }
+    const t = r.turn();
+    const receipts: TurnBoundaryReceipt[] = [];
+    const obs = createTurnObservation({ clock: r.time.now, emit: value => { receipts.push(value); } });
+    obs.admission('coordinator_available'); obs.itemStates(condition !== 'missing_item_states');
+    t.observe(start());
+    if (condition !== 'no_work') {
+      obs.nativeCommand('sdk', 'completed');
+      if (condition !== 'missing_item_states') t.observe(cmd('c', 'completed'));
+    }
+    await r.time.advance(2000); t.observe(end());
+    t.signal({ t: 'delivery_report', report: report(1, 1) });
+    obs.settling(); t.settle(); obs.finish(() => t.inspect()); await r.settleAll();
+    expect(r.sends()).toHaveLength(0);
+    expect(receipts[0]).toMatchObject({ policy: 'unknown', coordinator: { opened: false },
+      command: { sdk: { started: 0, completed: condition === 'no_work' ? 0 : 1 } } });
+  });
+
+  it('bounds one receipt, emits once, rejects open vocabularies, and isolates observation failures', () => {
+    let now = 100;
+    const emit = vi.fn();
+    const obs = createTurnObservation({ clock: () => now, emit });
+    obs.admission('coordinator_unavailable'); obs.itemStates(false);
+    for (let i = 0; i < 100_000; i++) obs.nativeCommand('sdk', 'completed');
+    now = 3100; obs.settling();
+    obs.finish(() => ({ mode: 'PRIVATE_POLICY_CANARY', opened: 'CREDENTIAL_CANARY' } as never));
+    obs.finish(); obs.nativeCommand('sdk', 'started');
+    const receipt = emit.mock.calls[0][0];
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(receipt.command.sdk.completed).toBe(65_535);
+    expect(receipt.limited).toBe(true);
+    expect(receipt.coordinator).toEqual({ mode: 'unknown', opened: 'unknown', reason: 'snapshot_unavailable' });
+    expect(receipt.turnAlias).toMatch(/^[0-9a-f-]{36}$/);
+    expect(Buffer.byteLength(JSON.stringify(receipt))).toBeLessThanOrEqual(1024);
+    expect(JSON.stringify(receipt)).not.toContain('CANARY');
+    const unknowns: TurnBoundaryReceipt[] = [];
+    const unavailable = createTurnObservation({ clock: () => { throw Error('CLOCK_CANARY'); },
+      emit: value => { unknowns.push(value); } });
+    unavailable.nativeCommand('sdk', 'started'); unavailable.settling(); unavailable.finish();
+    expect(unknowns[0]).toMatchObject({ admission: 'unknown', itemStates: 'unknown', settlementMs: null,
+      command: { firstArrivalMs: null }, coordinator: { mode: 'unknown', opened: 'unknown', reason: 'unobserved' } });
+    expect(unknowns[0].turnAlias).not.toBe(receipt.turnAlias);
+    const failing = createTurnObservation({ clock: () => { throw new Error('RAW_SESSION_CANARY'); },
+      emit: () => { throw new Error('PROMPT_CANARY'); } });
+    expect(() => { failing.nativeCommand('sdk', 'started'); failing.settling(); failing.finish(() => { throw Error('OUTPUT_CANARY'); }); }).not.toThrow();
+  });
+});
 
 let seq = 0;
 const start = (attempt = 0): CardObservableEvent => ({ kind: "attempt_start", attempt, reason: attempt === 0 ? "initial" : "request_retry", continues: null });

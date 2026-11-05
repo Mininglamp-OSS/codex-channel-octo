@@ -1,5 +1,6 @@
 import { attachErrorDetails } from './error-details.js';
 import { nativeErrorMessage } from './native-error.js';
+import { randomUUID } from 'node:crypto';
 import { types as utilTypes } from 'node:util';
 import { rememberSdkFailure, inheritSdkDiagnostic, type SdkDiagnosticRun } from './private-diagnostics.js';
 import { recover, type RecoveryConfig } from './agent-recovery.js';
@@ -42,6 +43,114 @@ import { resolveSessionCwd } from './cwd-resolver.js';
 import type { SessionCtx } from './cwd-resolver.js';
 import { trustedText, escapeSectionMarkers, safeSenderMetadata, CURRENT_MESSAGE_ANCHOR, CURRENT_SENDER_ANCHOR, PREVIOUS_TASK_ANCHOR } from './prompt-safety.js';
 import type { SafeText } from './prompt-safety.js';
+
+type CommandSource = 'sdk' | 'projected_app_server';
+type CommandPhase = 'started' | 'completed';
+type TurnAdmission = 'unknown' | 'runtime_unavailable' | 'progress_disabled'
+  | 'coordinator_available' | 'coordinator_unavailable';
+type ObservedCoordinator = Readonly<{
+  mode: 'unknown' | 'undecided' | 'card' | 'notice';
+  opened: boolean | 'unknown';
+  reason: 'unobserved' | 'snapshot' | 'snapshot_unavailable';
+}>;
+
+/** Content-free observations, not evidence of execution, authorization or send. */
+export interface TurnBoundaryReceipt {
+  readonly version: 1;
+  /** Random, turn-local alias; never derived from transport/session/native IDs. */
+  readonly turnAlias: string;
+  readonly command: Readonly<{
+    sdk: Readonly<Record<CommandPhase, number>>;
+    projectedAppServer: Readonly<Record<CommandPhase, number>>;
+    presence: 'OBSERVED' | 'UNOBSERVED';
+    firstArrivalMs: number | null;
+  }>;
+  readonly admission: TurnAdmission;
+  readonly itemStates: boolean | 'unknown';
+  readonly coordinator: ObservedCoordinator;
+  /** The allowed boundary cannot distinguish denial, suspension or unavailable policy. */
+  readonly policy: 'unknown';
+  readonly settlementMs: number | null;
+  /** Requires a hook at write-queue sendInitial/reserveMessage; opened=true is insufficient. */
+  readonly firstReservation: Readonly<{ state: 'unknown'; atMs: null; reason: 'hook_unavailable' }>;
+  readonly limited: boolean;
+}
+
+/**
+ * One fixed-size receipt per finite handler turn. No item map, history, timers,
+ * raw event references or asynchronous sink work. Counts saturate at 65,535;
+ * monotonic offsets saturate at 2^31-1 ms; serialized receipt stays below 1 KiB.
+ * Every observer operation is best-effort and cannot replace a turn failure.
+ */
+export function createTurnObservation(options: {
+  clock?: () => number;
+  emit?: (receipt: TurnBoundaryReceipt) => void;
+} = {}) {
+  const turnAlias = randomUUID();
+  const clock = options.clock ?? (() => performance.now());
+  const readClock = (): number | undefined => {
+    try { const value = clock(); return Number.isFinite(value) && value >= 0 ? value : undefined; }
+    catch { return undefined; }
+  };
+  const origin = readClock();
+  let highWater = 0;
+  let limited = false;
+  const offset = (): number | null => {
+    const value = readClock();
+    if (origin === undefined || value === undefined) return null;
+    const elapsed = Math.max(highWater, Math.floor(value - origin), 0);
+    if (elapsed > 2_147_483_647) limited = true;
+    return highWater = Math.min(elapsed, 2_147_483_647);
+  };
+  const sdk = { started: 0, completed: 0 };
+  const projectedAppServer = { started: 0, completed: 0 };
+  let firstSeen = false;
+  let firstArrivalMs: number | null = null;
+  let admission: TurnAdmission = 'unknown';
+  let itemStates: boolean | 'unknown' = 'unknown';
+  let settlementMs: number | null = null;
+  let settling = false;
+  let finished = false;
+  return Object.freeze({
+    nativeCommand(source: CommandSource, phase: CommandPhase): void {
+      if (finished || (source !== 'sdk' && source !== 'projected_app_server')
+        || (phase !== 'started' && phase !== 'completed')) return;
+      if (!firstSeen) { firstSeen = true; firstArrivalMs = offset(); }
+      const counts = source === 'sdk' ? sdk : projectedAppServer;
+      if (counts[phase] === 65_535) limited = true;
+      else counts[phase]++;
+    },
+    admission(value: TurnAdmission): void {
+      if (!finished && (value === 'runtime_unavailable' || value === 'progress_disabled'
+        || value === 'coordinator_available' || value === 'coordinator_unavailable')) admission = value;
+    },
+    itemStates(value: boolean): void { if (!finished && typeof value === 'boolean') itemStates = value; },
+    settling(): void { if (!finished && !settling) { settling = true; settlementMs = offset(); } },
+    finish(inspect?: () => { mode: string; opened: boolean }): void {
+      if (finished) return;
+      finished = true;
+      try {
+        let coordinator: ObservedCoordinator = Object.freeze({ mode: 'unknown', opened: 'unknown', reason: 'unobserved' });
+        if (inspect !== undefined) {
+          coordinator = Object.freeze({ mode: 'unknown', opened: 'unknown', reason: 'snapshot_unavailable' });
+          try {
+            const state = inspect();
+            const mode = state.mode, opened = state.opened;
+            if ((mode === 'undecided' || mode === 'card' || mode === 'notice') && typeof opened === 'boolean') {
+              coordinator = Object.freeze({ mode, opened, reason: 'snapshot' });
+            }
+          } catch { /* Unknown, never inferred from startup readiness or absence of rows. */ }
+        }
+        const receipt: TurnBoundaryReceipt = Object.freeze({ version: 1, turnAlias,
+          command: Object.freeze({ sdk: Object.freeze({ ...sdk }), projectedAppServer: Object.freeze({ ...projectedAppServer }),
+            presence: firstSeen ? 'OBSERVED' : 'UNOBSERVED', firstArrivalMs }),
+          admission, itemStates, coordinator, policy: 'unknown', settlementMs,
+          firstReservation: Object.freeze({ state: 'unknown', atMs: null, reason: 'hook_unavailable' }), limited });
+        options.emit?.(receipt);
+      } catch { /* Observation must not affect completion, notices, delivery or errors. */ }
+    },
+  });
+}
 
 /**
  * Build the Codex subprocess env overlay. The SDK's `env` option REPLACES the
@@ -357,6 +466,8 @@ export interface QueryAgentOptions {
   interruptedTurn?: InterruptedTurn;
   /** Opt in to `item_state` events for the automatic progress card; absent → the baseline stream. */
   itemStates?: boolean;
+  /** Content-free ingress observation; no IDs, commands, arguments or output. */
+  onNativeCommand?: (source: CommandSource, phase: CommandPhase) => void;
   /**
    * Trusted explicit-card launch for this turn (WP-08). Each attempt gets a
    * fresh `Codex` with only its authority-free `mcp_servers.<serverId>` entry
@@ -722,6 +833,13 @@ export async function* queryAgentEvents(
         case 'item.updated':
         case 'item.completed': {
           const item = ev.item;
+          try {
+            // Inspect own data only: the observer must add no SDK getter/proxy effects.
+            if (!utilTypes.isProxy(item) && Object.getOwnPropertyDescriptor(item, 'type')?.value === 'command_execution'
+              && (eventType === 'item.started' || eventType === 'item.completed')) {
+              opts?.onNativeCommand?.(appServer ? 'projected_app_server' : 'sdk', eventType === 'item.started' ? 'started' : 'completed');
+            }
+          } catch { /* Observation only; preserve the event stream and error. */ }
           // Use the existing start/completion notice cadence, with no raw data
           // passed to the channel callback. Item-state/lifecycle integration is separate.
           if (onSafeItem && (eventType === 'item.started' || eventType === 'item.completed')

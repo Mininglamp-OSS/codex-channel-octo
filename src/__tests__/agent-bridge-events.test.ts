@@ -1,4 +1,6 @@
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { TurnFailure, classifyFailure } from '../agent-failure.js';
 /**
  * agent-bridge typed-event tests (queryAgentEvents) — mocked @openai/codex-sdk.
@@ -36,6 +38,11 @@ vi.mock('@openai/codex-sdk', () => ({
   },
 }));
 
+vi.mock('../app-server/spawn.js', () => ({ prepareAppServerLaunch: vi.fn().mockResolvedValue({}) }));
+vi.mock('../app-server/runner.js', () => ({
+  startAppServerAttempt: () => scriptedRuns[runIdx++](),
+}));
+
 vi.mock('../execution-scope.js', async importOriginal => {
   const original = await importOriginal<typeof import('../execution-scope.js')>();
   return {...original, ExecutionScope: class extends original.ExecutionScope {
@@ -47,15 +54,16 @@ import { queryAgent, queryAgentEvents } from '../agent-bridge.js';
 import type { AgentOutputEvent, QueryAgentOptions } from '../agent-bridge.js';
 import type { Config } from '../config.js';
 import type { ManagedExecution } from '../execution-scope.js';
+import { TurnProjector } from '../app-server/events.js';
 
 function cfg(): Config {
   return {
     botToken: 't',
     apiUrl: 'https://example.com',
-    baseDir: '/tmp/cco-test',
-    cwd: '/tmp/cco-test/ws',
-    cwdBase: '/tmp/cco-test/ws',
-    dataDir: '/tmp/cco-test/data',
+    baseDir: join(tmpdir(), 'cco-test'),
+    cwd: join(tmpdir(), 'cco-test/ws'),
+    cwdBase: join(tmpdir(), 'cco-test/ws'),
+    dataDir: join(tmpdir(), 'cco-test/data'),
     sdk: {},
     rateLimit: { maxPerMinute: 5 },
     context: { maxContextChars: 6000, historyLimit: 40 },
@@ -75,6 +83,74 @@ const turnDone: Ev = { type: 'turn.completed', usage: {} };
 const msg = (id: string, text: string, extra: Record<string, unknown> = {}, phase: 'completed' | 'updated' = 'completed'): Ev => ({
   type: `item.${phase}`,
   item: { id, type: 'agent_message', text, ...extra },
+});
+
+describe('content-free native command boundary', () => {
+  it('adds no item-type getter reads and treats non-data metadata as unobserved', async () => {
+    let reads = 0;
+    const script = async function* () {
+      yield { type: 'item.completed', item: { id: 'c', get type() { reads++; return 'command_execution'; }, status: 'completed' } };
+      yield turnDone;
+    };
+    scriptedRuns = [script, script];
+    const baseline = await events(); const baselineReads = reads; reads = 0;
+    const callback = vi.fn();
+    expect(await events({ onNativeCommand: callback })).toEqual(baseline);
+    expect(reads).toBe(baselineReads);
+    expect(callback).not.toHaveBeenCalled();
+  });
+  it('counts supported app-server projection at bridge ingress without launching a process', async () => {
+    const projector = new TurnProjector('SESSION_CANARY');
+    const seen: unknown[][] = [];
+    scriptedRuns = [async function* () {
+      for (const method of ['item/started', 'item/completed']) {
+        for (const projected of projector.project(method, { item: { type: 'commandExecution', id: 'ID_CANARY',
+          command: 'ARG_CANARY', aggregatedOutput: 'OUTPUT_CANARY', status: method === 'item/started' ? 'inProgress' : 'completed' } })) {
+          if (projected.kind === 'event') yield projected.event;
+        }
+      }
+      yield msg('a', 'FINAL_CANARY'); yield turnDone;
+    }];
+    const config = cfg(); config.sdk.runtime = 'app-server'; config.sdk.codexApiKey = 'CREDENTIAL_CANARY';
+    const out: AgentOutputEvent[] = [];
+    for await (const event of queryAgentEvents('PROMPT_CANARY', config, undefined, undefined, {
+      onManagedExecution: vi.fn(), itemStates: true, onNativeCommand: (...args) => { seen.push(args); },
+    })) out.push(event);
+    expect(seen).toEqual([['projected_app_server', 'started'], ['projected_app_server', 'completed']]);
+    expect(out.filter(e => e.kind === 'item_state')).toHaveLength(2);
+    expect(JSON.stringify(seen)).not.toContain('CANARY');
+    expect(out.find(e => e.kind === 'message')).toMatchObject({ text: 'FINAL_CANARY' });
+  });
+  it('reports start/completion independently of itemStates without leaking bodies or IDs', async () => {
+    const seen: unknown[][] = [];
+    scriptedRuns = [async function* () {
+      yield started('SESSION_CANARY');
+      yield item('ID_CANARY', 'command_execution', 'started', { command: 'ARG_CANARY', status: 'in_progress' });
+      yield item('ID_CANARY', 'command_execution', 'updated', { command: 'ARG_CANARY' });
+      yield item('ID_CANARY', 'command_execution', 'completed', { aggregated_output: 'OUTPUT_CANARY', status: 'completed' });
+      yield item('r', 'reasoning', 'completed', { text: 'REASONING_CANARY' });
+      yield msg('a', 'FINAL_CANARY'); yield turnDone;
+    }];
+    const out = await events({ onNativeCommand: (...args) => { seen.push(args); } });
+    expect(seen).toEqual([['sdk', 'started'], ['sdk', 'completed']]);
+    expect(out.some(e => e.kind === 'item_state')).toBe(false);
+    for (const secret of ['SESSION_CANARY', 'ID_CANARY', 'ARG_CANARY', 'OUTPUT_CANARY', 'REASONING_CANARY', 'FINAL_CANARY']) {
+      expect(JSON.stringify(seen)).not.toContain(secret);
+    }
+    expect(out.find(e => e.kind === 'message')).toMatchObject({ text: 'FINAL_CANARY' });
+  });
+
+  it('isolates a failing observer and preserves the baseline event stream', async () => {
+    const script = async function* () {
+      yield item('c', 'command_execution', 'completed', { command: 'git SECRET', status: 'completed' });
+      yield msg('a', 'EXACT_FINAL'); yield turnDone;
+    };
+    scriptedRuns = [script, script];
+    const baseline = await events({ itemStates: true });
+    const callback = vi.fn(() => { throw new Error('CREDENTIAL_CANARY'); });
+    expect(await events({ itemStates: true, onNativeCommand: callback })).toEqual(baseline);
+    expect(callback).toHaveBeenCalledExactlyOnceWith('sdk', 'completed');
+  });
 });
 const item = (id: string, type: string, phase: 'started' | 'updated' | 'completed', extra: Record<string, unknown> = {}): Ev => ({
   type: `item.${phase}`,
@@ -461,6 +537,7 @@ describe('T25: one canonical options contract', () => {
       onManagedExecution?: (execution: import('../execution-scope.js').ManagedExecution) => void;
       interruptedTurn?: import('../turn-context.js').InterruptedTurn;
       itemStates?: boolean;
+      onNativeCommand?: (source: 'sdk' | 'projected_app_server', phase: 'started' | 'completed') => void;
       cardInjection?: import('../cards/tool-host.js').CardInjectionLaunch;
     }>();
   });

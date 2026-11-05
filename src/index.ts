@@ -29,7 +29,7 @@ import { SessionStore } from './session-store.js';
 import { OctoGateway } from './gateway.js';
 import { SessionRouter } from './session-router.js';
 import { GroupContext } from './group-context.js';
-import { queryAgentEvents, resolveSandbox } from './agent-bridge.js';
+import { createTurnObservation, queryAgentEvents, resolveSandbox } from './agent-bridge.js';
 import type { QueryAgentOptions } from './agent-bridge.js';
 import {
   OutputCollector,
@@ -432,6 +432,12 @@ export async function handleMessage(
     let cardTurn: AutomaticTurn | undefined;
     // Explicit-card launch; only present when every gate holds (never at WP-08: the op table is empty).
     let cardInjection: CardInjectionLaunch | undefined;
+    let observation: ReturnType<typeof createTurnObservation> | undefined;
+    try {
+      observation = createTurnObservation({ emit: receipt => {
+        console.info('[codex-channel-octo] turn boundary', JSON.stringify(receipt));
+      } });
+    } catch { /* Observation cannot affect the handler, even at construction. */ }
 
     try {
       // --- Session ---
@@ -509,6 +515,9 @@ export async function handleMessage(
         cardTurn = begun?.coordinator;
         cardInjection = begun?.injection;
       }
+      observation?.admission(!cardRuntime ? 'runtime_unavailable'
+        : config.sdk.toolProgress !== true && continuation === undefined ? 'progress_disabled'
+        : cardTurn ? 'coordinator_available' : 'coordinator_unavailable');
 
       // --- Group context: refresh members + compute the unseen delta ---
       // B4 (group context) now rides in the USER message, not the system prompt
@@ -856,6 +865,7 @@ export async function handleMessage(
         ...(resume ? { resume } : {}),
         ...(resume && config.sdk.runtime === 'app-server' ? { threadToolsetDigest: turnStore.getThreadToolsetDigest(sessionKey) } : {}),
         ...(cardTurn ? { itemStates: true } : {}),
+        ...(observation ? { onNativeCommand: observation.nativeCommand } : {}),
         ...(cardInjection ? { cardInjection } : {}),
         onSessionId: (id: string, prompt: string, toolsetDigest?: string | null) => {
           turn.assertPublishable();
@@ -866,6 +876,7 @@ export async function handleMessage(
           }
         },
       };
+      observation?.itemStates(sessionOpts.itemStates === true);
 
       // A stream can fail after the model has already executed tools. In that
       // case replaying userContentForLLM is unsafe, but abandoning the thread
@@ -1049,7 +1060,10 @@ export async function handleMessage(
         /* swallow — don't crash on reply failure */
       }
     } finally {
+      observation?.settling();
       cardTurn?.settle();
+      const coordinator = cardTurn;
+      observation?.finish(coordinator ? () => coordinator.inspect() : undefined);
     }
   });
 
