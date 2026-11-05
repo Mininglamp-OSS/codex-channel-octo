@@ -9,7 +9,7 @@
  * schema-normalized card; mentions are neutralized again defensively.
  */
 import type { DisplayBlock, DisplayCardArgs, InteractiveCardArgs, RichRun } from "./contracts.js";
-import { neutralizeMentions, neutralizeUrls as u } from "./display-schema.js";
+import { neutralizeMentions, neutralizeRichRuns, neutralizeUrls as u } from "./display-schema.js";
 
 /** Plain-text cap; the envelope fit in the builder still applies on top. */
 export const PLAIN_MAX_BYTES = 4096;
@@ -97,7 +97,7 @@ function blockLines(block: DisplayBlock): string[] {
     // Authored text is URL-defanged; only validated structured link URLs stay as written.
     case "heading": return [u(block.text)];
     case "text": return u(block.text).split("\n");
-    case "rich_text": return block.runs.map(runText).join("").split("\n");
+    case "rich_text": return neutralizeRichRuns(block.runs).map(runText).join("").split("\n");
     case "facts": return block.items.flatMap((f) => `${u(f.label)}: ${u(f.value)}`.split("\n"));
     case "columns": return block.columns.flatMap((c) => c.blocks.flatMap(blockLines));
     case "table": return [block.headers, ...block.rows].flatMap((row) => row.map(u).join(" | ").split("\n"));

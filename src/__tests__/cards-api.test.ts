@@ -88,6 +88,42 @@ async function failure(p: Promise<unknown>): Promise<OctoApiError | CardRequestE
 }
 
 describe("wire serialization", () => {
+  const toggleCard = (target: unknown): DisplayAdaptiveCard => ({
+    ...DISPLAY_CARD,
+    body: [
+      { type: "ActionSet", actions: [{ type: "Action.ToggleVisibility", title: "Details", targetElements: [target] }] },
+      { type: "Container", id: "d1", isVisible: false, items: [{ type: "TextBlock", text: "content", wrap: true }] },
+    ],
+  } as DisplayAdaptiveCard);
+  const toggleRequests = (target: unknown) => {
+    const card = toggleCard(target);
+    return [
+      () => serializeSendAuthored({ route: ROUTE, clientMsgNo: CLIENT, profile: "octo/v1", card, plain: "content" }),
+      () => serializeEditAuthored({ route: ROUTE, messageId: "77", profile: "octo/v1", card, plain: "content", seq: 2, transient: false }),
+    ];
+  };
+
+  it.each([undefined, true, false])("preserves toggle target absence or boolean %s in send and edit serialization", (visible) => {
+    const expected = visible === undefined ? { elementId: "d1" } : { elementId: "d1", isVisible: visible };
+    for (const request of toggleRequests({ ...expected, undeclared: "dropped" })) {
+      const serialized = request();
+      const wire = JSON.parse(serialized.body);
+      const card = (wire.payload ?? JSON.parse(wire.content_edit)).card;
+      const target = card.body[0].actions[0].targetElements[0];
+      expect(target).toEqual(expected);
+      expect(Object.hasOwn(target, "isVisible")).toBe(visible !== undefined);
+      expect(serialized.bytes).toBe(Buffer.byteLength(serialized.body));
+    }
+  });
+
+  it.each([
+    null, "d1", {}, { isVisible: true }, { elementId: "" }, { elementId: 1 },
+    { elementId: "d1", isVisible: null }, { elementId: "d1", isVisible: "true" },
+    { elementId: "d1", isVisible: 1 },
+  ])("rejects malformed toggle targets before send or edit: %j", (target) => {
+    for (const request of toggleRequests(target)) expect(request).toThrow(CardRequestError);
+  });
+
   it("serializes the Registry send envelope byte-stably in reference key order", () => {
     const req = serializeSendRegistry({ route: ROUTE, clientMsgNo: CLIENT, ref: REF, state: "reasoning", data: DATA });
     expect(req.path).toBe("/v1/bot/sendMessage");

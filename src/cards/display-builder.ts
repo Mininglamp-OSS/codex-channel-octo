@@ -23,7 +23,7 @@ import type {
   AcDisplayElement, AcTextBlock, AcTextRun, CardRoute, Diag, DisplayActionKind, DisplayAdaptiveCard, DisplayBlock, DisplayCardArgs, Limits,
   RichRun,
 } from "./contracts.js";
-import { inertText, markdownText, neutralizeUrls } from "./display-schema.js";
+import { inertText, markdownText, neutralizeRichRuns, neutralizeUrls } from "./display-schema.js";
 import { omittedBlocksText, renderDisplayPlain } from "./plain.js";
 
 /** The closed `octo/v1` display element set the client can emit. */
@@ -145,10 +145,12 @@ class Renderer {
       }
       case "text":
         return [atb(block.text)];
-      case "rich_text":
+      case "rich_text": {
+        const runs = neutralizeRichRuns(block.runs);
         return this.has("RichTextBlock")
-          ? [{ type: "RichTextBlock", inlines: block.runs.map(textRun) }]
-          : [tb(block.runs.map(markdownRun).join(""))];
+          ? [{ type: "RichTextBlock", inlines: runs.map(textRun) }]
+          : [tb(runs.map(markdownRun).join(""))];
+      }
       case "facts":
         // Fact title and value render Markdown, like TextBlock text.
         return this.has("FactSet")
@@ -180,7 +182,7 @@ class Renderer {
         if (this.can("Action.ToggleVisibility") && this.has("Container")) {
           const id = `d${++this.ids}`;
           return [
-            { type: "ActionSet", actions: [{ type: "Action.ToggleVisibility", title: inertText(block.label), targetElements: [{ elementId: id, isVisible: true }] }] },
+            { type: "ActionSet", actions: [{ type: "Action.ToggleVisibility", title: inertText(block.label), targetElements: [{ elementId: id }] }] },
             { type: "Container", id, isVisible: block.expanded === true, items },
           ];
         }
@@ -272,16 +274,10 @@ export function buildDisplayCard(args: DisplayCardArgs, opts: DisplayBuildOption
     return deepFreeze({ ok: true, authored, plain, shownBlocks: shown, omittedBlocks: omitted });
   };
 
-  // Every fit term is monotone in the prefix length: binary-search the longest
-  // fitting prefix, then step down in case a marker length change broke it.
-  const whole = attempt(total);
-  if (whole !== undefined) return whole;
-  let lo = 0, hi = total - 1;
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    if (attempt(mid) !== undefined) lo = mid; else hi = mid - 1;
-  }
-  for (let shown = lo; shown >= 0; shown--) {
+  // Whole-line plain fitting can shrink the envelope as blocks are added.
+  // Descending exact attempts find the longest feasible prefix without a
+  // monotonicity assumption: at most 201 with the 200-source-block bound.
+  for (let shown = total; shown >= 0; shown--) {
     const fitted = attempt(shown);
     if (fitted !== undefined) return fitted;
   }

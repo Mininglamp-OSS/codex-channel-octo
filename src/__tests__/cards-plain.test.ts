@@ -5,7 +5,7 @@
  * Evidence label: [UNIT]. Pure functions.
  */
 import { describe, expect, it } from 'vitest';
-import type { DisplayCardArgs } from '../cards/contracts.js';
+import type { DisplayCardArgs, RichRun } from '../cards/contracts.js';
 import { PLAIN_MAX_BYTES, fitPlain, omittedBlocksText, renderDisplayPlain } from '../cards/plain.js';
 
 const bytes = (s: string) => Buffer.byteLength(s, 'utf8');
@@ -138,6 +138,27 @@ describe('plain fitting', () => {
 });
 
 describe('authored URLs in plain text are inert (B1)', () => {
+  for (const kind of ['text', 'code', 'strong', 'emphasis'] as const) {
+    it.each([
+      ['https:', '//evil.example', 'https[:]//evil.example'],
+      ['www', '.evil.example', 'www[.]evil.example'],
+      ['java', 'script:alert(1)', 'javascript[:]alert(1)'],
+    ])(`neutralizes adjacent ${kind} runs: %s + %s`, (left, right, expected) => {
+      const runs: RichRun[] = [{ kind: 'text', text: left }, { kind, text: right }];
+      expect(renderDisplayPlain({ blocks: [{ kind: 'rich_text', runs }] })).toBe(expected);
+    });
+  }
+
+  it('neutralizes four authored fragments and a label boundary while preserving validated URL tokens', () => {
+    expect(renderDisplayPlain({ blocks: [{ kind: 'rich_text', runs: [
+      { kind: 'text', text: 'ht' }, { kind: 'strong', text: 'tps' },
+      { kind: 'emphasis', text: ':' }, { kind: 'code', text: '//evil.example ' },
+      { kind: 'text', text: 'https:' }, { kind: 'link', label: '//evil.example', url: 'https://example.com/docs' },
+      { kind: 'text', text: 'www' }, { kind: 'link', label: '.evil.example', url: 'https://example.com./docs' },
+      { kind: 'text', text: 'java' }, { kind: 'link', label: 'script:alert(1)', url: 'https://example.com/docs' },
+    ] }] })).toBe('https[:]//evil.example https[:]//evil.example (https://example.com/docs)www[.]evil.example (https://example.com./docs)javascript[:]alert(1) (https://example.com/docs)');
+  });
+
   it('defangs authored URLs and schemes but keeps validated structured links', () => {
     expect(renderDisplayPlain({ blocks: [
       { kind: 'text', text: 'see http://evil.local/x, www.evil.com and javascript:alert(1)' },

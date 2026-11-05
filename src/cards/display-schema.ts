@@ -72,6 +72,38 @@ export function neutralizeUrls(text: string): string {
   return text.replace(URL_SCHEME, "[:]//").replace(BARE_SCHEME, "$1[:]").replace(WWW, "www[.]");
 }
 
+/**
+ * Defang contiguous authored spans before styles or Markdown separate them.
+ * A link label is authored text; its validated URL is a separate token and
+ * ends the span. Insert brackets in the run owning the colon/dot so every
+ * original character keeps its style and no validated href is rewritten.
+ */
+export function neutralizeRichRuns(runs: readonly RichRun[]): readonly RichRun[] {
+  const out: RichRun[] = [];
+  let first = 0;
+  while (first < runs.length) {
+    let end = first;
+    while (end < runs.length) if (runs[end++].kind === "link") break;
+    const span = runs.slice(first, end);
+    const texts = span.map(run => run.kind === "link" ? run.label : run.text);
+    const joined = texts.join("");
+    const punctuation = new Set<number>();
+    for (const match of joined.matchAll(URL_SCHEME)) punctuation.add(match.index);
+    for (const pattern of [BARE_SCHEME, WWW]) {
+      for (const match of joined.matchAll(pattern)) punctuation.add(match.index + match[0].length - 1);
+    }
+    let offset = 0;
+    for (let i = 0; i < span.length; i++) {
+      const run = span[i];
+      const text = texts[i].replace(/[:.]/g, (c, index: number) => punctuation.has(offset + index) ? `[${c}]` : c);
+      out.push(run.kind === "link" ? { ...run, label: text } : { ...run, text });
+      offset += texts[i].length;
+    }
+    first = end;
+  }
+  return out;
+}
+
 const MD_INLINE = /[\\`*_[\]()<>~|]/g;
 const MD_LINE_START = /^([ \t]*)([#+=-]|\d+[.)])/gm;
 
@@ -125,7 +157,8 @@ export function safeLinkUrl(url: string): SafeLink {
   try { parsed = new URL(url); } catch { return { ok: false, rule: "link_invalid" }; }
   if (parsed.protocol !== "https:") return { ok: false, rule: "link_scheme" };
   if (parsed.username !== "" || parsed.password !== "") return { ok: false, rule: "link_credentials" };
-  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  // Classify the DNS name without its optional root dot; preserve the href.
+  const host = parsed.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
   if (host === "" || isIP(host) !== 0 || LOCAL_HOST.test(host) || !host.includes(".")) return { ok: false, rule: "link_host" };
   let decoded: string;
   try { decoded = decodeURIComponent(parsed.pathname + parsed.hash); } catch { decoded = parsed.pathname + parsed.hash; }

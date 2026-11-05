@@ -371,9 +371,10 @@ function projectLocalAction(value: unknown, ctx: ProjectCtx, depth: number): AcL
         title: nonEmptyWireString(o.title, "Action.ToggleVisibility.title"),
         targetElements: boundedArray(o.targetElements, "Action.ToggleVisibility.targetElements", ctx, depth + 1, (t) => {
           const target = asRecord(t, "targetElements");
-          const visible = optionalBool(target.isVisible, "targetElements.isVisible");
-          if (visible === undefined) reject("invalid_card", "targetElements.isVisible");
-          return { elementId: nonEmptyWireString(target.elementId, "targetElements.elementId"), isVisible: visible as boolean };
+          return compact({
+            elementId: nonEmptyWireString(target.elementId, "targetElements.elementId"),
+            isVisible: optionalBool(target.isVisible, "targetElements.isVisible"),
+          });
         }, { nonEmpty: true }),
       };
     case "Action.CopyToClipboard":

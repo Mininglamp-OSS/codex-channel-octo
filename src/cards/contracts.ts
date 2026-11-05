@@ -366,7 +366,8 @@ export interface AcOpenUrlAction {
 
 export interface AcToggleTarget {
   readonly elementId: string;
-  readonly isVisible: boolean;
+  /** Omit to toggle; a boolean explicitly assigns visibility. */
+  readonly isVisible?: boolean;
 }
 
 export interface AcToggleVisibilityAction {

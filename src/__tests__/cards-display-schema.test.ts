@@ -129,6 +129,27 @@ describe('rejected display cards (AC-010.2)', () => {
 });
 
 describe('safe link schemes', () => {
+  it.each(['localhost', 'service.local', 'service.internal', 'service', '127.0.0.1'])('rejects %s with or without a DNS root dot in both link forms', (host) => {
+    for (const suffix of ['', '.']) {
+      const url = `https://${host}${suffix}/`;
+      expect(safeLinkUrl(url)).toEqual({ ok: false, rule: 'link_host' });
+      expect(err({ blocks: [{ kind: 'link', label: 'visit', url }] }).diagnostics)
+        .toContainEqual({ path: '$.blocks[0].url', rule: 'link_host' });
+      expect(err({ blocks: [{ kind: 'rich_text', runs: [{ kind: 'link', label: 'visit', url }] }] }).diagnostics)
+        .toContainEqual({ path: '$.blocks[0].runs[0].url', rule: 'link_host' });
+    }
+  });
+
+  it.each(['example.com', 'example.com.'])('preserves the public href for %s in both link forms', (host) => {
+    const url = `https://${host}/docs`;
+    expect(safeLinkUrl(url)).toEqual({ ok: true, url });
+    const blocks: DisplayBlock[] = [
+      { kind: 'link', label: 'visit', url },
+      { kind: 'rich_text', runs: [{ kind: 'link', label: 'visit', url }] },
+    ];
+    expect(ok({ blocks })).toEqual({ blocks });
+  });
+
   it('accepts https and returns the normalized href', () => {
     expect(safeLinkUrl('https://Example.com/a b'.replace(' ', '%20'))).toEqual({ ok: true, url: 'https://example.com/a%20b' });
     expect(safeLinkUrl('https://example.com/u/@me')).toEqual({ ok: true, url: 'https://example.com/u/%40me' });

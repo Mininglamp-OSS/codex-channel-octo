@@ -6,13 +6,15 @@
  *
  * Evidence label: [UNIT]. Pure; the closed wire serializer is the oracle.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import * as cardApi from '../cards/api.js';
 import { serializeSendAuthored } from '../cards/api.js';
-import type { CardRoute, DisplayBlock, DisplayCardArgs, Limits } from '../cards/contracts.js';
+import type { CardRoute, DisplayBlock, DisplayCardArgs, Limits, RichRun } from '../cards/contracts.js';
 import {
   DISPLAY_ACTIONS, DISPLAY_ELEMENTS, buildDisplayCard, measureDisplayCard, type DisplayAuthored, type DisplayCapabilities,
 } from '../cards/display-builder.js';
 import { normalizeLimits } from '../cards/limits.js';
+import { validateDisplayArgs } from '../cards/display-schema.js';
 
 const ROUTE: CardRoute = { channelId: 'chan-1', channelType: 2 };
 const WORST_CLIENT_MSG_NO = '00000000-0000-0000-0000-000000000000';
@@ -105,7 +107,7 @@ describe('display card body (AC-010.3)', () => {
 
   it('collapsible sections toggle a hidden container with deterministic unique ids', () => {
     const body = built(KITCHEN_SINK).authored.card.body;
-    expect(body[10]).toEqual({ type: 'ActionSet', actions: [{ type: 'Action.ToggleVisibility', title: 'Details', targetElements: [{ elementId: 'd1', isVisible: true }] }] });
+    expect(body[10]).toEqual({ type: 'ActionSet', actions: [{ type: 'Action.ToggleVisibility', title: 'Details', targetElements: [{ elementId: 'd1' }] }] });
     expect(body[11]).toEqual({ type: 'Container', id: 'd1', isVisible: false, items: [{ type: 'TextBlock', text: 'hidden', wrap: true }] });
     expect(body[12]).toMatchObject({ type: 'ActionSet', actions: [{ targetElements: [{ elementId: 'd2' }] }] });
     expect(body[13]).toMatchObject({ type: 'Container', id: 'd2', isVisible: true });
@@ -152,6 +154,87 @@ describe('display card body (AC-010.3)', () => {
 });
 
 describe('fitting before transport (AC-007.4)', () => {
+  it.each([
+    { name: 'backslashes', character: '\\', cap: 16_384, sizes: [20_834, 15_975, 26_069] },
+    { name: 'ordinary text', character: 'b', cap: 6_800, sizes: [8_578, 6_783, 13_813] },
+  ])('keeps prefix 3 after prefix 2 fails for $name', ({ character, cap, sizes }) => {
+    const route: CardRoute = { channelId: 'r', channelType: 1 };
+    const source = ['a'.repeat(1000), character.repeat(3064), 'c'.repeat(1200), 'd'.repeat(4000)];
+    const args: DisplayCardArgs = { blocks: source.map(text) };
+    expect(validateDisplayArgs(args).ok).toBe(true);
+    // Independent envelope fixtures: neither the builder nor the plain fitter chooses these prefixes.
+    const plain = [
+      'Omitted items: 4.', source[0] + '\nOmitted items: 3.',
+      source.slice(0, 2).join('\n') + '\nOmitted items: 2.',
+      source[0] + '\n… 2 more lines not shown\nOmitted items: 1.',
+      source.slice(0, 2).join('\n') + '\n… 2 more lines not shown',
+    ];
+    const accepted: boolean[] = [];
+    const candidateBytes: number[] = [];
+    for (let shown = 0; shown <= 4; shown++) {
+      const card: DisplayAuthored['card'] = {
+        type: 'AdaptiveCard', version: '1.5', $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+        body: [
+          ...source.slice(0, shown).map((s, i) => ({ type: 'TextBlock' as const, text: i === 1 && character === '\\' ? '\\'.repeat(6128) : s, wrap: true as const })),
+          ...(shown < 4 ? [{ type: 'TextBlock' as const, text: `Omitted items: ${4 - shown}.`, wrap: true as const }] : []),
+        ],
+      };
+      const body = JSON.stringify({
+        channel_id: 'r', channel_type: 1,
+        payload: { type: 17, card, profile: 'octo/v1', card_version: '1.5', plain: plain[shown] },
+        client_msg_no: WORST_CLIENT_MSG_NO,
+      });
+      const size = Buffer.byteLength(body);
+      candidateBytes.push(size);
+      const request = () => serializeSendAuthored({ route, clientMsgNo: WORST_CLIENT_MSG_NO, profile: 'octo/v1', card, plain: plain[shown], maxEnvelopeBytes: cap });
+      if (size <= cap) {
+        expect(request().body).toBe(body);
+        accepted.push(true);
+      } else {
+        expect(request).toThrow(/envelope_too_large/);
+        accepted.push(false);
+      }
+    }
+    expect(candidateBytes.slice(2)).toEqual(sizes);
+    expect(accepted).toEqual([true, true, false, true, false]);
+    const result = buildDisplayCard(args, { route, caps: {
+      ...TEXT_ONLY, actions: new Set(), limits: { ...DEFAULT_LIMITS, maxNodes: 200, maxDepth: 12, maxPayloadBytes: cap },
+    } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect([result.shownBlocks, result.omittedBlocks]).toEqual([3, 1]);
+    expect(result.plain).toBe(plain[3]);
+    expect(serializeSendAuthored({ ...result.authored, route, clientMsgNo: WORST_CLIENT_MSG_NO, plain: result.plain, maxEnvelopeBytes: cap }).bytes).toBe(sizes[1]);
+  });
+
+  it('bounds the all-rejected 200-block search at 201 exact serializer attempts', () => {
+    const serialize = vi.spyOn(cardApi, 'serializeSendAuthored');
+    try {
+      const result = buildDisplayCard({ blocks: Array.from({ length: 200 }, () => text('x')) }, {
+        route: ROUTE, caps: { ...TEXT_ONLY, limits: { ...DEFAULT_LIMITS, maxNodes: 200, maxDepth: 12, maxPayloadBytes: 1 } },
+      });
+      expect(result.ok).toBe(false);
+      expect(serialize).toHaveBeenCalledTimes(201);
+      expect(serialize.mock.calls.map(([request]) => request.card.body.length)).toEqual([200, ...Array.from({ length: 200 }, (_, i) => 200 - i)]);
+    } finally {
+      serialize.mockRestore();
+    }
+  });
+
+  it('retains stable collapsible IDs and marker accounting when fitting', () => {
+    const args: DisplayCardArgs = { blocks: ['one', 'two', 'three'].map(label => ({
+      kind: 'collapsible', label, blocks: [text(label)],
+    })) };
+    const full = built(args);
+    const fitted = built(args, { ...FULL, limits: { ...DEFAULT_LIMITS, maxNodes: 11 } });
+    expect([fitted.shownBlocks, fitted.omittedBlocks]).toEqual([2, 1]);
+    expect(fitted.authored.card.body.slice(0, 4)).toEqual(full.authored.card.body.slice(0, 4));
+    expect(fitted.authored.card.body[1]).toMatchObject({ id: 'd1' });
+    expect(fitted.authored.card.body[3]).toMatchObject({ id: 'd2' });
+    expect(measureDisplayCard(fitted.authored.card)).toEqual({ nodes: 11, depth: 3 });
+    expect(wireBytes(fitted)).toBeGreaterThan(0);
+  });
+
   it('keeps the longest fitting prefix and replaces the rest with one omission marker', () => {
     const args: DisplayCardArgs = { title: 'Big', blocks: Array.from({ length: 200 }, (_, i) => text(`${i} ${'x'.repeat(3000)}`)) };
     const r = built(args);
@@ -311,6 +394,51 @@ function collectMarkdownFields(value: unknown, out: { kind: string; text: string
 }
 
 describe('authored Markdown and autolinks are inert in every field (B1)', () => {
+  for (const kind of ['text', 'code', 'strong', 'emphasis'] as const) {
+    it.each([
+      ['https:', '//evil.example', 'https[:]', '//evil.example', 'https\\[:\\]', '//evil.example'],
+      ['www', '.evil.example', 'www', '[.]evil.example', 'www', '\\[.\\]evil.example'],
+      ['java', 'script:alert(1)', 'java', 'script[:]alert(1)', 'java', 'script\\[:\\]alert\\(1\\)'],
+    ])(`defangs URLs across ${kind} boundaries in both capability modes: %s + %s`, (left, right, safeLeft, safeRight, mdLeft, mdRight) => {
+      const runs: RichRun[] = [{ kind: 'text', text: left }, { kind, text: right }];
+      const args: DisplayCardArgs = { blocks: [{ kind: 'rich_text', runs }] };
+      expect(validateDisplayArgs(args).ok).toBe(true);
+      const full = built(args);
+      const fallback = built(args, TEXT_ONLY);
+      const style = kind === 'strong' ? { weight: 'Bolder' } : kind === 'emphasis' ? { isSubtle: true } : kind === 'code' ? { fontType: 'Monospace' } : {};
+      expect(full.authored.card.body).toEqual([{ type: 'RichTextBlock', inlines: [
+        { type: 'TextRun', text: safeLeft }, { type: 'TextRun', text: safeRight, ...style },
+      ] }]);
+      const styled = kind === 'strong' ? `**${mdRight}**` : kind === 'emphasis' ? `_${mdRight}_`
+        : kind === 'code' && right === '//evil.example' ? '`' + safeRight + '`' : mdRight;
+      expect(fallback.authored.card.body).toEqual([{ type: 'TextBlock', text: mdLeft + styled, wrap: true }]);
+      for (const result of [full, fallback]) {
+        expect(result.plain).toBe(safeLeft + safeRight);
+        expect(wireBytes(result)).toBeGreaterThan(0);
+      }
+    });
+  }
+
+  it('defangs four style runs and authored link labels without defanging validated hrefs', () => {
+    const args: DisplayCardArgs = { blocks: [{ kind: 'rich_text', runs: [
+      { kind: 'text', text: 'ht' }, { kind: 'strong', text: 'tps' },
+      { kind: 'emphasis', text: ':' }, { kind: 'code', text: '//evil.example ' },
+      { kind: 'text', text: 'https:' }, { kind: 'link', label: '//evil.example', url: 'https://example.com/docs' },
+    ] }] };
+    const snapshot = structuredClone(args);
+    const full = built(args);
+    expect(full.authored.card.body).toEqual([{ type: 'RichTextBlock', inlines: [
+      { type: 'TextRun', text: 'ht' }, { type: 'TextRun', text: 'tps', weight: 'Bolder' },
+      { type: 'TextRun', text: '[:]', isSubtle: true }, { type: 'TextRun', text: '//evil.example ', fontType: 'Monospace' },
+      { type: 'TextRun', text: 'https[:]' }, { type: 'TextRun', text: '//evil.example (https://example.com/docs)', color: 'accent' },
+    ] }]);
+    const fallback = built(args, TEXT_ONLY);
+    expect(fallback.authored.card.body).toEqual([{ type: 'TextBlock', text: 'ht**tps**_\\[:\\]_`//evil.example` https\\[:\\][//evil.example](https://example.com/docs)', wrap: true }]);
+    expect(full.plain).toBe('https[:]//evil.example https[:]//evil.example (https://example.com/docs)');
+    expect(fallback.plain).toBe(full.plain);
+    expect(args).toEqual(snapshot);
+  });
+
   const capsCases: [string, DisplayCapabilities][] = [['full', FULL], ['TextBlock-only', TEXT_ONLY]];
   for (const [capsName, caps] of capsCases) {
     it.each(HOSTILE)(`${capsName}: %j never yields an active link`, (s) => {

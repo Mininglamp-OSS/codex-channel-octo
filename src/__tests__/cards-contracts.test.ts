@@ -5,6 +5,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import * as contracts from "../cards/contracts.js";
 import type {
+  AcToggleTarget,
   AuthoredCard,
   CardResourceOwner,
   CardResourceRegistry,
@@ -21,6 +22,25 @@ import type {
 } from "../cards/contracts.js";
 
 describe("contracts leaf", () => {
+  it("keeps toggle targets closed with an optional boolean assignment", () => {
+    const targets: AcToggleTarget[] = [
+      { elementId: "d1" }, { elementId: "d1", isVisible: true }, { elementId: "d1", isVisible: false },
+    ];
+    expectTypeOf<AcToggleTarget["isVisible"]>().toEqualTypeOf<boolean | undefined>();
+    // @ts-expect-error a target still requires an element id
+    const missingId: AcToggleTarget = { isVisible: true };
+    // @ts-expect-error string shorthand is outside the closed object contract
+    const shorthand: AcToggleTarget = "d1";
+    // @ts-expect-error null is not a boolean assignment or absence
+    const nullAssignment: AcToggleTarget = { elementId: "d1", isVisible: null };
+    // @ts-expect-error strings cannot assign visibility
+    const stringAssignment: AcToggleTarget = { elementId: "d1", isVisible: "true" };
+    // @ts-expect-error arbitrary target fields are outside the closed contract
+    const extra: AcToggleTarget = { elementId: "d1", onclick: "x" };
+    expect(targets).toEqual([{ elementId: "d1" }, { elementId: "d1", isVisible: true }, { elementId: "d1", isVisible: false }]);
+    expect([missingId, shorthand, nullAssignment, stringAssignment, extra]).toHaveLength(5);
+  });
+
   it("has no runtime exports", () => {
     expect(Object.keys(contracts)).toEqual([]);
   });
