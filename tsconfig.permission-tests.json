@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/__tests__/octo/preack-loopback.test.ts",
+    "src/__tests__/permission-replay-journal.test.ts",
+    "src/__tests__/permission-context-provenance.test.ts"
+  ],
+  "exclude": ["node_modules", "dist", "coverage"]
+}

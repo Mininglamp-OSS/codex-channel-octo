@@ -267,7 +267,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // opened later via connect(), after main() has cross-registered sibling bot
     // ids — so there is no window where a message is ACK'd and dropped, nor one
     // where a sibling bot's message slips through unrecognized.
-    const onInbound = (msg: BotMessage): void => {
+    const onInbound = (msg: BotMessage): void | Promise<void> => {
       if (gateway.draining) return;
       // Match the gateway's self-echo guard: server preference notifications
       // authored as this bot must reach the router to invalidate its cache.
@@ -281,6 +281,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
           activeHandlers.delete(p);
         });
       activeHandlers.add(p);
+      return p;
     };
     gateway.setMessageHandler(onInbound);
 

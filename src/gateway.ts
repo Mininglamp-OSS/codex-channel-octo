@@ -8,6 +8,7 @@ import { isAllowedWsUrl } from './url-policy.js';
 import { isConversationMdEvent } from './conversation-md.js';
 import type { Config } from './config.js';
 import type { BotMessage } from './octo/types.js';
+import type { ReserveBeforeAck } from './permissions/ingress-reservation.js';
 import { existsSync, writeFileSync, unlinkSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { createRequire } from 'node:module';
@@ -17,10 +18,11 @@ import { randomUUID } from 'node:crypto';
 const _require = createRequire(import.meta.url);
 const PKG_VERSION: string = (_require('../package.json') as { version: string }).version;
 
-export type MessageHandler = (msg: BotMessage) => void;
+export type MessageHandler = (msg: BotMessage) => void | Promise<void>;
 
 export class OctoGateway {
   private socket: WKSocket | null = null;
+  private readonly ownedSockets = new Set<WKSocket>();
   private robotId = '';
   // Stored registration result from register(); consumed by connect().
   private registration: Awaited<ReturnType<typeof registerBot>> | null = null;
@@ -55,7 +57,7 @@ export class OctoGateway {
 
   constructor(
     private readonly config: Config,
-    private readonly options: { handleSignals?: boolean } = {},
+    private readonly options: { handleSignals?: boolean; reserveBeforeAck?: ReserveBeforeAck } = {},
   ) {
     this.lockFilePath = join(config.dataDir, 'gateway.lock');
   }
@@ -194,10 +196,12 @@ export class OctoGateway {
     }
 
     this.stopHeartbeat();
-    if (this.socket) {
-      await this.socket.disconnectAndWait();
-      this.socket = null;
+    for (const socket of this.ownedSockets) {
+      await socket.disconnectAndWait();
+      if (this.options.reserveBeforeAck) await socket.drainReceives();
+      this.ownedSockets.delete(socket);
     }
+    this.socket = null;
     this.releaseLock();
   }
 
@@ -299,12 +303,17 @@ export class OctoGateway {
   // --- Socket factory ---
 
   private createSocket(wsUrl: string, uid: string, token: string): WKSocket {
-    const socket = new WKSocket({
+    const socket: WKSocket = new WKSocket({
       wsUrl,
       uid,
       token,
+      reserveBeforeAck: this.options.reserveBeforeAck
+        ? delivery => this._draining || this.socket !== socket
+          ? { disposition: 'unavailable' }
+          : this.options.reserveBeforeAck!(delivery)
+        : undefined,
       onMessage: (msg) => {
-        if (!this._draining && this.socket === socket) this.handleMessage(msg);
+        if (!this._draining && this.socket === socket) return this.handleMessage(msg);
       },
       onConnected: () => {
         if (this._draining || this.socket !== socket) return;
@@ -324,19 +333,20 @@ export class OctoGateway {
         }
       },
     });
+    this.ownedSockets.add(socket);
     return socket;
   }
 
   // --- Bot registration + WS connection ---
   // (register() + connect() above split the two phases; see start().)
 
-  private handleMessage(msg: BotMessage): void {
+  private handleMessage(msg: BotMessage): void | Promise<void> {
     if (this._draining) return; // Q6: reject new messages during shutdown
     // The server authors preference notifications as this bot. Let the router
     // invalidate its cache; ordinary self echoes must still be filtered.
     if (msg.from_uid === this.robotId && msg.payload.event?.type !== 'mention_pref_updated'
       && !isConversationMdEvent(msg.payload.event?.type)) return;
-    this.onMessage?.(msg);
+    return this.onMessage?.(msg);
   }
 
   // --- Token refresh ---
@@ -372,7 +382,11 @@ export class OctoGateway {
       this.stopHeartbeat();
       const oldSocket = this.socket;
       this.socket = null;
-      if (oldSocket) await oldSocket.disconnectAndWait();
+      if (oldSocket) {
+        await oldSocket.disconnectAndWait();
+        if (this.options.reserveBeforeAck) await oldSocket.drainReceives();
+        this.ownedSockets.delete(oldSocket);
+      }
       if (this._draining) return;
       // Keep registration bounded even when a shutdown signal is supplied.
       const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(30_000)]);
