@@ -1,8 +1,10 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import type { BotMessage } from '../octo/types.js';
 import type { ReceivedDelivery, IngressReservation, ReserveBeforeAck } from './ingress-reservation.js';
 import { ReplayJournal, type ReplayIdentity } from './replay-journal.js';
 import { canonicalControl, object, PermissionRefusal, permissionRefusalText, type ControlMethod, type RefusalRecord } from './control-client.js';
+import { bindContextManifest } from './context-manifest.js';
+import { TurnLease } from './turn-lease.js';
 
 export interface PermissionKey { origin: string; bot_uid: string; space_id: string }
 export interface NativeHeader {
@@ -26,6 +28,7 @@ export interface NativeIngress {
 }
 
 export interface EndpointBinding {
+  readonly ingressId: string;
   readonly capsuleId: string;
   readonly turnId: string;
   readonly contextId: string;
@@ -39,6 +42,7 @@ export interface EndpointHostPorts {
   readonly recipientId: string;
   relayTransport: 'http' | 'stdio';
   readonly journal: ReplayJournal;
+  readonly authoritySignal?: AbortSignal;
   /** Native producer must inspect without content-first lookup and compare the
    * original delivery. No implementation may promote wire observations to F. */
   inspect(delivery: ReceivedDelivery): Promise<NativeIngress>;
@@ -125,7 +129,7 @@ export class EndpointPermissionHost implements PermissionEndpoint {
   }
 
   private async reserve(delivery: ReceivedDelivery): Promise<IngressReservation> {
-    if (this.stopping || delivery.recipientUid !== this.key.bot_uid) return { disposition: 'unavailable' };
+    if (this.stopping || this.ports.authoritySignal?.aborted || delivery.recipientUid !== this.key.bot_uid) return { disposition: 'unavailable' };
     try {
       const inspected = await this.ports.inspect(delivery);
       const cloned = structuredClone(inspected);
@@ -140,7 +144,7 @@ export class EndpointPermissionHost implements PermissionEndpoint {
       const identity: ReplayIdentity = { origin: this.key.origin, recipientBotUid: h.recipient_bot_uid,
         streamId: h.delivery.stream_id, streamIncarnation: h.delivery.stream_incarnation, sequence: h.delivery.sequence,
         messageId: h.message_id, messageVersion: h.native_message_version, payloadSha256: h.payload_sha256 };
-      if (this.stopping) return { disposition: 'unavailable' };
+      if (this.stopping || this.ports.authoritySignal?.aborted) return { disposition: 'unavailable' };
       const reservation = this.ports.journal.reserve(identity);
       if (reservation.disposition === 'reserved') this.received.set(delivery.message, ingress);
       return reservation;
@@ -167,15 +171,20 @@ export class EndpointPermissionHost implements PermissionEndpoint {
 
   private async process(message: BotMessage, ingress: Readonly<NativeIngress>): Promise<void> {
     const controller = new AbortController();
+    const lost = () => controller.abort();
+    this.ports.authoritySignal?.addEventListener('abort', lost, { once: true });
+    if (this.ports.authoritySignal?.aborted) lost();
     this.controllers.add(controller);
     const timer = setTimeout(() => controller.abort(), 30 * 60 * 1000);
     let binding: Readonly<EndpointBinding> | undefined;
+    let lease: TurnLease | undefined;
     let handled = false;
     let workerStarted = false;
     let workerFailed = false;
     const relayTransport = this.ports.relayTransport;
     try {
       if (relayTransport !== 'http' && relayTransport !== 'stdio') throw new Error('Relay transport unavailable');
+      controller.signal.throwIfAborted();
       // Trigger/config discovery may run here; it supplies no invocation grant.
       if (!await this.ports.candidate(message)) return;
       controller.signal.throwIfAborted();
@@ -187,8 +196,9 @@ export class EndpointPermissionHost implements PermissionEndpoint {
       const admitted = object(await this.ports.control.call('admit', {
         ingress_id: hex(registered.ingress_id), proposed_context_id: contextId,
       }), ['capsule_id', 'turn_id', 'generation']);
-      binding = Object.freeze({ capsuleId: hex(admitted.capsule_id), turnId: hex(admitted.turn_id),
+      binding = Object.freeze({ ingressId: hex(registered.ingress_id), capsuleId: hex(admitted.capsule_id), turnId: hex(admitted.turn_id),
         contextId, generation: hex(admitted.generation), header: ingress.header });
+      lease = new TurnLease(this.ports.control, binding, controller);
       controller.signal.throwIfAborted();
       // Unknown legacy provenance is never resumed. This path creates a clean
       // generation; existing ContextProvenance supports later proven reuse.
@@ -205,35 +215,37 @@ export class EndpointPermissionHost implements PermissionEndpoint {
       }
       const manifest = { context_id: contextId, context_generation: binding.generation,
         originals: [...originals.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, header]) => header) };
-      const bytes = Buffer.from(canonicalControl(manifest));
-      if (originals.size > 256 || bytes.length > 1024 * 1024) throw new Error('Complete contributor bound exceeded');
       // bind_context checks the complete union against current facts/P, after
       // the disclosed input read and before model insertion. It returns no grant.
-      const bound = object(await this.ports.control.call('bind_context', { capsule_id: binding.capsuleId,
-        manifest: { ...manifest, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } }), ['context_generation']);
-      if (bound.context_generation !== binding.generation) throw new Error('Context generation conflict');
+      await bindContextManifest(this.ports.control, binding.capsuleId, manifest, controller.signal);
+      lease.assertCurrent();
       const relay = await this.ports.control.call('open_relay', { capsule_id: binding.capsuleId,
         recipient_id: this.recipientId, transport: relayTransport, relay_nonce: randomBytes(16).toString('hex') });
       controller.signal.throwIfAborted();
       workerStarted = true;
       const text = await this.ports.runWorker(binding, prepared.input, Object.freeze(relay), controller.signal);
-      controller.signal.throwIfAborted();
+      lease.assertCurrent();
       await this.ports.publish(binding, text, controller.signal);
     } catch (error) {
+      // Renewal denial aborts the owned worker first. Preserve that authentic
+      // typed verdict rather than turning the resulting AbortError into a retry.
+      if (controller.signal.reason instanceof PermissionRefusal) error = controller.signal.reason;
       // An ordinary worker/publication failure may follow real effects. It is
       // not a permission verdict and must leave the ingress outcome uncertain.
       if (workerStarted && !(error instanceof PermissionRefusal)) { workerFailed = true; throw error; }
-      if (!controller.signal.aborted && !handled) {
+      if ((!controller.signal.aborted || error instanceof PermissionRefusal) && !handled) {
         handled = true; // Consume before the one original-route delivery attempt.
         const record: Readonly<RefusalRecord> = error instanceof PermissionRefusal ? error.record
           : Object.freeze({ version: 1, category: 'policy_unavailable', correlation: randomBytes(16).toString('hex') });
         try { await this.ports.refuse(ingress, record, permissionRefusalText(record), AbortSignal.timeout(2000)); } catch { /* suppression; no fallback/generic duplicate */ }
       }
     } finally {
+      await lease?.stop();
+      this.ports.authoritySignal?.removeEventListener('abort', lost);
       clearTimeout(timer); this.controllers.delete(controller);
       if (binding) {
         try { await this.ports.control.call('close', { capsule_id: binding.capsuleId,
-          reason: controller.signal.aborted ? 'cancelled' : workerFailed ? 'worker_failed' : handled ? 'refused' : 'completed' }); } catch { /* revoked host handles never resume */ }
+          reason: handled ? 'refused' : controller.signal.aborted ? 'cancelled' : workerFailed ? 'worker_failed' : 'completed' }); } catch { /* revoked host handles never resume */ }
       }
     }
   }

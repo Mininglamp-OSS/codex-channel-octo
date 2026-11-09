@@ -1,142 +1,162 @@
 # Endpoint continuation — XIN-2795
 
-Draft #102 remains incomplete and blocked at the production composition boundary.
-The original CLI account blocker is superseded. The continuation consumes the
-exact delivered contracts below, rather than treating those component PRs as
-working native/coordinator services. The base remains upstream `main` at
-`5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34`; the prior head is preserved by
-`backup/xin-2795-c152cb5` at `c152cb54df8e3fb822288933e39cf6dcad4b9335`.
+Draft #102 remains incomplete at the native/containment production boundary.
+The CLI account and missing-control/missing-relay blockers are superseded.
+The required upstream `main` remains `5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34`.
+The preceding delivery is preserved at `backup/xin-2795-e460104`.
 
-## New source behavior
+## Implemented against the new producer
 
-- `startBot(config, multi, permissionFactory)` constructs the trusted managed
-  endpoint after registration and before opening the native socket. Its real
-  gateway callbacks use the pre-ACK reservation hook and managed receive path;
-  they do not enter the legacy content/model handler. A failed factory cannot
-  fall back. Shutdown collects managed receipts/workers before database close.
-- `EndpointPermissionHost` compares native Header/version/payload/recipient
-  evidence with the actual delivery, reserves its durable HMAC identity, and
-  sequences trigger discovery, private ingress registration, admission, permitted
-  input preparation, complete contributor-manifest binding, one-turn relay,
-  worker and owned publication. Unknown legacy state gets a clean context.
-  Its ports are required trusted implementations, not booleans that grant access.
-- `PermissionControlClient` implements the endpoint side of the unchanged
-  managed-v2 Hello and closed eight-method control channel over pinned mTLS.
-  Frames are bounded, length-prefixed canonical JSON; noncanonical/duplicate
-  decoded keys, malformed scalars/UTF-8, unknown envelopes, stale correlations,
-  wrong incarnation/version and lost/invalid negotiation close without fallback.
-  A bounded serial queue snapshots requests before waits. All seven non-Hello
-  methods are available; the class does not implement their coordinator side.
-- Typed refusals are closed records with the four exact fixed texts. The host
-  consumes its handled state before one bounded original-route attempt, with
-  no legacy generic failure or alternate recipient. Ordinary worker/publication
-  failures remain uncertain instead of being relabelled permission denials.
-- `preparePrivateWorker` pins executable bytes and stages a private generation
-  home/working directory with only explicit static instructions and one HTTP or
-  stdio relay. `queryAgentEvents` accepts this host-only plan, excludes inherited
-  environment/operator environment overlays, legacy memory, extra directories,
-  old resume IDs and automatic retry. The gateway retains the real child handle;
-  execution-control keys are stripped before the actual child is spawned.
-  Legacy SDK provider credentials/URLs are excluded unless a provider is
-  explicitly sealed into the private plan. Platforms without the owned-process
-  path refuse this private launch instead of falling back; completing those
-  platform adapters remains an owned prerequisite, not a support waiver.
+`startBot` selects a concrete managed factory from the private, per-bot
+`<baseDir>/<configId>/permission-endpoint.json` descriptor. Absence preserves
+legacy behavior. An invalid/unreadable/symlinked descriptor fails startup; missing
+adapters cannot fall back. The factory completes before the native socket opens.
+Managed startup skips legacy group-context loading, session expiry/recovery,
+cwd cleanup and media-CDN probes. No production configuration was installed.
 
-The exact new port/call expectations and consumed byte commitments are in
-[permission-endpoint-handoff-v2.json](permission-endpoint-handoff-v2.json).
-This is an endpoint composition handoff, not a new public authorization API,
-capability catalog, alternative policy evaluator or complete LaunchPlanV1 proof.
+The factory composes authoritative recovery, the durable replay journal, one
+owned coordinator boot, pinned mTLS control, managed ingress and required physical
+native/worker sinks. Native and containment adapters are compiled trusted
+dependencies, never operator-selected modules or JSON permission claims. Neither
+real adapter exists in the delivered contracts; production selection fails with
+`PERMISSION_NATIVE_AND_CONTAINMENT_BINDINGS_UNAVAILABLE`. Tests explicitly supply
+synthetic adapters; none is installed as production authority.
 
-## Precise external blockers
+The coordinator launcher verifies the absolute executable/hash, creates a fresh
+private boot directory, writes/fsyncs its host config and launches
+`mcp serve --permission-config <private-file>`. Only that trusted process receives
+the explicitly selected Bot token. Its clean environment excludes ambient task
+tokens, credential mode, accounts/profiles, PATH and CLI configuration. The fresh
+0600 ready record supplies the coordinator incarnation, verified through pinned
+TLS 1.3 Hello. Invalid readiness, early exit and failed negotiation collect the
+owned process without restart or alternate service. Process loss fences local
+continuations. Boot evidence is private and never reused.
 
-| Producer/task | Exact evidence at the consumed head | Required output for integration |
+The stdio reply must name the selected CLI executable/hash. Its closed base64url
+ticket contains only the configured endpoint and a 64-hex turn bearer. Ordinary
+credentials, changed endpoints, extra fields and executable substitution refuse.
+HTTP likewise binds the configured HTTPS endpoint and turn bearer. The worker
+plan contains one relay and explicit static/provider data, without control keys,
+Bot credentials or legacy state.
+
+The manifest hash covers canonical JSON of exactly `context_id`,
+`context_generation` and `originals`. Inline metadata is used only if the entire
+control envelope fits 65,536 bytes. Larger cores use immutable 32,768-byte
+`canonical-json-chunks-v1` slices, fixed total/hash and continuous offsets. Each
+accepted length and the final generation are checked. There is no truncation of
+the 256-original/1 MiB domain or retry of an ambiguous transfer.
+
+Each admitted turn owns serialized 30-second renewal using its original
+ingress/capsule/generation. Malformed, expired or denied renewal aborts the worker
+and fences publication. Authentic typed denial retains its one fixed refusal;
+ordinary failures remain uncertain. Shutdown drains an in-flight renewal before
+capsule close. The 30-minute hard limit is unchanged and never extended.
+
+The actual socket pre-ACK reservation, HMAC journal, native identity comparisons,
+complete contributor assembly, clean-generation private worker components and
+host-owned process collection remain in use. Components do not prove a complete
+native authorization or OS boundary.
+
+## Exact consumed contracts
+
+| Producer | Head and path | Bytes / SHA-256 |
 | --- | --- | --- |
-| XIN-2794 / CLI MCP-host owner | Draft #234, `3b07d4d2f6c4637f0c389a71fab056ddf91c3965`; `docs/permission/cli-component-contract-v1.json:19–22` explicitly marks production enforcement NOT_WIRED, native/control/relay NOT_IMPLEMENTED and supported catalog NOT_AVAILABLE. `internal/permission/coordinator.go:128–129` says Register is an in-process seam, not native authentication/control, and production MCP never calls it. | A runnable authenticated private listener implementing the full Hello/register/admit/bind/open/renew/close/checkpoint contract, actual CapsuleV2 and one-turn HTTP/stdio relays, supported exact catalog, and coordinator-owned F/new-B/accepted-revision/physical sinks, including model/native publication and local disclosure. Supply exact launch/configuration ABI, keys/peer identities, typed payloads/handles and head/hash. A reusable remote allow response followed by a host fetch/send is not sufficient. |
-| XIN-2793 / retained server/native integration owner | Draft #951 advanced during this run to `1fae0db209d656a4b60562e14b71aeb23ad8e87b`. Its exact `contracts/handoff-v2.json` now describes installed association composition and the three-arm native fact-wire adapter; facts mount only with a real installed NativeFactSource. `contracts/remaining-producers-v1.json` names the native message and actual current-writer/recovery primitives still missing. | Bind `NativeFactSource.Read/ValidateCuts` and the real `FencedAuthority` to source-backed `InspectDeliveredHeaderV1`/`ReadCurrentAccessV1`, metadata-first history/disclosure/exact body reads and `GetReplayCheckpointV1`/`FenceThroughV1`. The named native source is `octo-lib v0.0.0-20260811160929-233dd6fcdda6 config/msg.go` behind server sync/webhook paths: its content-first MessageResp has uint32 sequence and lacks original-Space/version/stream incarnation. PjM/Dennis-mini coordinates the retained native implementation owner and actual deployment writer/session/recovery facility. No extra repository or infrastructure mutation is authorized here. |
+| CLI ABI | `14f9b53d3932c532d6424e8783bd94528e5f7fc6`, `docs/permission/endpoint-abi-v1.json` | 3923 / `d0b055d6070545c749a08dfb49cabbd7d6fa15758328c111c20d1d881d20c835` |
+| CLI handoff | same head, `docs/permission/cli-component-contract-v3.json` | 4548 / `4b456058c0a9d2f4c7c5743473ae0f467dc79c13521f6ce6723207d91dc44b84` |
+| Server handoff | `d5ef4b38269b379bac4aa471a6cad06073c563c8`, `pkg/permissionbundle/contracts/handoff-v3.json` | 2129 / `a2723a2c74665a77e443bf0ddedb479bb5bcc0ff0e3ed5144622deb0427b4091` |
+| Server producer map | same head, `pkg/permissionbundle/contracts/remaining-producers-v2.json` | 29231 / `ee1ecf62dc3902113674fb10f02403feb367677950487d1042ce59acbed76f9d` |
 
-The CLI contract is **1,436 bytes**, SHA-256
-`514d4edd4ce7f22b4f318de79d381cea083f5132fe3327198dc03aef9c104e73`.
-The latest server handoff is **2,460 bytes**, SHA-256
-`041fa98ab4888c309e91f3ab34c7246dba78622e7ef327203c411a08041ef6c5`.
-Its producer contract is **5,153 bytes**, SHA-256
-`53f29a0e572cf240584511627236489658089bfcf70598a56216d545730f6a52`.
-Both were retrieved through the exact manifest-v2 paths and independently checked;
-the native/managed schema bytes remain unchanged. The original server component
-head `36ab3dedf9354a7a0cad1a712831c132edd2e08f` was also consumed before this update.
-The contracts were fetched from their exact heads and verified. Their partial component
-status is not a reason to synthesize native authority or silently enable an
-unprotected MCP server.
+The current endpoint handoff is [permission-endpoint-handoff-v3.json](permission-endpoint-handoff-v3.json).
+The v2 handoff is historical; its missing-control/relay assertions are superseded.
+The shared v6/v8 wire is unchanged. No competing catalog/evaluator is introduced.
 
-## Endpoint work still owned here
+## Remaining blockers and retained ownership
 
-This continuation does **not** transfer these obligations to the siblings:
+1. **Supported catalog — XIN-2794.** The compiled supported-release allowlist is
+   empty. The assembly is 14,128,923 bytes against the approved 8,388,608 bound;
+   source pagination/byte/selector equivalence is unresolved. Actual
+   `ServePermissionHost` refuses before listening. Factory integration does not
+   enable a candidate or widen the bound.
+2. **Native receipt/content/recovery — native maintainer and XIN-2793; PjM binds
+   the serving source and operating owner.** The socket supplies content and a
+   numeric sequence, without a recognized delivery reference, immutable original
+   Space/version/hash or stable recipient stream/incarnation/u64 cut. The
+   `inspect/recover` adapters cannot derive native proof from observations. The
+   server producer map requires original/current facts, one-use native disclosure
+   and exact body consumption, `GetReplayCheckpointV1`/`FenceThroughV1`, elected
+   current SQL and surviving acknowledged-position recovery authority. Ordinary
+   history/sync/ACK and a DBR pool cannot supply those guarantees.
+3. **Unseen history/import bridge — native producer and CLI; endpoint retains
+   the consumer.** `NativeReader.ObservedHeader` accepts only an exact Header
+   already resolved through a recognized delivery reference. The token domains
+   are distinct. No supplied ABI bridges unseen history; `register_ingress` also
+   consumes delivery replay tombstones and is not a history resolver. Thus
+   history/media/quote/conversation-markdown, passive context, memory/store and
+   derived imports require the actual metadata/disclosure/body/current-use
+   producers before their owned adapters can be completed. Ordinary content-first
+   helpers or a synthetic provider would violate the approved contract.
+4. **Reuse and host physical sinks — shared producer ABI; endpoint retains its
+   lifecycle/sink adapters.** Every CLI `admit` allocates a new generation. The
+   request has only ingress/proposed context ID; the reply has capsule/turn/
+   generation. No prior-generation adoption or epoch/incarnation readback exists.
+   The endpoint resets and never relabels/resumes legacy native state. The eight
+   methods also expose no physical model-start/native-message/input-disclosure
+   operation under the shared accepted watermark. A control check followed by an
+   unchecked SDK launch/send is insufficient. `prepareInput/publish/refuse` and
+   contained worker execution remain required owned physical sinks; commands,
+   read receipts, streams and helpers cannot silently enter legacy paths.
+5. **Isolation — endpoint-owned incomplete implementation/acceptance.** Pinned
+   executables and clean homes do not provide distinct UID, filesystem/mount,
+   process/FD or provider/relay-only network containment. No trusted adapter for
+   all supported platforms/distributions is supplied or operationally bound.
+   `ContainedWorkerDriver.execute` is not selectable by a JSON flag. Its actual
+   implementation/proof remains an endpoint duty, coordinated with the native/
+   model physical sink above. No platform is waived and no global security,
+   account or runtime configuration is changed.
 
-1. Compose the concrete managed factory in `main` against the actual native and
-   control producers. Preserve existing commands/rate/mention/settings,
-   strict/compatible and independent native ACL behavior through that managed
-   path. The ordinary bootstrap has not been represented as enforcing Stage 1/2.
-2. Complete all mandatory passive/history/media/quote/conversation-markdown,
-   memory/derived/store import and publication paths using the real disclosure
-   and owned-sink interfaces. The new ports are not native implementations.
-   Proven same-generation resume, U/E compatibility, epoch/restart fencing and
-   renewal/drain need full production composition. The current integrated host
-   path conservatively starts clean and does not claim those compatibility gates.
-3. Supply and prove the actual isolation launcher/supervisor: distinct host and
-   worker identities, filesystem/mount/process/FD separation, allowed-provider/
-   turn-relay-only egress and immutable native distribution. Clean directories,
-   read-only SDK flags, executable hashes and a successful native config listing
-   are necessary checks, not that OS boundary. No unsupported platform is dropped.
-4. Reconcile the concrete `bind_context` manifest descriptor/carrier and relay
-   return records with the CLI producer, including the 64 KiB control-frame and
-   complete 1 MiB/256-original manifest constraints. No truncation or arbitrary
-   supported-capacity claim is made by the current full-manifest test layout.
+These are incomplete production obligations, not feature-complete source. The
+ABI-dependent boot/carrier/relay/renewal work is implemented now. Remaining
+native-dependent operations cannot be implemented by guessing authority,
+introducing an evaluator, accepting cached allows or changing the shared protocol
+without its producers.
 
-These remain incomplete source/acceptance duties. The external service/native
-ABI above prevents safely constructing the real producer-backed assembly at
-these delivered heads; the test producers are deliberately not installed as
-production implementations. No full-delivery or premature-review claim follows.
+## Verification
 
-## Actual local verification and limits
+The focused suite uses actual TLS, SQLite/crash/replay, gateway callbacks,
+HTTP/stdio JSON-RPC, owned SDK children and locked native configuration loading.
+New cases cover complete 256-original chunk transfer, offset/generation/size/
+abort failures, renewal drain/denial, private boot success/failure, absent real
+adapters and executable/ticket substitution.
 
-`npm test`: **134 files / 5,402 tests passed**. Build, lint, production and
-permission/mention/recovery/continuity type checks, and the locked SDK/native
-runtime check pass. Fifty focused permission tests include the prior journal,
-crash/restart and contributor cases plus the new integrations.
+An opt-in fixture runs the **built endpoint against the actual CLI 14f9b53d Go
+control host and relay executable**, using that source's synthetic native/policy
+receiver. HTTP and stdio both pass with **219,145 complete core bytes / 256
+distinct Headers**, renewal, `execute` and `call_op`, two synthetic business writes
+per transport and closed-capsule rejection. The old single-frame request rejects;
+chunks succeed. All fixture Headers were independently resolved deliveries, so
+this does not simulate a working unseen-history bridge. After `npm run build`:
 
-The new tests use actual mTLS sockets and certificates, the real `startBot`
-callbacks, real SQLite, real HTTP and child-process stdio JSON-RPC carrying
-`execute`/`call_op`, and a synthetic downstream Bot-API receiver. They cover
-allowed/denied invocation, unknown authority, changed generation, two-facade
-success, capability refusal with zero refused-attempt downstream dispatch,
-one fixed refusal and ordinary failure uncertainty. Their coordinator/native/
-business producers are synthetic fixtures, not the actual Go CLI or native ACL.
+```
+node scripts/verify-permission-cli-abi.mjs /absolute/task-local/CLI-14f9b53d-archive
+```
 
-The real SDK/JSONL proxy/owned child test checks environment and instruction/
-resume isolation. A separate check runs the **locked native CLI** only for
-`mcp list --json` in clean task-local directories and confirms one explicit
-HTTP or stdio relay. That check caught JSON object syntax being treated as a
-string; the launch encoder now emits actual TOML inline tables. No model-provider
-or real business request is made by this probe. It proves configuration loading
-on this one installed distribution, not general config/OS containment.
+The script checks ABI/host/relay hashes, refuses a checkout, and exclusively adds
+its temporary test file to the prepared source archive. It removes that file
+after collecting Go/Node/CLI processes. No sibling checkout is edited.
 
-The owned-child regression also caught a synthetic legacy provider key entering
-the private child. The corrected path takes provider credentials/URL only from
-the explicit private plan and ignores the legacy SDK provider selection there.
+Regression passes: **135 files / 5,417 tests** (`npm test -- --maxWorkers=4`),
+including 65 focused permission tests. Build, lint, all required type checks and
+the locked 0.163.0 SDK/CLI/native check pass. A fresh Chrome profile passed 38
+endpoint cases plus both actual CLI transport cases; the
+[screenshot](evidence/xin-2795-cli-abi-smoke.png) was visually inspected.
+Real native/ACL, supported-catalog, elected-writer/recovery,
+full business and OS containment acceptance remain **NOT_RUN**. No V-A–V-E/V-D2
+environment, deployment, global configuration change, formal review, ready
+conversion or merge occurred.
 
-A fresh headless Chrome profile requested the local protocol test harness and
-received all 23 new test results. The inspected
-[browser result](evidence/xin-2795-managed-smoke.png) labels its synthetic scope.
-Full native/cross-repository MCP permission acceptance and OS containment remain
-**NOT_RUN**. No V-A–V-E/V-D2 environment, deployment, global configuration change,
-new runtime/account/member, formal review, ready conversion or merge occurred.
+## Rollback
 
-## Migration and rollback
-
-No new production data migration or bootstrap configuration is installed.
-The optional trusted factory preserves existing two-argument callers and cannot
-be supplied by an MCP argument. The private worker path does not alter legacy
-launch behavior. Before any future producer-backed activation, retain the host
-journal/key/native fences, persistent epochs and uncertainty through rollback.
-Do not delete them or resume old capsules to restore availability. The next
-coordination owner is Ada-mini/PjM; the implementing endpoint owner retains the
-remaining work listed above. Independent review follows complete source delivery.
+Revert Draft commits and leave managed activation disabled. Retain journal keys/
+rows, native fences, epochs and uncertainty; never delete them, reuse old ready
+records or revive capsules to restore availability. Independent review follows
+complete source delivery and its separate acceptance gates.

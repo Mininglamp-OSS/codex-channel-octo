@@ -1,0 +1,68 @@
+{
+  "format": "endpoint-permission-host-handoff-v3",
+  "supersedes": "permission-endpoint-handoff-v2.json",
+  "status": "BLOCKED_REAL_NATIVE_CATALOG_AND_CONTAINMENT_COMPOSITION",
+  "base_sha": "5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34",
+  "previous_endpoint_head": "e4601041bd9bab186e4122fb8c76a3444bd1da62",
+  "consumed": {
+    "cli_head": "14f9b53d3932c532d6424e8783bd94528e5f7fc6",
+    "cli_abi": {"path": "docs/permission/endpoint-abi-v1.json", "bytes": 3923, "sha256": "d0b055d6070545c749a08dfb49cabbd7d6fa15758328c111c20d1d881d20c835"},
+    "cli_handoff": {"path": "docs/permission/cli-component-contract-v3.json", "bytes": 4548, "sha256": "4b456058c0a9d2f4c7c5743473ae0f467dc79c13521f6ce6723207d91dc44b84"},
+    "server_head": "d5ef4b38269b379bac4aa471a6cad06073c563c8",
+    "server_handoff": {"path": "pkg/permissionbundle/contracts/handoff-v3.json", "bytes": 2129, "sha256": "a2723a2c74665a77e443bf0ddedb479bb5bcc0ff0e3ed5144622deb0427b4091"},
+    "server_producers": {"path": "pkg/permissionbundle/contracts/remaining-producers-v2.json", "bytes": 29231, "sha256": "ee1ecf62dc3902113674fb10f02403feb367677950487d1042ce59acbed76f9d"}
+  },
+  "provided": [
+    "main/startBot private per-bot factory selection; invalid-descriptor refusal; no pre-admission legacy context/CDN/cwd reads",
+    "private descriptor-fd reads; real recovery before journal recovery; exact Bot/origin/recipient binding",
+    "owned pinned CLI boot; fresh ready_path; fsynced config; clean environment; exact TLS1.3 boot/peer Hello; process collection/lifetime fencing",
+    "closed relay reply; selected CLI executable/hash pin; exact endpoint and turn bearer ticket; explicit private worker plan",
+    "complete canonical-json-chunks-v1 consumer; 65536-byte frames, 256-original/1048576-byte core; fixed total/hash/offset; no retry/truncation",
+    "serialized original-ingress/generation renewal; denial abort and one refusal; in-flight renewal drained before close"
+  ],
+  "bootstrap": {
+    "descriptor": "<baseDir>/<configId>/permission-endpoint.json; canonical JSON, 0600 owner file, 0700 owner directory, no symlinks",
+    "descriptor_keys": ["version", "key", "recipient_id", "transport", "coordinator", "tls", "journal", "worker"],
+    "coordinator": ["root", "executable", "sha256", "host_config"],
+    "tls": ["host", "port", "servername", "ca", "cert", "key", "peer_sha256"],
+    "journal": ["key", "key_version", "provision"],
+    "worker": ["root", "launcher", "sha256", "instructions", "provider"],
+    "provider": "null or {base_url,api_key_file}; explicit private provider only",
+    "host_config": "exact CLI private config; launcher overrides endpoint_incarnation/ready_path/relay_executable for its owned boot",
+    "native_dependency": "compiled NativeEndpointDriver inspect/candidate/prepareInput/publish/refuse/recover/stop; actual producer absent",
+    "worker_dependency": "compiled ContainedWorkerDriver.execute/stop; physical model/native sink and OS isolation incomplete",
+    "activation": "no descriptors installed; absent real dependencies refuses before native socket or coordinator launch"
+  },
+  "manifest": {"hash_domain": ["context_id", "context_generation", "originals"], "chunk_bytes": 32768, "intermediate_reply": ["accepted_bytes"], "final_reply": ["context_generation"]},
+  "renew": {"request": ["capsule_id", "generation", "ingress_id"], "reply": ["lease_expires_at"], "interval_ms": 30000, "hard_lifetime_ms": 1800000},
+  "actual_cli_synthetic_integration": {
+    "head": "14f9b53d3932c532d6424e8783bd94528e5f7fc6",
+    "command": "npm run build; node scripts/verify-permission-cli-abi.mjs <exact task-local CLI source archive>",
+    "transports": ["http", "actual executable --turn-relay stdio"],
+    "complete_core_bytes": 219145,
+    "distinct_originals": 256,
+    "facades": ["execute", "call_op"],
+    "business_writes_per_transport": 2,
+    "checks": ["single frame rejected", "complete chunks accepted", "renewal", "actual positive dispatch", "closed capsule rejected"],
+    "limits": "synthetic native/policy/business receivers; already resolved delivery Headers; no unseen-history/native/OS acceptance"
+  },
+  "precise_remaining": {
+    "catalog_XIN_2794": "no compiled supported release; shape 14128923 > approved 8388608 bytes; source page/byte/selector equivalence unresolved; actual CLI startup refuses",
+    "native_XIN_2793_and_native_maintainer_PjM_binding": "recognized delivered Header/reference/current facts; one-use disclosure/body; recipient replay horizon/restore fence; current SQL writer and surviving acknowledged-position authority",
+    "history_bridge": "distinct Header/delivery reference domains; ObservedHeader requires native Resolve; register_ingress consumes replay tombstones; no unseen-history bridge supplied",
+    "reuse_ABI": "admit creates fresh generation; no prior-generation adoption or epoch/incarnation readback; clean reset without native resume",
+    "physical_host_sinks": "eight methods do not own actual TS model start/native send/disclosure under shared watermark; cached allow then launch/fetch/send cannot substitute; endpoint retains actual import/command/publication adapters",
+    "endpoint_isolation": "distinct-identity/fs/process/FD/network and supported-platform/native distribution adapters remain owned incomplete implementation and acceptance"
+  },
+  "catalog": "shared CLI catalog only; no competing evaluator or widened bound",
+  "verification": {
+    "regression": "npm test -- --maxWorkers=4: 135 files / 5417 tests passed",
+    "focused_permission_tests": 65,
+    "browser": "fresh Chrome: 38 endpoint cases plus both actual CLI transport cases passed; screenshot visually inspected",
+    "checks": ["build", "lint", "production/permission/mention/recovery/continuity types", "SDK/CLI/native 0.163.0 runtime check", "diff whitespace"],
+    "evidence": ["docs/evidence/xin-2795-cli-abi-smoke.png", "docs/evidence/xin-2795-cli-abi-browser.json", "docs/evidence/xin-2795-cli-abi.log"]
+  },
+  "native_and_os_acceptance": "NOT_RUN",
+  "production_activation": "DISABLED_NO_REAL_BINDINGS",
+  "review": "Draft retained; no formal review/ready/merge/deployment"
+}

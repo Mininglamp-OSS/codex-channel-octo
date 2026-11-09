@@ -4,12 +4,12 @@ This is the initial component foundation, continued in
 [the endpoint handoff](permission-continuation.md). It remains a **partial implementation**, based on upstream `main` at
 `5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34`, for
 [issue #101](https://github.com/Mininglamp-OSS/codex-channel-octo/issues/101).
-Full Stage 1/2 permission enforcement is incomplete. `startBot` now accepts a
-trusted managed factory and carries its reservation/admission/worker lifecycle;
-the concrete production factory is still blocked on the delivered native and
-coordinator interfaces. The ordinary two-argument path retains legacy behavior.
-There is no new configuration switch that presents these components as an
-enabled permission implementation.
+Full Stage 1/2 permission enforcement is incomplete. `startBot` selects the
+private per-bot managed factory described in the current
+[v3 handoff](permission-endpoint-handoff-v3.json). Boot, readiness, relay,
+manifest chunks and renewal consume the delivered CLI ABI. Real native and
+containment dependencies remain missing, so managed activation refuses. Without
+a descriptor, the existing two-argument library path retains legacy behavior.
 
 ## Implemented components
 

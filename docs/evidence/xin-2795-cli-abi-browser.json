@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "endpointTestCount": 38,
+  "actualCliTransportCases": 2,
+  "cliHead": "14f9b53d3932c532d6424e8783bd94528e5f7fc6",
+  "checks": [
+    "Private owned boot: fresh readiness, exact mTLS identity, no ambient credentials",
+    "Complete 256-original manifests: fixed hash and continuous bounded chunks",
+    "Renewal drain and denial: worker abort, no late publication, one refusal",
+    "Actual Go CLI control + HTTP relay: execute and call_op pass",
+    "Actual CLI --turn-relay executable: execute and call_op pass",
+    "Both actual CLI cases: 219,145 core bytes and closed-capsule rejection",
+    "Real SDK owned child and clean native configuration tests pass"
+  ],
+  "limits": "Synthetic native/policy/business receivers. Supported production catalog, real native/ACL/recovery and OS containment acceptance remain NOT_RUN."
+}

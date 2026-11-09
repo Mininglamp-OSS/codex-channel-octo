@@ -7,7 +7,8 @@
     "src/__tests__/permission-context-provenance.test.ts",
     "src/__tests__/permission-control-client.test.ts",
     "src/__tests__/permission-endpoint-host.test.ts",
-    "src/__tests__/permission-worker-launch.test.ts"
+    "src/__tests__/permission-worker-launch.test.ts",
+    "src/__tests__/permission-producer-abi.test.ts"
   ],
   "exclude": ["node_modules", "dist", "coverage"]
 }

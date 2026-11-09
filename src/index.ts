@@ -18,6 +18,7 @@ import { createAdapter } from './db-adapter.js';
 import { SessionStore } from './session-store.js';
 import { OctoGateway } from './gateway.js';
 import type { PermissionEndpoint } from './permissions/endpoint-host.js';
+import { managedPermissionFactory } from './permissions/endpoint-factory.js';
 import type { DbAdapter } from './db-adapter.js';
 import { SessionRouter } from './session-router.js';
 import { GroupContext } from './group-context.js';
@@ -172,6 +173,7 @@ export type PermissionEndpointFactory = (context: {
 
 export async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean,
   permissionFactory?: PermissionEndpointFactory): Promise<BotStack> {
+  permissionFactory ??= managedPermissionFactory(config);
   const label = multi ? `[${config.botId}] ` : '';
   const cwdBase = config.cwdBase ?? config.cwd;
   console.log(
@@ -188,12 +190,12 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
   }
 
   // --- Q3: per-session cwd cleanup (7d TTL) ---
-  cleanupExpiredCwds(cwdBase);
+  if (!permissionFactory) cleanupExpiredCwds(cwdBase);
   const CWD_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-  const cwdCleanupTimer = setInterval(() => {
+  const cwdCleanupTimer = permissionFactory ? undefined : setInterval(() => {
     cleanupExpiredCwds(cwdBase);
   }, CWD_CLEANUP_INTERVAL_MS);
-  cwdCleanupTimer.unref();
+  cwdCleanupTimer?.unref();
 
   // --- Database (per-bot dataDir → no cross-bot history) ---
   // createAdapter / new SessionStore are created INSIDE the try below, so a
@@ -219,14 +221,14 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     const store = new SessionStore(adapter);
     storeForCleanup = store;
     store.init();
-    const cleaned = store.cleanExpired();
+    const cleaned = permissionFactory ? 0 : store.cleanExpired();
     if (cleaned > 0) {
       console.log(`[codex-channel-octo] ${label}Cleaned ${cleaned} expired session(s)`);
     }
 
     // --- Group context ---
     const groupContext = new GroupContext(adapter, config.context.maxContextChars);
-    groupContext.loadAllFromDb();
+    if (!permissionFactory) groupContext.loadAllFromDb();
 
     // --- Stream relay ---
     const streamRelay = new StreamRelay();
@@ -247,8 +249,8 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       permissionEndpoint = await permissionFactory({ config, adapter, botId: gateway.botId });
       permissionForCleanup = permissionEndpoint;
     }
-    store.recoverInterruptedTurns();
-    console.log(`[codex-channel-octo] quarantined sessions=${store.quarantinedTurnCount()}`);
+    if (!permissionFactory) store.recoverInterruptedTurns();
+    if (!permissionFactory) console.log(`[codex-channel-octo] quarantined sessions=${store.quarantinedTurnCount()}`);
     console.log(`[codex-channel-octo] ${label}Bot registered: id=${gateway.botId}`);
 
     // #86: prefetch the media CDN host (best-effort). Octo serves media from a
@@ -256,7 +258,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // are rejected by buildMediaUrl and the agent can't see them. The STS
     // upload-credentials response carries cdnBaseUrl; we only need its host. A
     // failure leaves mediaCdnHost undefined (same-host-only media), never fatal.
-    try {
+    if (!permissionFactory) try {
       const creds = await getUploadCredentials({
         apiUrl: config.apiUrl,
         botToken: config.botToken,

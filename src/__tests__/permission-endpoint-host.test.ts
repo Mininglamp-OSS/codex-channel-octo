@@ -15,6 +15,7 @@ import { startBot, type BotStack } from '../index.js';
 import { WKSocket } from '../octo/socket.js';
 import { ChannelType, type BotMessage } from '../octo/types.js';
 import { queryAgentEvents } from '../agent-bridge.js';
+import { getUploadCredentials } from '../octo/api.js';
 
 vi.mock('../octo/api.js', async original => ({ ...await original<typeof import('../octo/api.js')>(),
   registerBot: vi.fn(async () => ({ robot_id: 'bot', im_token: 'synthetic-im', ws_url: 'ws://127.0.0.1', owner_uid: 'human' })),
@@ -123,6 +124,7 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
   }
 
   it.each(['http', 'stdio'] as const)('carries both facade calls over %s after admission, with no legacy content/model path', async transport => {
+    expect(getUploadCredentials).not.toHaveBeenCalled();
     ports.relayTransport = transport;
     ports.runWorker = vi.fn(async (binding, _input, relay) => {
       expect(relay.transport).toBe(transport);
@@ -144,6 +146,47 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
     expect(ports.publish).toHaveBeenCalledOnce(); expect(ports.refuse).not.toHaveBeenCalled();
     expect(queryAgentEvents).not.toHaveBeenCalled(); // no inherited legacy SDK/context path
     expect(await receive()).toBe('duplicate'); expect(backend).toBe(2);
+  });
+
+  it('binds the complete 256-original union across control frames before starting a worker', async () => {
+    const chunks: Buffer[] = [];
+    const originalCall = ports.control.call;
+    ports.control.call = vi.fn(async (method, payload) => {
+      if (method !== 'bind_context') return originalCall(method, payload);
+      const m = payload.manifest as { carrier: string; offset: number; bytes: number; data_base64: string };
+      expect(m.carrier).toBe('canonical-json-chunks-v1');
+      expect(m.offset).toBe(Buffer.concat(chunks).length);
+      chunks.push(Buffer.from(m.data_base64, 'base64'));
+      return Buffer.concat(chunks).length === m.bytes ? { context_generation: '4'.repeat(32) }
+        : { accepted_bytes: Buffer.concat(chunks).length };
+    });
+    ports.prepareInput = vi.fn(async () => ({ input: 'SYNTHETIC_ALL_ORIGINALS', originals: Array.from({ length: 255 }, (_, i) => ({
+      ...header, header_reference: `native_${i}`, message_id: String(100 + i),
+    })) }));
+    expect(await receive()).toBe('reserved');
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(JSON.parse(Buffer.concat(chunks).toString()).originals).toHaveLength(256);
+    expect(ports.runWorker).toHaveBeenCalledTimes(1); expect(ports.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops a running worker on authentic renewal denial and sends one fixed refusal without publishing a late result', async () => {
+    vi.useFakeTimers();
+    try {
+      let started!: () => void; const running = new Promise<void>(resolve => { started = resolve; });
+      const originalCall = ports.control.call;
+      ports.control.call = vi.fn(async (method, payload) => {
+        if (method === 'renew') throw new PermissionRefusal({ version: 1, category: 'invocation_denied', correlation: '9'.repeat(32) });
+        return originalCall(method, payload);
+      });
+      ports.runWorker = vi.fn(async (_binding, _input, _relay, signal) => {
+        started(); return new Promise<string>((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+      });
+      const handled = receive(); await running;
+      await vi.advanceTimersByTimeAsync(30000); await handled;
+      expect(ports.publish).not.toHaveBeenCalled(); expect(ports.refuse).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(ports.refuse).mock.calls[0][2]).toBe(`This Agent cannot accept this request here. Reference: ${'9'.repeat(32)}`);
+      expect(ports.control.call).toHaveBeenLastCalledWith('close', { capsule_id: '2'.repeat(32), reason: 'refused' });
+    } finally { vi.useRealTimers(); }
   });
 
   it.each(['http', 'stdio'] as const)('handles an authenticated synthetic MCP refusal over %s without business dispatch/publication', async transport => {
