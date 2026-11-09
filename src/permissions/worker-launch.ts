@@ -11,6 +11,7 @@ export interface PrivateWorkerLaunch {
   readonly workdir: string;
   readonly codexHome: string;
   readonly instructions: string;
+  readonly provider?: Readonly<{ baseUrl: string; apiKey?: string }>;
   readonly env: Readonly<Record<string, string>>;
   readonly configOverrides: readonly string[];
 }
@@ -37,12 +38,22 @@ function inlineTable(value: unknown): string {
  */
 export function preparePrivateWorker(options: {
   root: string; launcher: string; launcherSha256: string; relay: TurnRelay; instructions: string;
+  provider?: { baseUrl: string; apiKey?: string };
 }): Readonly<PrivateWorkerLaunch> {
   pinnedExecutable(options.launcher, options.launcherSha256);
   if (!isAbsolute(options.root)) throw new Error('Private worker root unavailable');
   const parent = lstatSync(options.root);
   if (!parent.isDirectory() || parent.isSymbolicLink() || (parent.mode & 0o077) !== 0) throw new Error('Private worker root unavailable');
   if (!/^[A-Za-z0-9_-]{1,512}$/.test(options.relay.handle)) throw new Error('Turn relay handle unavailable');
+  let provider: Readonly<{ baseUrl: string; apiKey?: string }> | undefined;
+  if (options.provider) {
+    const url = new URL(options.provider.baseUrl);
+    if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search
+      || (options.provider.apiKey !== undefined && (typeof options.provider.apiKey !== 'string' || !options.provider.apiKey))) {
+      throw new Error('Explicit model provider unavailable');
+    }
+    provider = Object.freeze({ baseUrl: url.href, ...(options.provider.apiKey ? { apiKey: options.provider.apiKey } : {}) });
+  }
   let server: Record<string, unknown>;
   if (options.relay.transport === 'stdio') {
     pinnedExecutable(options.relay.executable, options.relay.executableSha256);
@@ -64,5 +75,6 @@ export function preparePrivateWorker(options: {
     'project_doc_max_bytes=0', 'approval_policy="never"', 'sandbox_mode="read-only"',
   ]);
   return Object.freeze({ launcher: options.launcher, workdir, codexHome,
-    instructions: options.instructions, env: Object.freeze({ CODEX_HOME: codexHome }), configOverrides });
+    instructions: options.instructions, ...(provider ? { provider } : {}),
+    env: Object.freeze({ CODEX_HOME: codexHome }), configOverrides });
 }

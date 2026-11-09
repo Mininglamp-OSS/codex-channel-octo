@@ -431,6 +431,7 @@ export async function* queryAgentEvents(
   // Frozen system text (security prefix + SOUL + group instructions).
   const privateWorker = opts?.privateWorker;
   if (privateWorker && !opts?.onManagedExecution) throw new Error('Private worker requires host-owned execution');
+  if (privateWorker && process.platform === 'win32') throw new Error('Private worker requires a supported host-owned process isolation path');
   const systemPrompt = privateWorker ? privateWorker.instructions : buildSystemPrompt(config.sdk.systemPrompt, opts?.groupInstructions);
 
   // Per-session cwd under cwdBase — created on first use. Fall back to the base
@@ -442,7 +443,7 @@ export async function* queryAgentEvents(
   const agentsMdOk = writeAgentsMd(cwd, systemPrompt);
 
   const env = privateWorker ? { ...privateWorker.env } : buildCodexEnv(config.sdk, process.env);
-  const testExecutable = process.env.CODEX_OCTO_TEST_CODEX_PATH;
+  const testExecutable = privateWorker ? undefined : process.env.CODEX_OCTO_TEST_CODEX_PATH;
   if (testExecutable) {
     if (!process.env.CODEX_OCTO_TEST_PROFILE_ROOT) throw new Error('Pinned test executable requires an isolated profile');
     // Validate both profile switches and protected paths, not just a nonempty root.
@@ -452,8 +453,10 @@ export async function* queryAgentEvents(
     // Managed runs always retain the JSONL proxy; pin its owned child instead.
     codexPathOverride: (testExecutable && !opts?.onManagedExecution) ? testExecutable
       : resolveJsonlProxyPath(fileURLToPath(new URL('./codex-jsonl-proxy.mjs', import.meta.url))),
-    ...(config.sdk.codexApiKey ? { apiKey: config.sdk.codexApiKey } : {}),
-    ...(config.sdk.codexBaseUrl ? { baseUrl: config.sdk.codexBaseUrl } : {}),
+    ...((privateWorker ? privateWorker.provider?.apiKey : config.sdk.codexApiKey)
+      ? { apiKey: privateWorker ? privateWorker.provider!.apiKey : config.sdk.codexApiKey } : {}),
+    ...((privateWorker ? privateWorker.provider?.baseUrl : config.sdk.codexBaseUrl)
+      ? { baseUrl: privateWorker ? privateWorker.provider!.baseUrl : config.sdk.codexBaseUrl } : {}),
     ...(env ? { env } : {}),
     ...(privateWorker ? { configOverrides: [...privateWorker.configOverrides] } : {}),
   };

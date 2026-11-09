@@ -40,6 +40,7 @@ describe('host-owned SDK private worker launch', () => {
       apiUrl: 'https://synthetic.invalid', cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' },
       rateLimit: { maxPerMinute: 100 }, context: { maxContextChars: 6000, historyLimit: 40 },
       maxResponseChars: 5000, dispatchTimeoutMs: 10000, sdk: { env: { SYNTHETIC_AMBIENT_SECRET: 'fixture' },
+      codexApiKey: 'SYNTHETIC_LEGACY_PROVIDER_KEY', codexBaseUrl: 'https://legacy-synthetic.invalid',
       systemPrompt: 'LEGACY_STATIC_TEXT', additionalDirectories: [root], sandboxMode: 'danger-full-access',
       networkAccessEnabled: true, webSearchEnabled: true, privateDiagnostics: false,
       recovery: { enabled: true, maxAttempts: 2 } } };
@@ -53,6 +54,8 @@ describe('host-owned SDK private worker launch', () => {
       const report = JSON.parse(answer) as { keys: string[]; args: string[]; home: string; cwd: string; input: string };
       expect(report.home).toBe(launch.codexHome); expect(report.cwd).toBe(realpathSync(launch.workdir));
       expect(report.keys).not.toContain('SYNTHETIC_AMBIENT_SECRET');
+      expect(report.keys).not.toContain('CODEX_API_KEY');
+      expect(report.args.join(' ')).not.toContain('legacy-synthetic.invalid');
       for (const key of ['OCTO_TOKEN', 'OCTO_TASK_TOKEN', 'OCTO_BOT_TOKEN', 'CODEX_CHANNEL_EXECUTION_DIR', 'CODEX_CHANNEL_EXECUTION_TOKEN']) {
         expect(report.keys).not.toContain(key);
       }

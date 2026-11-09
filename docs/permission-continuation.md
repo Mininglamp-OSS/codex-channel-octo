@@ -37,6 +37,10 @@ working native/coordinator services. The base remains upstream `main` at
   environment/operator environment overlays, legacy memory, extra directories,
   old resume IDs and automatic retry. The gateway retains the real child handle;
   execution-control keys are stripped before the actual child is spawned.
+  Legacy SDK provider credentials/URLs are excluded unless a provider is
+  explicitly sealed into the private plan. Platforms without the owned-process
+  path refuse this private launch instead of falling back; completing those
+  platform adapters remains an owned prerequisite, not a support waiver.
 
 The exact new port/call expectations and consumed byte commitments are in
 [permission-endpoint-handoff-v2.json](permission-endpoint-handoff-v2.json).
@@ -114,6 +118,10 @@ HTTP or stdio relay. That check caught JSON object syntax being treated as a
 string; the launch encoder now emits actual TOML inline tables. No model-provider
 or real business request is made by this probe. It proves configuration loading
 on this one installed distribution, not general config/OS containment.
+
+The owned-child regression also caught a synthetic legacy provider key entering
+the private child. The corrected path takes provider credentials/URL only from
+the explicit private plan and ignores the legacy SDK provider selection there.
 
 A fresh headless Chrome profile requested the local protocol test harness and
 received all 23 new test results. The inspected
