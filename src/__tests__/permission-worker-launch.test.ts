@@ -19,9 +19,9 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'permission-worker-'));
   launcher = join(root, 'synthetic-worker');
   const code = `#!${process.execPath}
-let input='';for await(const chunk of process.stdin)input+=chunk;
+const initialCwd=process.cwd();let input='';for await(const chunk of process.stdin)input+=chunk;
 const args=process.argv.slice(2);const cd=args.indexOf('--cd');if(cd>=0)process.chdir(args[cd+1]);
-const report={keys:Object.keys(process.env).sort(),args,home:process.env.CODEX_HOME,cwd:process.cwd(),input};
+const report={keys:Object.keys(process.env).sort(),args,home:process.env.CODEX_HOME,cwd:process.cwd(),initialCwd,input};
 console.log(JSON.stringify({type:'thread.started',thread_id:'11111111-1111-4111-8111-111111111111'}));
 console.log(JSON.stringify({type:'item.completed',item:{id:'answer',type:'agent_message',text:JSON.stringify(report)}}));
 console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,cached_input_tokens:0,output_tokens:1}}));
@@ -51,8 +51,9 @@ describe('host-owned SDK private worker launch', () => {
         privateWorker: launch, privateMemoryContext: 'LEGACY_MEMORY' as never,
         onManagedExecution: execution => owned.push(execution),
       })) if (event.kind === 'message') answer = event.text;
-      const report = JSON.parse(answer) as { keys: string[]; args: string[]; home: string; cwd: string; input: string };
+      const report = JSON.parse(answer) as { keys: string[]; args: string[]; home: string; cwd: string; initialCwd: string; input: string };
       expect(report.home).toBe(launch.codexHome); expect(report.cwd).toBe(realpathSync(launch.workdir));
+      expect(report.initialCwd).toBe(realpathSync(launch.workdir));
       expect(report.keys).not.toContain('SYNTHETIC_AMBIENT_SECRET');
       expect(report.keys).not.toContain('CODEX_API_KEY');
       expect(report.args.join(' ')).not.toContain('legacy-synthetic.invalid');
