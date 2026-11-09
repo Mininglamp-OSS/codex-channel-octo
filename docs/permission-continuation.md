@@ -48,13 +48,18 @@ capability catalog, alternative policy evaluator or complete LaunchPlanV1 proof.
 | Producer/task | Exact evidence at the consumed head | Required output for integration |
 | --- | --- | --- |
 | XIN-2794 / CLI MCP-host owner | Draft #234, `3b07d4d2f6c4637f0c389a71fab056ddf91c3965`; `docs/permission/cli-component-contract-v1.json:19–22` explicitly marks production enforcement NOT_WIRED, native/control/relay NOT_IMPLEMENTED and supported catalog NOT_AVAILABLE. `internal/permission/coordinator.go:128–129` says Register is an in-process seam, not native authentication/control, and production MCP never calls it. | A runnable authenticated private listener implementing the full Hello/register/admit/bind/open/renew/close/checkpoint contract, actual CapsuleV2 and one-turn HTTP/stdio relays, supported exact catalog, and coordinator-owned F/new-B/accepted-revision/physical sinks, including model/native publication and local disclosure. Supply exact launch/configuration ABI, keys/peer identities, typed payloads/handles and head/hash. A reusable remote allow response followed by a host fetch/send is not sufficient. |
-| XIN-2793 / server owner | Draft #951, `36ab3dedf9354a7a0cad1a712831c132edd2e08f`; `pkg/permissionbundle/contracts/handoff-v1.json:16–17` marks the private native fact route NOT_IMPLEMENTED_NATIVE_INTERFACES_ABSENT and default composition unavailable. `pkg/permissionbundle/http.go:69–73` preserves unavailable for a nil actual-store integration. | Source-backed `InspectDeliveredHeaderV1`/`ReadCurrentAccessV1`, metadata-first history/disclosure/exact body reads, and `GetReplayCheckpointV1`/`FenceThroughV1` wired to the real current authorities. Return original recipient/Space/version/digest/stream identity and real acknowledged freshness/restore fences. Supply the native-issued delivery-reference carrier or resolver contract; current WKSocket message ID/uint32 sequence and a payload Space tag cannot mint it. |
+| XIN-2793 / retained server/native integration owner | Draft #951 advanced during this run to `1fae0db209d656a4b60562e14b71aeb23ad8e87b`. Its exact `contracts/handoff-v2.json` now describes installed association composition and the three-arm native fact-wire adapter; facts mount only with a real installed NativeFactSource. `contracts/remaining-producers-v1.json` names the native message and actual current-writer/recovery primitives still missing. | Bind `NativeFactSource.Read/ValidateCuts` and the real `FencedAuthority` to source-backed `InspectDeliveredHeaderV1`/`ReadCurrentAccessV1`, metadata-first history/disclosure/exact body reads and `GetReplayCheckpointV1`/`FenceThroughV1`. The named native source is `octo-lib v0.0.0-20260811160929-233dd6fcdda6 config/msg.go` behind server sync/webhook paths: its content-first MessageResp has uint32 sequence and lacks original-Space/version/stream incarnation. PjM/Dennis-mini coordinates the retained native implementation owner and actual deployment writer/session/recovery facility. No extra repository or infrastructure mutation is authorized here. |
 
 The CLI contract is **1,436 bytes**, SHA-256
 `514d4edd4ce7f22b4f318de79d381cea083f5132fe3327198dc03aef9c104e73`.
-The server handoff is **2,545 bytes**, SHA-256
-`31cf10807ef0fac36c3d214354fbb69bcea0c79ee8a217d38644ad289893cfae`.
-Both were fetched from their exact heads and verified. Their partial component
+The latest server handoff is **2,460 bytes**, SHA-256
+`041fa98ab4888c309e91f3ab34c7246dba78622e7ef327203c411a08041ef6c5`.
+Its producer contract is **5,153 bytes**, SHA-256
+`53f29a0e572cf240584511627236489658089bfcf70598a56216d545730f6a52`.
+Both were retrieved through the exact manifest-v2 paths and independently checked;
+the native/managed schema bytes remain unchanged. The original server component
+head `36ab3dedf9354a7a0cad1a712831c132edd2e08f` was also consumed before this update.
+The contracts were fetched from their exact heads and verified. Their partial component
 status is not a reason to synthesize native authority or silently enable an
 unprotected MCP server.
 

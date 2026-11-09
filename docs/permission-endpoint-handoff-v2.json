@@ -13,10 +13,17 @@
     },
     "server": {
       "task": "XIN-2793",
-      "head": "36ab3dedf9354a7a0cad1a712831c132edd2e08f",
-      "path": "pkg/permissionbundle/contracts/handoff-v1.json",
-      "bytes": 2545,
-      "sha256": "31cf10807ef0fac36c3d214354fbb69bcea0c79ee8a217d38644ad289893cfae"
+      "head": "1fae0db209d656a4b60562e14b71aeb23ad8e87b",
+      "path": "pkg/permissionbundle/contracts/handoff-v2.json",
+      "bytes": 2460,
+      "sha256": "041fa98ab4888c309e91f3ab34c7246dba78622e7ef327203c411a08041ef6c5"
+    },
+    "server_producers": {
+      "task": "XIN-2793",
+      "head": "1fae0db209d656a4b60562e14b71aeb23ad8e87b",
+      "path": "pkg/permissionbundle/contracts/remaining-producers-v1.json",
+      "bytes": 5153,
+      "sha256": "53f29a0e572cf240584511627236489658089bfcf70598a56216d545730f6a52"
     }
   },
   "immutable_shared_wire": {
@@ -60,7 +67,7 @@
   ],
   "external_required_outputs": {
     "XIN-2794": "served authenticated full control protocol, actual CapsuleV2, one-turn HTTP/stdio relays, supported catalog and owned physical sinks; see internal/permission/coordinator.go:128-129 and docs/permission/cli-component-contract-v1.json:19-22 at consumed head",
-    "XIN-2793": "native Header/current access/disclosure/body plus receipt/checkpoint/fence and acknowledged currentness/recovery integration; see pkg/permissionbundle/contracts/handoff-v1.json:16-17 at consumed head"
+    "XIN-2793": "bind the implemented NativeFactSource.Read/ValidateCuts wire adapter and real FencedAuthority to native Header/current access/disclosure/body/receipt/checkpoint and current-writer/recovery primitives; exact sources and retained ownership are in pkg/permissionbundle/contracts/remaining-producers-v1.json at the consumed latest head"
   },
   "catalog": "not created; shared CLI catalog remains authoritative",
   "native_cross_repository_acceptance": "NOT_RUN",
