@@ -17,6 +17,8 @@ import { watchConfig } from './config-watcher.js';
 import { createAdapter } from './db-adapter.js';
 import { SessionStore } from './session-store.js';
 import { OctoGateway } from './gateway.js';
+import type { PermissionEndpoint } from './permissions/endpoint-host.js';
+import type { DbAdapter } from './db-adapter.js';
 import { SessionRouter } from './session-router.js';
 import { GroupContext } from './group-context.js';
 import { queryAgentEvents } from './agent-bridge.js';
@@ -164,7 +166,12 @@ export type BotStack = ManagedBot;
  * (the gateway registers its own SIGINT/SIGTERM handlers); false in multi-bot
  * mode where main() owns a single combined shutdown.
  */
-export async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean): Promise<BotStack> {
+export type PermissionEndpointFactory = (context: {
+  config: ReturnType<typeof loadConfig>; adapter: DbAdapter; botId: string;
+}) => Promise<PermissionEndpoint>;
+
+export async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean,
+  permissionFactory?: PermissionEndpointFactory): Promise<BotStack> {
   const label = multi ? `[${config.botId}] ` : '';
   const cwdBase = config.cwdBase ?? config.cwd;
   console.log(
@@ -195,6 +202,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
   // interval for the surviving gateway's lifetime.
   const dbPath = join(config.dataDir, 'cc-octo.db');
   let storeForCleanup: SessionStore | undefined;
+  let permissionForCleanup: PermissionEndpoint | undefined;
 
   // Set right after gateway construction; releaseLock is nonce-guarded so it is
   // a no-op until register() actually acquires the lock, and the catch can call
@@ -225,11 +233,20 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
 
     // --- Gateway. In multi-bot mode main() owns shutdown signals, so the gateway
     // must NOT register its own (N gateways racing process.exit). ---
-    const gateway = new OctoGateway(config, { handleSignals: !multi });
+    let permissionEndpoint: PermissionEndpoint | undefined;
+    const gateway = new OctoGateway(config, { handleSignals: !multi,
+      reserveBeforeAck: permissionFactory ? delivery => permissionEndpoint
+        ? permissionEndpoint.reserveBeforeAck(delivery) : { disposition: 'unavailable' } : undefined });
     releaseGatewayLock = () => gateway.releaseLock();
     // Phase 1: register over REST (gets botId) — does NOT open the socket yet, so
     // no message can arrive before the handler below is installed.
     await gateway.register();
+    // Managed bootstrap completes before opening the native socket. A failed
+    // factory never falls back to the legacy handler or an ordinary credential.
+    if (permissionFactory) {
+      permissionEndpoint = await permissionFactory({ config, adapter, botId: gateway.botId });
+      permissionForCleanup = permissionEndpoint;
+    }
     store.recoverInterruptedTurns();
     console.log(`[codex-channel-octo] quarantined sessions=${store.quarantinedTurnCount()}`);
     console.log(`[codex-channel-octo] ${label}Bot registered: id=${gateway.botId}`);
@@ -273,9 +290,11 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       // authored as this bot must reach the router to invalidate its cache.
       if (msg.from_uid === gateway.botId && msg.payload.event?.type !== 'mention_pref_updated'
         && !isConversationMdEvent(msg.payload.event?.type)) return;
-      const p = handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId, () => gateway.ownerUid)
+      const p = (permissionEndpoint ? permissionEndpoint.handle(msg)
+        : handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId, () => gateway.ownerUid))
         .catch((err) => {
           console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, summarizeAgentError(err));
+          if (permissionEndpoint) throw err; // WKSocket records an uncertain managed outcome.
         })
         .finally(() => {
           activeHandlers.delete(p);
@@ -295,6 +314,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
 
     const shutdown = async (): Promise<void> => {
       clearInterval(cwdCleanupTimer);
+      await permissionEndpoint?.stop();
       await router.stopTurns();
       await gateway.stop(activeHandlers);
       store.close();
@@ -310,6 +330,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // register() releases its own lock when IT fails; this covers the window
     // where register() succeeded (lock held) but a later step threw.
     releaseGatewayLock?.();
+    try { await permissionForCleanup?.stop(); } catch { /* startup remains failed */ }
     try {
       storeForCleanup?.close();
     } catch {

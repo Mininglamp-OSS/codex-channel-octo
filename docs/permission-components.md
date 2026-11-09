@@ -1,11 +1,13 @@
 # Permission boundary components — XIN-2795
 
-This is a **partial implementation**, based on upstream `main` at
+This is the initial component foundation, continued in
+[the endpoint handoff](permission-continuation.md). It remains a **partial implementation**, based on upstream `main` at
 `5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34`, for
 [issue #101](https://github.com/Mininglamp-OSS/codex-channel-octo/issues/101).
-Full Stage 1/2 permission enforcement is incomplete. The ordinary `startBot`
-path retains its existing behavior: it does not install the new reservation
-adapter, and the provenance component is not yet connected to model sessions.
+Full Stage 1/2 permission enforcement is incomplete. `startBot` now accepts a
+trusted managed factory and carries its reservation/admission/worker lifecycle;
+the concrete production factory is still blocked on the delivered native and
+coordinator interfaces. The ordinary two-argument path retains legacy behavior.
 There is no new configuration switch that presents these components as an
 enabled permission implementation.
 
@@ -63,17 +65,18 @@ or integrated product claim:
 | Native Header and current authority | Native IM/server owners: `InspectDeliveredHeaderV1` and `ReadCurrentAccessV1`, authoritative original Space/recipient/version and current per-authority read semantics. A WKSocket message ID/uint32 sequence cannot supply the required stream incarnation or native uint64 sequence. |
 | Protected history/media/quotes | Native IM/server owners: `ListHistoryHeadersV1`, `IssueHistoryDisclosureV1`, `ReadDisclosedBodyV1`. Content-first sync and mirror/presence rows cannot replace them. |
 | Native replay/recovery | Native IM/server/operations owners: `GetReplayCheckpointV1` and `FenceThroughV1`, ACK coupling, externally durable restore fences and exclusive ownership. Local checksums cannot detect a coherent whole-journal rollback. FULL-sync SQLite tests do not establish hardware power-loss durability. No checkpoint compaction is implemented. |
-| Coordinator and catalog | CLI sibling XIN-2794: complete current bundle evaluation, shared accepted-revision watermark/CAS discipline, authenticated managed-v2 control methods and CapsuleV2, exact rendered capability catalog and owned physical sinks. Its implementer reported its mapped account wrapper missing; no delivered permission PR/catalog was available during this run. |
+| Coordinator and catalog | CLI sibling XIN-2794 Draft #234 at `3b07d4d2f6c4637f0c389a71fab056ddf91c3965` supplies evaluator/reader components. Its handoff still marks authenticated control/relay, native providers, production enforcement and supported catalog unavailable. The former account blocker is superseded. See the continuation for exact consumed hashes and source locations. |
 | Worker containment and relay | Endpoint/native host integration: the complete approved LaunchPlanV1 and private channel, actual locked native configuration precedence, OS isolation, environment/credential exclusions and exclusive turn relay. This macOS development run changes no runtime/provider/global configuration and proves no Linux/macOS/Windows containment profile. |
 | Production admission/context/refusal | Endpoint integration after those interfaces exist: Stage 1 before all protected work, all import/store lineage, fresh publication checks, and typed handled refusal using independently verified original-route reply authority. The existing handler is not represented as permission-gated. |
 
 The backend sibling is XIN-2793. Ada-mini/PjM is the next handoff owner for
 native/CLI dependency delivery and the eventual independent exact-head reviewer.
 This partial Draft PR does not satisfy the task's complete-delivery or review
-gate. No task status change, deployment, ready conversion, merge, release or
-human acceptance is implied.
+gate. The continuation records the precise blocker for the authorized final
+status transition. No deployment, ready conversion, merge, release or human
+acceptance is implied.
 
-## Verification
+## Initial foundation verification
 
 - Red: the new loopback test failed on the pinned source because its reservation
   callback was never called and a duplicate still reached the handler.
