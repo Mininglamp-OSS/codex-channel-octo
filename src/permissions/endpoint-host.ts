@@ -37,6 +37,7 @@ export interface EndpointBinding {
 export interface EndpointHostPorts {
   readonly key: Readonly<PermissionKey>;
   readonly recipientId: string;
+  relayTransport: 'http' | 'stdio';
   readonly journal: ReplayJournal;
   /** Native producer must inspect without content-first lookup and compare the
    * original delivery. No implementation may promote wire observations to F. */
@@ -172,7 +173,9 @@ export class EndpointPermissionHost implements PermissionEndpoint {
     let handled = false;
     let workerStarted = false;
     let workerFailed = false;
+    const relayTransport = this.ports.relayTransport;
     try {
+      if (relayTransport !== 'http' && relayTransport !== 'stdio') throw new Error('Relay transport unavailable');
       // Trigger/config discovery may run here; it supplies no invocation grant.
       if (!await this.ports.candidate(message)) return;
       controller.signal.throwIfAborted();
@@ -210,7 +213,7 @@ export class EndpointPermissionHost implements PermissionEndpoint {
         manifest: { ...manifest, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } }), ['context_generation']);
       if (bound.context_generation !== binding.generation) throw new Error('Context generation conflict');
       const relay = await this.ports.control.call('open_relay', { capsule_id: binding.capsuleId,
-        recipient_id: this.recipientId, transport: 'stdio', relay_nonce: randomBytes(16).toString('hex') });
+        recipient_id: this.recipientId, transport: relayTransport, relay_nonce: randomBytes(16).toString('hex') });
       controller.signal.throwIfAborted();
       workerStarted = true;
       const text = await this.ports.runWorker(binding, prepared.input, Object.freeze(relay), controller.signal);

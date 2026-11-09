@@ -66,13 +66,14 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
     const address = server.address(); if (!address || typeof address === 'string') throw new Error('No address');
     url = `http://127.0.0.1:${address.port}`;
     ports = {
-      key: { origin: 'https://synthetic.invalid', bot_uid: 'bot', space_id: 'space' }, recipientId: 'synthetic:relay',
+      key: { origin: 'https://synthetic.invalid', bot_uid: 'bot', space_id: 'space' }, recipientId: 'synthetic:relay', relayTransport: 'stdio',
       journal: new ReplayJournal(db, Buffer.alloc(32, 6), '1', { provision: true }),
       inspect: vi.fn(async () => ({ deliveryReference: 'native_receipt', header })), candidate: vi.fn(async () => true),
-      control: { call: vi.fn(async method => {
+      control: { call: vi.fn(async (method, payload) => {
         if (method === 'register_ingress') return { ingress_id: '1'.repeat(32) };
         if (method === 'admit') return { capsule_id: '2'.repeat(32), turn_id: '3'.repeat(32), generation: '4'.repeat(32) };
         if (method === 'bind_context') return { context_generation: '4'.repeat(32) };
+        if (method === 'open_relay') return { transport: payload.transport };
         return {};
       }) },
       prepareInput: vi.fn(async () => ({ input: 'SYNTHETIC_CURRENT_INPUT', originals: [header] })),
@@ -122,7 +123,9 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
   }
 
   it.each(['http', 'stdio'] as const)('carries both facade calls over %s after admission, with no legacy content/model path', async transport => {
-    ports.runWorker = vi.fn(async binding => {
+    ports.relayTransport = transport;
+    ports.runWorker = vi.fn(async (binding, _input, relay) => {
+      expect(relay.transport).toBe(transport);
       const replies: unknown[] = [];
       for (const name of ['execute', 'call_op']) {
         const rpc = { jsonrpc: '2.0', id: name, method: 'tools/call', params: { name,
@@ -145,7 +148,9 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
 
   it.each(['http', 'stdio'] as const)('handles an authenticated synthetic MCP refusal over %s without business dispatch/publication', async transport => {
     denyMcp = true;
-    ports.runWorker = vi.fn(async () => {
+    ports.relayTransport = transport;
+    ports.runWorker = vi.fn(async (_binding, _input, relay) => {
+      expect(relay.transport).toBe(transport);
       const response = await rpcCall(transport, { jsonrpc: '2.0', id: 'denied', method: 'tools/call',
         params: { name: 'execute', arguments: { operation_id: 'group.list', arguments: {} } } });
       const error = response.error as { code: number; data: { version: 1; category: 'capability_denied'; correlation: string } };

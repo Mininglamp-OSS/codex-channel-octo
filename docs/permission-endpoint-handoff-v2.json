@@ -58,6 +58,8 @@
     "checkpoint": "generic ingress-owner client method retained; real native checkpoint/fence producer is required"
   },
   "native_host_ports": ["inspect", "candidate", "prepareInput", "runWorker", "publish", "refuse", "stop"],
+  "host_configuration": ["key", "recipientId", "relayTransport", "journal"],
+  "worker_stdio_consumer_expectation": "Pinned relay executable receives --turn-relay <one-turn handle>; this concrete ABI must be reconciled with the actual CLI relay producer, not assumed to exist in Draft234.",
   "port_semantics": "Host-only composition. inspect consumes real native evidence; input/worker/publication ports own their actual fresh checked actions, not scalar allow tickets. Tests supply synthetic ports, never an installed production provider.",
   "owned_remaining": [
     "main concrete managed factory and complete legacy command/rate/mention/settings/strict/compatible preservation",
