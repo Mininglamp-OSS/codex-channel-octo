@@ -142,7 +142,7 @@ describe('private control client over actual mutually authenticated TLS', () => 
   });
 
   it('rejects duplicate decoded keys, malformed UTF-8, unknown scalars and noncanonical numbers', () => {
-    for (const text of ['{"x":1,"x":2}', '{"x":1,"\\u0078":2}', '{"x":1.0}', '{"x":"\\ud800"}', 'null']) {
+    for (const text of ['{"x":1,"x":2}', '{"x":1,"\\u0078":2}', '{"x":1.0}', '{"x":"\\ud800"}', 'null', '\ufeff{"x":1}']) {
       expect(() => decodeControl(Buffer.from(text))).toThrow();
     }
     expect(() => decodeControl(Uint8Array.from([123, 34, 120, 34, 58, 34, 255, 34, 125]))).toThrow();

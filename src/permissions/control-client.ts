@@ -59,7 +59,7 @@ export function decodeControl(bytes: Uint8Array): Record<string, unknown> {
   const parsed: unknown = JSON.parse(text);
   // Re-encoding catches duplicate decoded keys, noncanonical numbers/escapes,
   // trailing input, whitespace and key order without a permissive JSON reviver.
-  if (canonicalControl(parsed) !== text) throw new Error('Noncanonical control frame');
+  if (!Buffer.from(canonicalControl(parsed), 'utf8').equals(bytes)) throw new Error('Noncanonical control frame');
   return object(parsed);
 }
 

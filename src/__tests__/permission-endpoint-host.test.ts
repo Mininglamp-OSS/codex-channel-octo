@@ -68,6 +68,7 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
     url = `http://127.0.0.1:${address.port}`;
     ports = {
       key: { origin: 'https://synthetic.invalid', bot_uid: 'bot', space_id: 'space' }, recipientId: 'synthetic:relay', relayTransport: 'stdio',
+      catalog: { catalog_format: 'permission-release-manifest-v1', catalog_version: 'synthetic-frozen', catalog_digest: 'a'.repeat(64) },
       journal: new ReplayJournal(db, Buffer.alloc(32, 6), '1', { provision: true }),
       inspect: vi.fn(async () => ({ deliveryReference: 'native_receipt', header })), candidate: vi.fn(async () => true),
       control: { call: vi.fn(async (method, payload) => {
@@ -167,6 +168,16 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
     expect(chunks.length).toBeGreaterThan(1);
     expect(JSON.parse(Buffer.concat(chunks).toString()).originals).toHaveLength(256);
     expect(ports.runWorker).toHaveBeenCalledTimes(1); expect(ports.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the private catalog identity immutable across a caller mutation and fresh turn binding', async () => {
+    Object.assign(ports.catalog!, { catalog_version: 'mutated-after-construction' });
+    ports.runWorker = vi.fn(async binding => {
+      expect(binding.catalog?.catalog_version).toBe('synthetic-frozen');
+      expect(Object.isFrozen(binding.catalog)).toBe(true);
+      return 'SYNTHETIC_RESULT';
+    });
+    expect(await receive()).toBe('reserved'); expect(ports.runWorker).toHaveBeenCalledTimes(1);
   });
 
   it('stops a running worker on authentic renewal denial and sends one fixed refusal without publishing a late result', async () => {

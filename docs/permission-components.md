@@ -6,7 +6,7 @@ This is the initial component foundation, continued in
 [issue #101](https://github.com/Mininglamp-OSS/codex-channel-octo/issues/101).
 Full Stage 1/2 permission enforcement is incomplete. `startBot` selects the
 private per-bot managed factory described in the current
-[v3 handoff](permission-endpoint-handoff-v3.json). Boot, readiness, relay,
+[v4 handoff](permission-endpoint-handoff-v4.json). Boot, readiness, relay,
 manifest chunks and renewal consume the delivered CLI ABI. Real native and
 containment dependencies remain missing, so managed activation refuses. Without
 a descriptor, the existing two-argument library path retains legacy behavior.

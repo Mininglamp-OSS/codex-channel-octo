@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { PermissionControlClient, canonicalControl, decodeControl, object, type ControlConnection } from './control-client.js';
 import { privateDirectory, privateFile, verifyExecutable } from './private-files.js';
+import { verifyCatalogBoot, type CatalogBootPin } from './catalog-boot.js';
 
 export interface CoordinatorBoot {
   root: string;
@@ -17,6 +18,7 @@ export interface CoordinatorBoot {
   recipientId: string;
   tls: Omit<ControlConnection, 'configuredOrigin' | 'recipientId' | 'endpointIncarnation' | 'coordinatorIncarnation'>;
   timeoutMs?: number;
+  catalog?: Readonly<CatalogBootPin>;
 }
 
 function durableFile(path: string, bytes: string): void {
@@ -27,10 +29,11 @@ function durableFile(path: string, bytes: string): void {
 /** Own exactly one CLI boot. No attach-to-an-old-ready-file, automatic restart,
  * ambient CLI account/config, alternate listener or unmanaged fallback. */
 export async function startPermissionCoordinator(options: CoordinatorBoot): Promise<{
-  control: PermissionControlClient; directory: string; signal: AbortSignal; stop(): Promise<void>;
+  control: PermissionControlClient; directory: string; signal: AbortSignal; catalog: Readonly<CatalogBootPin>; stop(): Promise<void>;
 }> {
   privateDirectory(options.root);
   verifyExecutable(options.executable, options.executableSha256);
+  const catalog = verifyCatalogBoot(options.hostConfig, options.catalog);
   if (options.hostConfig.origin !== options.origin || options.hostConfig.bot_uid !== options.botUid
     || options.hostConfig.recipient_id !== options.recipientId || !options.botToken.startsWith('bf_')) {
     throw new Error('Coordinator host binding unavailable');
@@ -92,6 +95,6 @@ export async function startPermissionCoordinator(options: CoordinatorBoot): Prom
     control = await PermissionControlClient.connect({ ...options.tls, configuredOrigin: options.origin,
       recipientId: options.recipientId, endpointIncarnation, coordinatorIncarnation: incarnation });
     if (closed || failed) throw new Error('Coordinator boot lost');
-    return { control, directory, signal: lifetime.signal, stop };
+    return { control, directory, signal: lifetime.signal, catalog, stop };
   } catch (error) { await stop(); throw error; }
 }

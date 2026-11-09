@@ -108,6 +108,9 @@ function bootFixture(mode = 'normal'): CoordinatorBoot {
   const cert = readFileSync(join(root, 'cert.pem')); const key = readFileSync(join(root, 'key.pem'));
   const port = Number(execFileSync(process.execPath, ['-e', "const s=require('node:net').createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close()})"], { encoding: 'utf8' }).trim());
   const executable = join(root, 'synthetic-coordinator');
+  const release = canonicalControl({ format: 'permission-release-manifest-v1', catalog_version: 'synthetic-identity-only',
+    contract_revision: 2, semantics_version: '1' });
+  const releasePath = join(root, 'release.json'); writeFileSync(releasePath, release, { mode: 0o600 });
   const source = `#!${process.execPath}
 import tls from 'node:tls';import {readFileSync,writeFileSync,openSync,fsyncSync,closeSync} from 'node:fs';
 const cfg=JSON.parse(readFileSync(process.argv[process.argv.indexOf('--permission-config')+1]));
@@ -124,7 +127,8 @@ const path=cfg.ready_path;const fd=openSync(path,'wx',0o600);writeFileSync(fd,ca
 `;
   writeFileSync(executable, source, { mode: 0o700 });
   return { root, executable, executableSha256: createHash('sha256').update(source).digest('hex'),
-    hostConfig: { origin: 'https://synthetic.invalid', bot_uid: 'bot', recipient_id: 'endpoint', relay_url: 'https://synthetic.invalid/mcp', control_address: `127.0.0.1:${port}` },
+    hostConfig: { origin: 'https://synthetic.invalid', bot_uid: 'bot', recipient_id: 'endpoint', relay_url: 'https://synthetic.invalid/mcp', control_address: `127.0.0.1:${port}`,
+      release_path: releasePath, release_sha256: createHash('sha256').update(release).digest('hex') },
     origin: 'https://synthetic.invalid', botUid: 'bot', recipientId: 'endpoint', botToken: 'bf_SYNTHETIC_ONLY', timeoutMs: 5000,
     tls: { host: '127.0.0.1', port, servername: 'localhost', ca: cert, cert, key,
       peerCertificateSha256: createHash('sha256').update(new X509Certificate(cert).raw).digest('hex'), timeoutMs: 500 } };
@@ -136,6 +140,7 @@ describe('private bootstrap and relay selection', () => {
     const running = await startPermissionCoordinator(boot);
     try {
       expect(await running.control.call('checkpoint', {})).toEqual({ fixture: true });
+      expect(running.catalog.catalog_format).toBe('permission-release-manifest-v1');
       const observed = JSON.parse(readFileSync(join(root, 'observed.json'), 'utf8'));
       // macOS adds this locale marker while initializing the child runtime.
       delete observed.env.__CF_USER_TEXT_ENCODING;
@@ -188,13 +193,15 @@ describe('private bootstrap and relay selection', () => {
     symlinkSync(file, join(root, 'alias')); expect(() => privateFile(join(root, 'alias'), 4)).toThrow();
   });
 
-  it('composes recovery, journal and the owned coordinator from the main-selected descriptor; missing real adapters stop before boot', async () => {
+  it.each([1, 2])('composes recovery, journal and the owned coordinator from private descriptor v%s; missing real adapters stop before boot', async version => {
     const boot = bootFixture();
     const config = { baseDir: root, botId: 'fixture', apiUrl: boot.origin, botToken: boot.botToken } as Config;
     const bot = join(root, 'fixture'); mkdirSync(bot, { mode: 0o700 });
     const hostPath = join(root, 'source-host.json'); writeFileSync(hostPath, canonicalControl(boot.hostConfig), { mode: 0o600 });
     const journalKey = join(root, 'journal.key'); writeFileSync(journalKey, Buffer.alloc(32, 9), { mode: 0o600 });
-    const descriptor = { version: 1, key: { origin: boot.origin, bot_uid: 'bot', space_id: 'space' }, recipient_id: 'endpoint',
+    const descriptor = { version, ...(version === 2 ? { catalog: { catalog_format: 'permission-release-manifest-v1',
+      catalog_version: 'synthetic-identity-only', catalog_digest: boot.hostConfig.release_sha256 } } : {}),
+      key: { origin: boot.origin, bot_uid: 'bot', space_id: 'space' }, recipient_id: 'endpoint',
       transport: 'stdio', coordinator: { root, executable: boot.executable, sha256: boot.executableSha256, host_config: hostPath },
       tls: { host: '127.0.0.1', port: boot.tls.port, servername: 'localhost', ca: join(root, 'cert.pem'), cert: join(root, 'cert.pem'),
         key: join(root, 'key.pem'), peer_sha256: boot.tls.peerCertificateSha256 },
@@ -208,6 +215,13 @@ describe('private bootstrap and relay selection', () => {
       publish: vi.fn(async () => {}), refuse: vi.fn(async () => {}), stop: vi.fn(async () => {}) };
     const worker = { execute: vi.fn(async () => 'SYNTHETIC'), stop: vi.fn(async () => {}) };
     try {
+      if (version === 2) {
+        writeFileSync(join(bot, 'permission-endpoint.json'), canonicalControl({ ...descriptor,
+          catalog: { ...descriptor.catalog, catalog_version: 'wrong' } }), { mode: 0o600 });
+        expect(() => managedPermissionFactory(config, { native, worker })).toThrow('selection');
+        expect(native.recover).not.toHaveBeenCalled();
+        writeFileSync(join(bot, 'permission-endpoint.json'), canonicalControl(descriptor), { mode: 0o600 });
+      }
       await expect(managedPermissionFactory(config)!({ config, adapter: db, botId: 'bot' })).rejects.toThrow('BINDINGS_UNAVAILABLE');
       expect(db.prepare("SELECT name FROM sqlite_master WHERE name='permission_replay_meta'").get()).toBeUndefined();
       endpoint = await managedPermissionFactory(config, { native, worker })!({ config, adapter: db, botId: 'bot' });

@@ -1,5 +1,11 @@
 # Endpoint continuation — XIN-2795
 
+The current v42 continuation is [permission-v42-continuation.md](permission-v42-continuation.md)
+with [handoff v4](permission-endpoint-handoff-v4.json). This document records the
+preceding ABI integration; its catalog size/approval discussion is historical.
+The exact corrected v2 grammar/bounds are now approved, while supported package
+and native/physical/containment delivery remain incomplete.
+
 Draft #102 remains incomplete at the native/containment production boundary.
 The CLI account and missing-control/missing-relay blockers are superseded.
 The required upstream `main` remains `5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34`.

@@ -5,6 +5,7 @@ import { ReplayJournal, type ReplayIdentity } from './replay-journal.js';
 import { canonicalControl, object, PermissionRefusal, permissionRefusalText, type ControlMethod, type RefusalRecord } from './control-client.js';
 import { bindContextManifest } from './context-manifest.js';
 import { TurnLease } from './turn-lease.js';
+import { catalogBootPin, type CatalogBootPin } from './catalog-boot.js';
 
 export interface PermissionKey { origin: string; bot_uid: string; space_id: string }
 export interface NativeHeader {
@@ -29,6 +30,7 @@ export interface NativeIngress {
 
 export interface EndpointBinding {
   readonly ingressId: string;
+  readonly catalog?: Readonly<CatalogBootPin>;
   readonly capsuleId: string;
   readonly turnId: string;
   readonly contextId: string;
@@ -43,6 +45,7 @@ export interface EndpointHostPorts {
   relayTransport: 'http' | 'stdio';
   readonly journal: ReplayJournal;
   readonly authoritySignal?: AbortSignal;
+  readonly catalog?: Readonly<CatalogBootPin>;
   /** Native producer must inspect without content-first lookup and compare the
    * original delivery. No implementation may promote wire observations to F. */
   inspect(delivery: ReceivedDelivery): Promise<NativeIngress>;
@@ -116,10 +119,12 @@ export class EndpointPermissionHost implements PermissionEndpoint {
   private stopping = false;
   private readonly key: Readonly<PermissionKey>;
   private readonly recipientId: string;
+  private readonly catalog?: Readonly<CatalogBootPin>;
   readonly reserveBeforeAck: ReserveBeforeAck;
 
   constructor(private readonly ports: EndpointHostPorts) {
     this.key = Object.freeze({ ...ports.key }); this.recipientId = ports.recipientId;
+    this.catalog = ports.catalog && catalogBootPin(ports.catalog);
     this.reserveBeforeAck = delivery => {
       const task = this.reserve(delivery);
       this.receives.add(task);
@@ -197,7 +202,7 @@ export class EndpointPermissionHost implements PermissionEndpoint {
         ingress_id: hex(registered.ingress_id), proposed_context_id: contextId,
       }), ['capsule_id', 'turn_id', 'generation']);
       binding = Object.freeze({ ingressId: hex(registered.ingress_id), capsuleId: hex(admitted.capsule_id), turnId: hex(admitted.turn_id),
-        contextId, generation: hex(admitted.generation), header: ingress.header });
+        contextId, generation: hex(admitted.generation), header: ingress.header, ...(this.catalog ? { catalog: this.catalog } : {}) });
       lease = new TurnLease(this.ports.control, binding, controller);
       controller.signal.throwIfAborted();
       // Unknown legacy provenance is never resumed. This path creates a clean

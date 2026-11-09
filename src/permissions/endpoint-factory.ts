@@ -8,6 +8,7 @@ import { startPermissionCoordinator, type CoordinatorBoot } from './coordinator-
 import { privateFile, verifyExecutable } from './private-files.js';
 import { ReplayJournal } from './replay-journal.js';
 import { preparePrivateWorker, type PrivateWorkerLaunch, type TurnRelay } from './worker-launch.js';
+import { catalogBootPin, verifyCatalogBoot } from './catalog-boot.js';
 
 /** Compiled trusted adapters, never imported from an operator/module path, MCP,
  * model output or a JSON claim. No actual native/containment producer is shipped
@@ -47,13 +48,15 @@ function text(value: unknown): string {
 }
 
 function readDescriptor(path: string): Descriptor {
-  const d = object(decodeControl(privateFile(path, 16384)), ['version', 'key', 'recipient_id', 'transport',
-    'coordinator', 'tls', 'journal', 'worker']);
-  if (d.version !== 1 || !['stdio', 'http'].includes(String(d.transport))) throw new Error('Managed descriptor invalid');
+  const d = decodeControl(privateFile(path, 16384));
+  object(d, ['version', 'key', 'recipient_id', 'transport', 'coordinator', 'tls', 'journal', 'worker', ...(d.version === 2 ? ['catalog'] : [])]);
+  if (![1, 2].includes(Number(d.version)) || typeof d.version !== 'number'
+    || !['stdio', 'http'].includes(String(d.transport))) throw new Error('Managed descriptor invalid');
   const key = object(d.key, ['origin', 'bot_uid', 'space_id']);
   const permissionKey = Object.freeze({ origin: text(key.origin), bot_uid: text(key.bot_uid), space_id: text(key.space_id) });
   const coordinator = object(d.coordinator, ['root', 'executable', 'sha256', 'host_config']);
   const hostConfig = object(decodeControl(privateFile(text(coordinator.host_config), 16384)));
+  const catalog = verifyCatalogBoot(hostConfig, d.version === 2 ? catalogBootPin(d.catalog) : undefined);
   const tls = object(d.tls, ['host', 'port', 'servername', 'ca', 'cert', 'key', 'peer_sha256']);
   if (!Number.isInteger(tls.port) || Number(tls.port) < 1 || Number(tls.port) > 65535) throw new Error('Managed descriptor invalid');
   const connection: Omit<ControlConnection, 'configuredOrigin' | 'recipientId' | 'endpointIncarnation' | 'coordinatorIncarnation'> = {
@@ -71,7 +74,7 @@ function readDescriptor(path: string): Descriptor {
   }
   return { key: permissionKey, recipientId: text(d.recipient_id), transport: d.transport as Descriptor['transport'],
     boot: { root: text(coordinator.root), executable: text(coordinator.executable), executableSha256: text(coordinator.sha256),
-      hostConfig, tls: connection }, journalKey: privateFile(text(journal.key), 32), journalKeyVersion: text(journal.key_version),
+      hostConfig, tls: connection, catalog }, journalKey: privateFile(text(journal.key), 32), journalKeyVersion: text(journal.key_version),
     provision: journal.provision, worker: { root: text(worker.root), launcher: text(worker.launcher),
       launcherSha256: text(worker.sha256), instructions: text(worker.instructions), ...(provider ? { provider } : {}) } };
 }
@@ -140,7 +143,7 @@ export function managedPermissionFactory(config: Config, dependencies?: Dependen
         origin: descriptor.key.origin, botUid: botId, recipientId: descriptor.recipientId });
       const native = dependencies.native;
       return new EndpointPermissionHost({ key: descriptor.key, recipientId: descriptor.recipientId, relayTransport: descriptor.transport,
-        journal, control: coordinator.control, authoritySignal: coordinator.signal,
+        journal, control: coordinator.control, authoritySignal: coordinator.signal, catalog: coordinator.catalog,
         inspect: delivery => native.inspect(delivery), candidate: message => native.candidate(message),
         prepareInput: (binding, signal) => native.prepareInput(binding, signal),
         publish: (binding, output, signal) => native.publish(binding, output, signal),
