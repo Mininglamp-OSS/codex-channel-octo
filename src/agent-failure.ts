@@ -52,10 +52,27 @@ function safeFailureReflection(value: unknown): boolean {
   }
   return true;
 }
+/** Snapshot a data property without invoking an accessor, including on a prototype.
+ * Keep this read explicit even after reflection validation, rather than relying
+ * on the validation guard's short-circuit ordering to protect error.cause. */
+function readDataProperty(value: object, key: string): unknown {
+  let cursor: object | null = value;
+  for (let depth = 0; cursor !== null && depth < 32; depth++) {
+    if (utilTypes.isProxy(cursor)) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(cursor, key);
+    if (descriptor) return 'value' in descriptor ? descriptor.value : undefined;
+    cursor = Object.getPrototypeOf(cursor);
+  }
+  return undefined;
+}
 export function classifyFailure(error: unknown, source: FailureSnapshot['source'] = 'sdk_exception'): FailureSnapshot {
   // Reject reflection hazards in both the thrown value and its parse-error cause
   // before instanceof/property reads. Diagnostics flags never change this rule.
-  if (!safeFailureReflection(error) || (error instanceof Error && !safeFailureReflection(error.cause))) {
+  if (!safeFailureReflection(error)) {
+    return {stage:'inference',category:'unknown',source,evidence:'unknown'};
+  }
+  const cause = error instanceof Error ? readDataProperty(error, 'cause') : undefined;
+  if (!safeFailureReflection(cause)) {
     return {stage:'inference',category:'unknown',source,evidence:'unknown'};
   }
   if (error instanceof AgentFailure) return { ...error.snapshot };
@@ -63,8 +80,8 @@ export function classifyFailure(error: unknown, source: FailureSnapshot['source'
   const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
   if (error instanceof Error && error.name === 'TimeoutError') return { stage: 'inference', category: 'timeout', source, evidence: 'structured' };
   if (error instanceof Error && error.name === 'AbortError') return { stage: 'inference', category: 'cancelled', source, evidence: 'structured' };
-  if (msg.startsWith('Failed to parse item:') && error instanceof Error && error.cause instanceof SyntaxError) {
-    return { stage: 'jsonl_parse', category: /Unterminated string|Unexpected end of JSON/i.test(error.cause.message) ? 'jsonl_incomplete' : 'jsonl_invalid', source, evidence: 'structured' };
+  if (msg.startsWith('Failed to parse item:') && error instanceof Error && cause instanceof SyntaxError) {
+    return { stage: 'jsonl_parse', category: /Unterminated string|Unexpected end of JSON/i.test(cause.message) ? 'jsonl_incomplete' : 'jsonl_invalid', source, evidence: 'structured' };
   }
   if (msg.startsWith('CODEX_JSONL_PROXY_BOOTSTRAP_FAILURE:')) return { stage: 'spawn', category: 'proxy_bootstrap', source, evidence: 'recognized_text' };
   // Only OS spawn errors carry positive evidence that no CLI was started.
