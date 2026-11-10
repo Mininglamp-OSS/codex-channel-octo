@@ -27,3 +27,9 @@ export function nativeErrorMessage(value: unknown): string | undefined {
   const message = domField(value, 'message');
   return typeof message === 'string' ? message : undefined;
 }
+
+/** Only the captured native DOMException accessor may supply an accessor name. */
+export function nativeErrorName(value: unknown): string | undefined {
+  const name = domField(value, 'name');
+  return typeof name === 'string' ? name : undefined;
+}

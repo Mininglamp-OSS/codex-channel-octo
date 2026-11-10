@@ -38,6 +38,8 @@ vi.mock('../agent-bridge.js', () => {
   return { queryAgent, queryAgentEvents };
 });
 
+import { privateMemorySessionKey } from '../private-memory.js';
+import { attachErrorDetails } from '../error-details.js';
 import { startBot, type BotStack } from '../index.js';
 import { GroupContext } from '../group-context.js';
 import { SessionStore } from '../session-store.js';
@@ -200,7 +202,7 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     });
     const inbound=message({channel_type:ChannelType.DM,channel_id:'human',payload:{type:MessageType.Text,content:'original task'}});
     emit(inbound);await route.mock.results[0].value;
-    expect(vi.mocked(sendMessage).mock.calls.at(-1)?.[0].content).toContain('模型处理未完成');
+    expect(vi.mocked(sendMessage).mock.calls.at(-1)?.[0].content).toContain('执行失败：');
     vi.mocked(queryAgent).mockImplementationOnce(async function* (_message,_config,_ctx,_tools,options) {
       expect(options?.interruptedTurn).toMatchObject({reason:'failed',stage:'inference',executionRisk:'unknown'});
       yield 'new response';
@@ -211,6 +213,83 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     expect(vi.mocked(queryAgent).mock.calls[1][0]).toContain(content);
     expect(vi.mocked(sendMessage).mock.calls.some(call=>call[0].content==='new response')).toBe(true);
   });
+
+  it.each(['message','syscall'])('delivers an unknown failure for object-valued %s in the production catch path', async field => {
+    const route=vi.spyOn(stack!.router,'routeAndHandle');spies.push(route);
+    let calls=0;
+    const hostile={get startsWith(){calls++;throw Error('hostile string method');},[Symbol.toPrimitive](){calls++;throw Error('hostile coercion');}};
+    const error=new Error('synthetic malformed SDK error');
+    Object.defineProperty(error,'stack',{value:'synthetic stack'});
+    Object.defineProperty(error,field,{value:hostile});
+    vi.mocked(queryAgent).mockImplementationOnce(async function*(){throw error;});
+    emit(message({channel_type:ChannelType.DM,channel_id:'human',payload:{type:MessageType.Text,content:'test malformed failure'}}));
+    await route.mock.results[0].value;
+    const reply=vi.mocked(sendMessage).mock.calls.at(-1)?.[0].content;
+    expect(reply).toContain('执行失败：');expect(reply).toContain('unknown');expect(reply).toContain('诊断编号');
+    expect(queryAgent).toHaveBeenCalledOnce();expect(calls).toBe(0);
+  });
+
+  it('masks credentials in both the real inbound failure notification and console log',async()=>{
+    const route=vi.spyOn(stack!.router,'routeAndHandle');spies.push(route);
+    const log=vi.spyOn(console,'error').mockImplementation(()=>{});spies.push(log);
+    const warning=vi.spyOn(console,'warn').mockImplementation(()=>{});spies.push(warning);
+    const error=Object.assign(new Error('503 service unavailable; api_key=SYNTHETIC_MESSAGE_CREDENTIAL',
+      {cause:new Error('password=SYNTHETIC_CAUSE_CREDENTIAL')}),
+      {stderr:'Authorization: Bearer SYNTHETIC_STDERR_CREDENTIAL',token:'SYNTHETIC_FIELD_CREDENTIAL'});
+    Object.defineProperty(error,'stack',{value:'Error: provider unavailable\n at synthetic.ts:10 token=SYNTHETIC_STACK_CREDENTIAL'});
+    vi.mocked(queryAgent).mockImplementationOnce(async function*(){throw error;});
+    emit(message({channel_type:ChannelType.DM,channel_id:'human',payload:{type:MessageType.Text,content:'test masked failure'}}));
+    await route.mock.results[0].value;
+    const reply=vi.mocked(sendMessage).mock.calls.at(-1)?.[0].content;
+    expect(reply).toContain('503 service unavailable');expect(reply).toContain('synthetic.ts:10');expect(reply).toContain('[REDACTED]');
+    const logs=[...log.mock.calls,...warning.mock.calls].flat().filter(v=>typeof v==='string').join('\n');
+    expect(logs).toContain('503 service unavailable');expect(logs).toContain('[REDACTED]');
+    expect(reply).not.toMatch(/SYNTHETIC_\w+_CREDENTIAL/);expect(logs).not.toMatch(/SYNTHETIC_\w+_CREDENTIAL/);
+    expect(queryAgent).toHaveBeenCalledOnce();
+  });
+
+  it.each(['thread_not_found','thread_expired','invalid_encrypted_content','ordinary_error'])(
+    'handles SDK %s only on the next admitted user request without replay', async code => {
+      const route=vi.spyOn(stack!.router,'routeAndHandle');spies.push(route);
+      const store=new SessionStore(createAdapter(join(root,'data','cc-octo.db')));store.init();
+      spies.push({mockRestore:()=>store.close()});
+      const key=privateMemorySessionKey('human',true);
+      store.setSdkSessionId(key,'old-thread');
+      // An old local history record must not be injected into a replacement.
+      store.getOrCreate(key,'human',ChannelType.DM);
+      store.appendUser(key,'OLD_HISTORY_SHOULD_NOT_BE_REPLAYED');
+      let stopped=false;
+      const execution={waitForStopped:vi.fn(async()=>{stopped=true;return true;}),dispose:vi.fn()};
+      vi.mocked(queryAgent).mockImplementationOnce(async function* (_m,_c,_s,_t,options) {
+        expect(options?.resume).toBe('old-thread');
+        options?.onManagedExecution?.(execution);
+        throw attachErrorDetails(new Error('provider failure'),{message:'provider failure',code},true);
+      });
+      const inbound=message({channel_type:ChannelType.DM,channel_id:'human',payload:{type:MessageType.Text,content:'failed original task'}});
+      emit(inbound);await route.mock.results[0].value;
+      expect(queryAgent).toHaveBeenCalledOnce();expect(stopped).toBe(true);
+      // Reporting the failure must never clear the mapping or rerun the task.
+      expect(store.getSdkSessionId(key)).toBe('old-thread');
+      expect(store.getSdkThreadHealth(key).failures).toBe(1);
+      vi.mocked(queryAgent).mockImplementationOnce(async function* (prompt,_c,_s,_t,options) {
+        expect(stopped).toBe(true);
+        expect(options?.interruptedTurn).toMatchObject({reason:'failed'});
+        if(code==='ordinary_error')expect(options?.resume).toBe('old-thread');
+        else {
+          expect(options?.resume).toBeUndefined();
+          expect(prompt).not.toContain('OLD_HISTORY_SHOULD_NOT_BE_REPLAYED');
+          expect(prompt).not.toContain('failed original task');
+        }
+        options?.onSessionId?.('replacement-thread',prompt);
+        yield 'new request answered';
+      });
+      emit({...inbound,message_id:'next-request',message_seq:2,payload:{type:MessageType.Text,content:'independent next task'}});
+      await route.mock.results[1].value;
+      expect(queryAgent).toHaveBeenCalledTimes(2);
+      expect(store.getSdkThreadHealth(key).failures).toBe(0);
+      expect(store.getSdkSessionId(key)).toBe('replacement-thread');
+      expect(vi.mocked(sendMessage).mock.calls.some(c=>c[0].content==='new request answered')).toBe(true);
+    });
 
   it.each(['/help','/config','/reset'])('preserves interruption context through %s until model presentation',async command=>{
     const route=vi.spyOn(stack!.router,'routeAndHandle');spies.push(route);
@@ -541,8 +620,8 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     await route.mock.results[0].value;
     expect(queryAgent).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith('[codex-channel-octo] private diagnostics unavailable');
-    expect(vi.mocked(sendMessage).mock.calls.at(-1)?.[0].content).toContain('模型处理未完成');
-    expect(JSON.stringify(vi.mocked(sendMessage).mock.calls)).not.toContain('PRIVATE_SDK_ERROR');
+    expect(vi.mocked(sendMessage).mock.calls.at(-1)?.[0].content).toContain('执行失败：');
+    expect(JSON.stringify(vi.mocked(sendMessage).mock.calls)).toContain('PRIVATE_SDK_ERROR');
   });
 
 });

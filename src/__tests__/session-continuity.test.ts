@@ -8,6 +8,7 @@ vi.mock('../octo/api.js', () => ({ sendMessage: vi.fn().mockResolvedValue({messa
 import { createAdapter } from '../db-adapter.js';
 import { SessionStore } from '../session-store.js';
 import { SessionRouter } from '../session-router.js';
+import { sendMessage } from '../octo/api.js';
 import type { TurnContext } from '../turn-context.js';
 import type { Config } from '../config.js';
 import type { BotMessage } from '../octo/types.js';
@@ -38,6 +39,40 @@ describe('user-authored turns after interrupted work',()=>{
     expect(failed).toHaveBeenCalledOnce();expect(continuation).toHaveBeenCalledOnce();
     expect(continuation.mock.calls[0][0].message.payload.content).toBe('继续上个任务');
     expect(store.getSdkSessionId('owner')).toBe('existing-sdk-thread');
+  });
+  describe.each(['timeout','cancelled'] as const)('%s availability notice',category=>{
+    it.each(['proven_not_started','unknown','effects_observed'] as const)('matches execution risk %s and admits the next request after cleanup',async risk=>{
+      const local=new SessionRouter({...config,dispatchTimeoutMs:category==='timeout'?15:1000},'bot','owner',store);
+      const execution=proof();let old!:TurnContext;
+      await local.routeAndHandle(message('interrupted task'),async(_r,t)=>{
+        old=t;t.executionRisk=risk;
+        if(risk!=='proven_not_started')t.registerExecution(execution);
+        await new Promise<void>((_resolve,reject)=>{
+          t.signal.addEventListener('abort',()=>reject(new DOMException('synthetic cancellation','AbortError')),{once:true});
+          if(category==='cancelled')queueMicrotask(()=>t.cancel());
+        });
+      });
+      const notices=vi.mocked(sendMessage).mock.calls.map(call=>call[0].content).filter(content=>content.includes('失败位置：'));
+      expect(notices).toHaveLength(1);
+      const notice=notices[0];
+      expect(notice).toContain(category==='timeout'?'任务超时':'任务已取消');
+      expect(notice).toContain(old.turnId);
+      expect(Array.from(notice ?? '').length).toBeLessThanOrEqual(4500);
+      if(risk==='proven_not_started'){
+        expect(notice).toContain('本次模型执行未启动');
+        expect(notice).toContain('下一条消息继续原线程');
+        expect(notice).not.toContain('正在停止原执行');
+        expect(notice).not.toContain('等待停止完成');
+        expect(execution.waitForStopped).not.toHaveBeenCalled();
+      }else{
+        expect(notice).toContain('任务可能已部分执行');
+        expect(notice).toContain('新请求将等待停止完成');
+        expect(execution.waitForStopped).toHaveBeenCalled();
+      }
+      expect(store.isTurnQuarantined('owner')).toBe(false);
+      const next=vi.fn();await local.routeAndHandle(message('next task'),next);
+      expect(next).toHaveBeenCalledOnce();
+    });
   });
   it('queues a message during timeout teardown and starts it only after exit proof',async()=>{
     const short=new SessionRouter({...config,dispatchTimeoutMs:20},'bot','owner',store);

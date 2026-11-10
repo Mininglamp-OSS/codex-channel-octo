@@ -5,7 +5,7 @@
 import { isOwnerSender } from './sender-context.js';
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { AgentFailure, diagnosticId } from './agent-failure.js';
+import { AgentFailure, diagnosticId, failureReply, type FailureReport } from './agent-failure.js';
 import { TurnContext, type TurnLedger, type InterruptedTurn } from './turn-context.js';
 import type { Config } from './config.js';
 import type { BotMessage } from './octo/types.js';
@@ -298,15 +298,22 @@ export class SessionRouter {
       if ((timedOut || performance.now() >= turn.deadline) && !this.stopping) {
         turn.interruption = 'timed_out';
         this.finishCancelledTurn(result.sessionKey, turn);
-        await this.replySafe(result.message, turn.executionRisk === 'proven_not_started' ? `⚠️ 任务超时，模型执行未启动；可以发送新任务。编号 ${turn.turnId}` : `⚠️ 任务超时，正在停止原执行。新请求将等待停止完成；部分操作可能已完成。编号 ${turn.turnId}`);
+        await this.replySafe(result.message, this.interruptionNotice(turn, 'timeout'));
         await this.waitForCleanup(settled, result, turn);
       } else if (turn.signal.aborted && !this.stopping) {
         this.finishCancelledTurn(result.sessionKey, turn);
-        await this.replySafe(result.message, `⚠️ 任务已取消，正在停止原执行。编号 ${turn.turnId}`);
+        await this.replySafe(result.message, this.interruptionNotice(turn, 'cancelled'));
         await this.waitForCleanup(settled, result, turn);
       }
     } finally { if (timeout) clearTimeout(timeout); turn.signal.removeEventListener('abort',onAbort); }
     return true;
+  }
+
+  private interruptionNotice(turn: TurnContext, category: 'timeout' | 'cancelled'): string {
+    const snapshot: FailureReport['final'] = {stage:turn.stage,category,source:'local',evidence:'structured'};
+    return failureReply({diagnosticId:turn.turnId,attempts:0,decision:'cancelled',
+      recoveryStopReason:category === 'timeout' ? 'deadline' : 'cancelled',executionRisk:turn.executionRisk,
+      first:snapshot,final:snapshot,nextSessionAction:turn.executionRisk === 'proven_not_started' ? 'continue' : 'wait'});
   }
 
   private finishCancelledTurn(session: string, turn: TurnContext): void {

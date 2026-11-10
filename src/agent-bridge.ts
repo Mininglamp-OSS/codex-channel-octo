@@ -1,3 +1,4 @@
+import { attachErrorDetails } from './error-details.js';
 import { nativeErrorMessage } from './native-error.js';
 import { types as utilTypes } from 'node:util';
 import { rememberSdkFailure, inheritSdkDiagnostic, type SdkDiagnosticRun } from './private-diagnostics.js';
@@ -513,7 +514,7 @@ export async function* queryAgentEvents(
     if (config.sdk.privateDiagnostics === true) rememberSdkFailure(original,event,message, {
       detailed:config.sdk.privateDiagnosticsDetails === true, fields, eventSubtype, run:diagnosticRun,
     });
-    return inheritSdkDiagnostic(new AgentFailure(classifyFailure(original, 'sdk_event')), original);
+    return inheritSdkDiagnostic(attachErrorDetails(new AgentFailure(classifyFailure(original, 'sdk_event')), fields ?? original, true), original);
   };
 
   // Drain one CLI execution; track positive effects independently from absence
@@ -729,6 +730,8 @@ export async function* queryAgentEvents(
     if (starts++ > 0) attemptCtx = { reason: 'request_retry', continues: null };
     try { yield* runOnce(opts?.resume, promptText, sideEffect); }
     catch (error) {
+      // Preserve bounded SDK exceptions even when private diagnostics are off.
+      if (error !== null && typeof error === 'object' && !utilTypes.isProxy(error)) attachErrorDetails(error, error, true);
       // Diagnostic-only reflection must never run an SDK accessor/proxy trap
       // or replace the failure before the normal classifier/recovery path.
       try {

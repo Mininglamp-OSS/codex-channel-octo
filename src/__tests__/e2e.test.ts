@@ -754,7 +754,7 @@ describe('E2E smoke tests', () => {
     // Error reply should be sent
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        content: expect.stringContaining('模型处理未完成'),
+        content: expect.stringContaining('执行失败：'),
       }),
     );
   });
@@ -769,7 +769,7 @@ describe('E2E smoke tests', () => {
 
     expect(sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        content: expect.stringContaining('模型处理未完成'),
+        content: expect.stringContaining('执行失败：'),
       }),
     );
   });

@@ -212,7 +212,7 @@ describe('output selection wiring', () => {
     await run(config);
     expect(relayInputs()).toEqual([]);
     expect(appendSpy).not.toHaveBeenCalled();
-    expect(sentContents()).toEqual([expect.stringContaining('模型处理未完成')]);
+    expect(sentContents()).toEqual([expect.stringContaining('执行失败：')]);
   });
 
   it('empty selection → existing "No response generated" notice, nothing stored', async () => {

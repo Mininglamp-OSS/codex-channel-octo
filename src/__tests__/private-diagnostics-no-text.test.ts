@@ -69,8 +69,19 @@ describe('metadata-only diagnostics persist no arbitrary error text', () => {
         messageBytes: Buffer.byteLength(input), detail: { eventSubtype: type } });
       expect(encoded).not.toContain(input);
       expect(encoded).not.toContain('SYNTHETIC_');
-      expect(JSON.stringify(error)).not.toContain('SYNTHETIC_');
-      expect(failureReply(error.report)).not.toContain('SYNTHETIC_');
+      // Public reports keep diagnostic text but mask labeled credentials; the
+      // independent private fingerprint still correlates the original input.
+      if (input.startsWith('unmarked')) {
+        expect(error.report.finalError?.message).toBe(input);
+        expect(failureReply(error.report)).toContain(input);
+      } else {
+        expect(error.report.finalError?.message).toContain('failure ');
+        expect(error.report.finalError?.message).toContain('[REDACTED]');
+        expect(error.report.finalError?.message).not.toContain('SYNTHETIC_');
+        expect(failureReply(error.report)).toContain('[REDACTED]');
+        expect(failureReply(error.report)).not.toContain('SYNTHETIC_');
+      }
+      expect(Array.from(failureReply(error.report)).length).toBeLessThanOrEqual(4500);
     });
   }
 });

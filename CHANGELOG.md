@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Mask common credentials in exception snapshots and failure notifications before truncation, sharing the masked text across chat and logs while keeping failure causes visible. Reject non-string error-classification fields without invoking string/coercion hooks.
+
+- Share validated error-property reads between classification and diagnostic summaries; reject hostile getters/proxies and skip metadata serializers while preserving the original failure through stream-relay logging.
+
+- Show bounded original failure messages and exception fields with recovery stop reasons, execution risk, session mode, failure count and diagnostic ID. Keep retry eligibility unchanged.
+- Mark recognized invalid/expired/missing SDK threads for replacement only on the next admitted user request after cleanup; preserve interruption records and never replay the failed task or inject its old history.
+- Persist thread health/replacement intent and cover limits, reflection hazards, restart, reset and production inbound routing with synthetic regressions.
+
+
 ### Added
 
 - Fresh published-package installs select the latest stable Codex SDK and its paired CLI; keep a reproducible lockfile, add runtime update/version verification commands and a Node 22/24 latest compatibility CI lane.

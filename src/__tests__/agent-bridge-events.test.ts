@@ -528,8 +528,14 @@ describe('detailed SDK diagnostics through the bridge',()=>{
    exitCode:9,signal:'SIGTERM',exitSource:'own_field',eventSubtype:type,mode:'resume',attempt:0,
    resumeFingerprint:createHash('sha256').update('PRIVATE_RESUME').digest('hex'),
    threadFingerprint:createHash('sha256').update('PRIVATE_THREAD').digest('hex'),turnFingerprint:createHash('sha256').update('PRIVATE_TURN').digest('hex')}}});
-  expect(JSON.stringify(row)).not.toMatch(/PRIVATE_|stderr/);expect(JSON.stringify(error)).not.toMatch(/PRIVATE_|"sdk":|Fingerprint|exitCode/);
-  expect(failureReply(error.report)).not.toMatch(/PRIVATE_|"sdk":|Fingerprint|exitCode/);expect(runIdx).toBe(1);
+  expect(JSON.stringify(row)).not.toMatch(/PRIVATE_|stderr/);
+  // Public errors deliberately carry bounded original fields; the optional
+  // fingerprint-only diagnostic file retains its existing contract.
+  expect(error.report.finalError?.message).toBe(fields.message);
+  const reply=failureReply(error.report);
+  expect(reply).toContain(fields.message);expect(reply).toContain(fields.stderr);
+  expect(reply).toContain('exitCode: 9');expect(Array.from(reply).length).toBeLessThanOrEqual(4500);
+  expect(reply).not.toMatch(/"sdk":|Fingerprint/);expect(runIdx).toBe(1);
  });
  it.each([[undefined,undefined],[true,undefined],[false,true],[undefined,true],[true,true]])('requires both flags (private=%s, detailed=%s)',async(enabled,detailed)=>{
   scriptedRuns=[async function*(){yield started('PRIVATE_THREAD');yield {type:'turn.failed',error:{message:'rate limit exceeded',status:429}};}];
