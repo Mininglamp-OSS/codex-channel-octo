@@ -313,7 +313,7 @@ export class SessionRouter {
     const snapshot: FailureReport['final'] = {stage:turn.stage,category,source:'local',evidence:'structured'};
     return failureReply({diagnosticId:turn.turnId,attempts:0,decision:'cancelled',
       recoveryStopReason:category === 'timeout' ? 'deadline' : 'cancelled',executionRisk:turn.executionRisk,
-      first:snapshot,final:snapshot,nextSessionAction:'wait'});
+      first:snapshot,final:snapshot,nextSessionAction:turn.executionRisk === 'proven_not_started' ? 'continue' : 'wait'});
   }
 
   private finishCancelledTurn(session: string, turn: TurnContext): void {
