@@ -8,7 +8,7 @@ import { SessionStore } from '../session-store.js';
 import { TurnContext } from '../turn-context.js';
 import { createArtifactScope } from '../artifact-files.js';
 import { deliverImages, imageDeliverySummary } from '../image-delivery.js';
-import type { ImageArtifact } from '../artifacts.js';
+import { decodeArtifactEnvelope, type ImageArtifact } from '../artifacts.js';
 import { uploadArtifact } from '../octo/media.js';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64');
@@ -119,6 +119,20 @@ describe('native image pipeline against a local HTTP service', () => {
     turn = new TurnContext(1); const params = input();
     await new Promise(resolve => setTimeout(resolve, 5));
     await expect(deliverImages(params)).rejects.toThrow(); expect(requests).toEqual([]);
+  });
+  it.each([
+    { disposition: ['external'] },
+    { disposition: [['external']] },
+    { disposition: ['relay'] },
+  ])('F-PR96-P1-DISPOSITION-TYPE: rejects the entire envelope before delivery for $disposition', async ({ disposition }) => {
+    const params = input();
+    const decoded = decodeArtifactEnvelope(JSON.stringify({ octo_output: 1, requestId: turn.turnId, text: 'Images.',
+      artifacts: [params.artifacts[0], { ...params.artifacts[1], disposition }] }), turn.turnId);
+    const report = await deliverImages({ ...params, artifacts: decoded.artifacts });
+    expect.soft(decoded.text).toBe('[Image generation: invalid or stale artifact envelope; no images sent.]');
+    expect.soft(decoded.artifacts).toEqual([]);
+    expect.soft(report).toEqual([]);
+    expect(requests).toEqual([]); // No presign, upload or native message send.
   });
   it('deduplicates identical content and skips explicit external deliveries', async () => {
     const params = input(); writeFileSync(join(params.scope.directory, 'two.png'), png);

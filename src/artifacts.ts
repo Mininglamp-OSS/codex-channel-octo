@@ -39,9 +39,9 @@ export function decodeArtifactEnvelope(text: string, requestId: string, singleMe
     const a = raw as Record<string, unknown>;
     if (a.kind !== 'image' || typeof a.id !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(a.id)
       || ids.has(a.id) || typeof a.path !== 'string' || a.path.length > 255
-      || !['relay', 'external'].includes(String(a.disposition))) return invalid;
+      || (a.disposition !== 'relay' && a.disposition !== 'external')) return invalid;
     ids.add(a.id);
-    artifacts.push({ id: a.id, kind: 'image', path: a.path, disposition: a.disposition as FileArtifact['disposition'] });
+    artifacts.push({ id: a.id, kind: 'image', path: a.path, disposition: a.disposition });
   }
   return { text: v.text || (artifacts.length ? `[Image artifacts: ${artifacts.length}; delivery report follows.]` : ''), artifacts };
 }
