@@ -7,6 +7,7 @@
     "src/__tests__/sdk-thread-health.test.ts",
     "src/__tests__/safe-recovery.test.ts",
     "src/__tests__/native-error.test.ts",
+    "src/__tests__/agent-errors.test.ts",
     "src/__tests__/private-diagnostics.test.ts",
     "src/__tests__/private-diagnostics-platform.test.ts",
     "src/__tests__/private-diagnostics-no-text.test.ts",

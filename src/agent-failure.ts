@@ -1,7 +1,6 @@
 /** Classification stays closed; bounded original errors are carried separately for display. */
 import { randomUUID } from 'node:crypto';
-import { types as utilTypes } from 'node:util';
-import { isNativeDomAccessor } from './native-error.js';
+import { safeFailureReflection, readDataProperty } from './error-reflection.js';
 import { ERROR_LIMITS, limitText, type ErrorDetails } from './error-details.js';
 export type FailureStage = 'prepare' | 'spawn' | 'inference' | 'jsonl_parse' | 'process_exit' | 'delivery' | 'history_commit' | 'cleanup';
 export type FailureCategory = 'network_transient' | 'stream_interrupted' | 'rate_limited' | 'quota_exhausted' | 'provider_unavailable' | 'auth' | 'permission' | 'context_limit' | 'invalid_encrypted_content' | 'invalid_config' | 'jsonl_incomplete' | 'jsonl_invalid' | 'proxy_bootstrap' | 'process_exit' | 'cancelled' | 'timeout' | 'delivery_failed' | 'api_failed' | 'history_failed' | 'unknown';
@@ -40,31 +39,6 @@ export class TurnFailure extends AgentFailure {
   constructor(readonly report: Readonly<FailureReport>) { super(report.final); }
 }
 export const diagnosticId = (): string => randomUUID();
-function safeFailureReflection(value: unknown): boolean {
-  let cursor: unknown = value;
-  for (let depth = 0; cursor !== null && (typeof cursor === 'object' || typeof cursor === 'function'); depth++) {
-    if (depth >= 32 || utilTypes.isProxy(cursor)) return false;
-    for (const key of ['message', 'name', 'code', 'syscall', 'cause', 'snapshot']) {
-      const descriptor = Object.getOwnPropertyDescriptor(cursor, key);
-      if (descriptor && !('value' in descriptor) && !isNativeDomAccessor(value, cursor, key, descriptor)) return false;
-    }
-    cursor = Object.getPrototypeOf(cursor);
-  }
-  return true;
-}
-/** Snapshot a data property without invoking an accessor, including on a prototype.
- * Keep this read explicit even after reflection validation, rather than relying
- * on the validation guard's short-circuit ordering to protect error.cause. */
-function readDataProperty(value: object, key: string): unknown {
-  let cursor: object | null = value;
-  for (let depth = 0; cursor !== null && depth < 32; depth++) {
-    if (utilTypes.isProxy(cursor)) return undefined;
-    const descriptor = Object.getOwnPropertyDescriptor(cursor, key);
-    if (descriptor) return 'value' in descriptor ? descriptor.value : undefined;
-    cursor = Object.getPrototypeOf(cursor);
-  }
-  return undefined;
-}
 export function classifyFailure(error: unknown, source: FailureSnapshot['source'] = 'sdk_exception'): FailureSnapshot {
   // Reject reflection hazards in both the thrown value and its parse-error cause
   // before instanceof/property reads. Diagnostics flags never change this rule.

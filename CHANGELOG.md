@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Share validated error-property reads between classification and diagnostic summaries; reject hostile getters/proxies and skip metadata serializers while preserving the original failure through stream-relay logging.
+
 - Show bounded original failure messages and exception fields with recovery stop reasons, execution risk, session mode, failure count and diagnostic ID. Keep retry eligibility unchanged.
 - Mark recognized invalid/expired/missing SDK threads for replacement only on the next admitted user request after cleanup; preserve interruption records and never replay the failed task or inject its old history.
 - Persist thread health/replacement intent and cover limits, reflection hazards, restart, reset and production inbound routing with synthetic regressions.
