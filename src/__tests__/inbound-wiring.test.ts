@@ -214,6 +214,40 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     expect(vi.mocked(sendMessage).mock.calls.some(call=>call[0].content==='new response')).toBe(true);
   });
 
+  it.each(['message','syscall'])('delivers an unknown failure for object-valued %s in the production catch path', async field => {
+    const route=vi.spyOn(stack!.router,'routeAndHandle');spies.push(route);
+    let calls=0;
+    const hostile={get startsWith(){calls++;throw Error('hostile string method');},[Symbol.toPrimitive](){calls++;throw Error('hostile coercion');}};
+    const error=new Error('synthetic malformed SDK error');
+    Object.defineProperty(error,'stack',{value:'synthetic stack'});
+    Object.defineProperty(error,field,{value:hostile});
+    vi.mocked(queryAgent).mockImplementationOnce(async function*(){throw error;});
+    emit(message({channel_type:ChannelType.DM,channel_id:'human',payload:{type:MessageType.Text,content:'test malformed failure'}}));
+    await route.mock.results[0].value;
+    const reply=vi.mocked(sendMessage).mock.calls.at(-1)?.[0].content;
+    expect(reply).toContain('执行失败：');expect(reply).toContain('unknown');expect(reply).toContain('诊断编号');
+    expect(queryAgent).toHaveBeenCalledOnce();expect(calls).toBe(0);
+  });
+
+  it('masks credentials in both the real inbound failure notification and console log',async()=>{
+    const route=vi.spyOn(stack!.router,'routeAndHandle');spies.push(route);
+    const log=vi.spyOn(console,'error').mockImplementation(()=>{});spies.push(log);
+    const warning=vi.spyOn(console,'warn').mockImplementation(()=>{});spies.push(warning);
+    const error=Object.assign(new Error('503 service unavailable; api_key=SYNTHETIC_MESSAGE_CREDENTIAL',
+      {cause:new Error('password=SYNTHETIC_CAUSE_CREDENTIAL')}),
+      {stderr:'Authorization: Bearer SYNTHETIC_STDERR_CREDENTIAL',token:'SYNTHETIC_FIELD_CREDENTIAL'});
+    Object.defineProperty(error,'stack',{value:'Error: provider unavailable\n at synthetic.ts:10 token=SYNTHETIC_STACK_CREDENTIAL'});
+    vi.mocked(queryAgent).mockImplementationOnce(async function*(){throw error;});
+    emit(message({channel_type:ChannelType.DM,channel_id:'human',payload:{type:MessageType.Text,content:'test masked failure'}}));
+    await route.mock.results[0].value;
+    const reply=vi.mocked(sendMessage).mock.calls.at(-1)?.[0].content;
+    expect(reply).toContain('503 service unavailable');expect(reply).toContain('synthetic.ts:10');expect(reply).toContain('[REDACTED]');
+    const logs=[...log.mock.calls,...warning.mock.calls].flat().filter(v=>typeof v==='string').join('\n');
+    expect(logs).toContain('503 service unavailable');expect(logs).toContain('[REDACTED]');
+    expect(reply).not.toMatch(/SYNTHETIC_\w+_CREDENTIAL/);expect(logs).not.toMatch(/SYNTHETIC_\w+_CREDENTIAL/);
+    expect(queryAgent).toHaveBeenCalledOnce();
+  });
+
   it.each(['thread_not_found','thread_expired','invalid_encrypted_content','ordinary_error'])(
     'handles SDK %s only on the next admitted user request without replay', async code => {
       const route=vi.spyOn(stack!.router,'routeAndHandle');spies.push(route);

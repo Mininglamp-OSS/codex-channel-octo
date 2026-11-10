@@ -48,6 +48,21 @@ describe('native exception accessor boundary',()=>{
   expect(classifyFailure(error)).toMatchObject({category:'unknown',evidence:'unknown'});
   expect(reads).toBe(0);
  });
+ it.each(['message','name','code','syscall','cause.message'])('rejects non-string %s data without invoking string/coercion hooks',field=>{
+  let calls=0;
+  const hostile={get startsWith(){calls++;throw Error('hostile startsWith');},
+    toString(){calls++;throw Error('hostile coercion');},[Symbol.toPrimitive](){calls++;throw Error('hostile primitive');}};
+  const error=new Error('Failed to parse item: synthetic');
+  if(field==='cause.message')Object.defineProperty(error,'cause',{value:Object.defineProperty(new SyntaxError('bad'),'message',{value:hostile})});
+  else Object.defineProperty(error,field,{value:hostile});
+  for(const source of ['sdk_exception','sdk_event'] as const)
+   expect(classifyFailure(error,source)).toEqual({stage:'inference',category:'unknown',source,evidence:'unknown'});
+  expect(calls).toBe(0);
+ });
+ it.each([null,42,true,Symbol('synthetic'),{},()=>{}])('handles malformed message type %s without throwing',value=>{
+  const error=Object.defineProperty(new Error('synthetic'),'message',{value});
+  expect(classifyFailure(error).category).toBe('unknown');
+ });
  it('requires a real native DOMException brand, not just the prototype',()=>{
   const fake=Object.create(DOMException.prototype);
   expect(nativeErrorMessage(fake)).toBeUndefined();expect(classifyFailure(fake).category).toBe('unknown');

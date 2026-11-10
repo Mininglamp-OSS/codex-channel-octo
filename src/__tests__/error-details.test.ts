@@ -4,7 +4,7 @@ import { classifyFailure, failureReply, TurnFailure, type FailureReport } from '
 import { recover } from '../agent-recovery.js';
 
 describe('bounded original error reporting', () => {
-  it('preserves original content, code, stack and nested causes without redaction', () => {
+  it('preserves diagnostic content, code, stack and nested causes', () => {
     const error = Object.assign(new Error('synthetic-key-value', {cause:new Error('root cause')}), {code:'EPIPE',status:503});
     const detail = snapshotError(error);
     expect(detail.message).toBe('synthetic-key-value');

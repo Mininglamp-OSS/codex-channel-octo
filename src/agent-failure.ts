@@ -1,5 +1,7 @@
 /** Classification stays closed; bounded original errors are carried separately for display. */
 import { randomUUID } from 'node:crypto';
+import { nativeErrorMessage, nativeErrorName } from './native-error.js';
+import { redactErrorText } from './error-redaction.js';
 import { safeFailureReflection, readDataProperty } from './error-reflection.js';
 import { ERROR_LIMITS, limitText, type ErrorDetails } from './error-details.js';
 export type FailureStage = 'prepare' | 'spawn' | 'inference' | 'jsonl_parse' | 'process_exit' | 'delivery' | 'history_commit' | 'cleanup';
@@ -50,16 +52,27 @@ export function classifyFailure(error: unknown, source: FailureSnapshot['source'
     return {stage:'inference',category:'unknown',source,evidence:'unknown'};
   }
   if (error instanceof AgentFailure) return { ...error.snapshot };
-  const msg = error instanceof Error ? error.message : '';
-  const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
-  if (error instanceof Error && error.name === 'TimeoutError') return { stage: 'inference', category: 'timeout', source, evidence: 'structured' };
-  if (error instanceof Error && error.name === 'AbortError') return { stage: 'inference', category: 'cancelled', source, evidence: 'structured' };
-  if (msg.startsWith('Failed to parse item:') && error instanceof Error && cause instanceof SyntaxError) {
-    return { stage: 'jsonl_parse', category: /Unterminated string|Unexpected end of JSON/i.test(cause.message) ? 'jsonl_incomplete' : 'jsonl_invalid', source, evidence: 'structured' };
+  const unknown = (): FailureSnapshot => ({stage:'inference',category:'unknown',source,evidence:'unknown'});
+  if (!(error instanceof Error)) return unknown();
+  const dataMessage = readDataProperty(error, 'message');
+  const dataName = readDataProperty(error, 'name');
+  const message = dataMessage === undefined ? nativeErrorMessage(error) : dataMessage;
+  const name = dataName === undefined ? nativeErrorName(error) : dataName;
+  const code = readDataProperty(error, 'code');
+  const syscall = readDataProperty(error, 'syscall');
+  const causeMessage = cause instanceof SyntaxError ? readDataProperty(cause, 'message') : undefined;
+  // A data descriptor is not a type guarantee. Never coerce SDK objects or call
+  // their string methods while reporting another failure.
+  if ([message, name, code, syscall, causeMessage].some(value => value !== undefined && typeof value !== 'string')) return unknown();
+  const msg = typeof message === 'string' ? message : '';
+  if (name === 'TimeoutError') return { stage: 'inference', category: 'timeout', source, evidence: 'structured' };
+  if (name === 'AbortError') return { stage: 'inference', category: 'cancelled', source, evidence: 'structured' };
+  if (msg.startsWith('Failed to parse item:') && cause instanceof SyntaxError) {
+    return { stage: 'jsonl_parse', category: /Unterminated string|Unexpected end of JSON/i.test(typeof causeMessage === 'string' ? causeMessage : '') ? 'jsonl_incomplete' : 'jsonl_invalid', source, evidence: 'structured' };
   }
   if (msg.startsWith('CODEX_JSONL_PROXY_BOOTSTRAP_FAILURE:')) return { stage: 'spawn', category: 'proxy_bootstrap', source, evidence: 'recognized_text' };
   // Only OS spawn errors carry positive evidence that no CLI was started.
-  if (error instanceof Error && (error as NodeJS.ErrnoException).syscall?.startsWith('spawn') && code) {
+  if (typeof syscall === 'string' && syscall.startsWith('spawn') && typeof code === 'string' && code) {
     return { stage: 'spawn', category: ['EAGAIN', 'EMFILE', 'ENFILE'].includes(code) ? 'network_transient' : 'invalid_config', source, evidence: 'structured' };
   }
   // Never inspect subprocess stderr, rejected JSONL, or arbitrary tool text.
@@ -112,14 +125,14 @@ export function failureReply(report: FailureReport): string {
     `恢复结果：${recovery}${report.attempts > 1 ? `；已额外尝试恢复 ${report.attempts - 1} 次` : ''}。`,
     `执行状态：${report.executionRisk === 'proven_not_started' ? '本次模型执行未启动。' : '任务可能已部分执行，请先核对结果，避免重复操作。'}`,
     ...(report.nextSessionAction ? [`后续处理：${actions[report.nextSessionAction]}。`] : []),
-    `诊断编号 ${limitText(report.diagnosticId, 64)}`,
+    `诊断编号 ${limitText(redactErrorText(report.diagnosticId), 64)}`,
   ].join('\n');
   let detail = '';
   if (first && final && (first.message !== final.message || first.details !== final.details)) {
-    detail = `首次错误：${limitText(first.message, 500)}\n`;
+    detail = `首次错误：${limitText(redactErrorText(first.message), 500)}\n`;
   }
-  detail = limitText(detail + (final?.details || first?.details || 'SDK 未提供更多错误详情。'), ERROR_LIMITS.details);
-  const message = limitText(final?.message || first?.message || fallback, ERROR_LIMITS.message);
+  detail = limitText(redactErrorText(detail + (final?.details || first?.details || 'SDK 未提供更多错误详情。')), ERROR_LIMITS.details);
+  const message = limitText(redactErrorText(final?.message || first?.message || fallback), ERROR_LIMITS.message);
   const body = `执行失败：${message}\n\n异常详情：\n${detail}`;
   // Reserve metadata first; even a giant exception cannot displace its identifier.
   return limitText(body, ERROR_LIMITS.notice - Array.from(suffix).length - 2) + '\n\n' + suffix;

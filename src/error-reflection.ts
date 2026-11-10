@@ -1,6 +1,7 @@
 import { types as utilTypes } from 'node:util';
 import { isNativeDomAccessor } from './native-error.js';
 import { limitText } from './error-details.js';
+import { redactErrorText, isCredentialField } from './error-redaction.js';
 
 export function safeFailureReflection(value: unknown): boolean {
   let cursor: unknown = value;
@@ -35,7 +36,7 @@ export function copyFailureData(value: unknown): unknown {
   const path=new WeakSet<object>();
   function copy(v: unknown, depth: number): unknown {
     if(++nodes>64||depth>3)return undefined;
-    if(typeof v==='string')return limitText(v,4500);
+    if(typeof v==='string')return limitText(redactErrorText(v),4500);
     if(v===null||typeof v==='boolean')return v;
     if(typeof v==='number')return Number.isFinite(v)?v:undefined;
     if(typeof v!=='object'||!safeFailureReflection(v)||path.has(v))return undefined;
@@ -46,7 +47,7 @@ export function copyFailureData(value: unknown): unknown {
       if(++fields>16)break;
       const descriptor=Object.getOwnPropertyDescriptor(v,key);
       if(!descriptor||!('value' in descriptor))continue;
-      record[key]=copy(descriptor.value,depth+1);
+      record[key]=isCredentialField(key)?'[REDACTED]':copy(descriptor.value,depth+1);
     }
     path.delete(v);
     return record;

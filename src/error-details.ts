@@ -1,5 +1,6 @@
 import { types } from 'node:util';
 import { nativeErrorMessage } from './native-error.js';
+import { redactErrorText, isCredentialField } from './error-redaction.js';
 
 export const ERROR_LIMITS = { message: 1000, details: 3000, notice: 4500, depth: 3, nodes: 64, properties: 16 } as const;
 const MARK = '［已截断］';
@@ -37,7 +38,7 @@ function own(value: unknown, key: string): unknown {
 }
 
 /** No getters, custom serializers, stderr reads, or unbounded JSON construction.
- * Content is deliberately NOT redacted: these bounded snapshots are user-visible. */
+ * Common credential patterns are masked before truncation/retention. */
 export function snapshotError(value: unknown, sdk = false): Readonly<ErrorDetails> {
   let message = '';
   let details = '';
@@ -50,14 +51,15 @@ export function snapshotError(value: unknown, sdk = false): Readonly<ErrorDetail
     if (available === 0 && text.length > 0) {
       details = limitText(details + MARK, ERROR_LIMITS.details); full = true; return;
     }
-    const bounded = limitText(text, available);
+    const sanitized = redactErrorText(text);
+    const bounded = limitText(sanitized, available);
     details += bounded;
-    full = bounded !== text || available === 0;
+    full = bounded !== sanitized || available === 0;
   }
   function visit(v: unknown, path: string, depth: number): void {
     if (full) return;
     if (++nodes > ERROR_LIMITS.nodes || depth > ERROR_LIMITS.depth) { append(`${path}: ${MARK}\n`); return; }
-    if (typeof v === 'string') { append(`${path}: `); append(v); append('\n'); return; }
+    if (typeof v === 'string') { append(`${path}: ${redactErrorText(v)}\n`); return; }
     if (v === null || ['number','boolean','bigint','undefined'].includes(typeof v)) {
       const huge = typeof v === 'bigint' && (v > 10n ** 100n || v < -(10n ** 100n));
       append(`${path}: ${huge ? MARK : String(v)}\n`); return;
@@ -76,6 +78,7 @@ export function snapshotError(value: unknown, sdk = false): Readonly<ErrorDetail
       if (++count > ERROR_LIMITS.properties) { append(`${path}: ${MARK}\n`); full = true; return; }
       const label = `${path}.${limitText(key, 80)}`;
       if (!('value' in d)) { append(`${label}: [accessor skipped]\n`); return; }
+      if (isCredentialField(key)) { append(`${label}: [REDACTED]\n`); return; }
       if (depth === 0 && key === 'message') return;
       visit(d.value, label, depth + (key === 'cause' ? 1 : 0) + (typeof d.value === 'object' && key !== 'cause' ? 1 : 0));
     };
@@ -89,7 +92,7 @@ export function snapshotError(value: unknown, sdk = false): Readonly<ErrorDetail
   }
   try {
     const raw = own(value, 'message') ?? nativeErrorMessage(value);
-    message = limitText(typeof raw === 'string' ? raw : typeof value === 'string' ? value : '', ERROR_LIMITS.message);
+    message = limitText(redactErrorText(typeof raw === 'string' ? raw : typeof value === 'string' ? value : ''), ERROR_LIMITS.message);
     visit(value, 'error', 0);
     const code = own(value, 'code');
     const invalid = sdk && (code === 'invalid_encrypted_content' || raw === 'invalid encrypted content');
