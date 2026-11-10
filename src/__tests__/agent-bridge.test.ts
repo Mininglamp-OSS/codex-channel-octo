@@ -121,7 +121,7 @@ describe('SDK JSONL fail-closed diagnostics', () => {
    let failure;try { await collect(queryAgent('request',cfg(),undefined,undefined,{resume})); } catch(e){ failure=e; }
    expect(failure).toBeInstanceOf(TurnFailure);
    expect((failure as TurnFailure).report).toMatchObject({ attempts:1,decision:'blocked_uncertain',executionRisk:'effects_observed',final:{category:'jsonl_incomplete'}});
-   expect(calls).toHaveLength(1);expect(JSON.stringify(failure)).not.toContain('SYNTHETIC_PRIVATE_OUTPUT');logs.mockRestore();
+   expect(calls).toHaveLength(1);expect((failure as TurnFailure).report.finalError?.message).toContain('SYNTHETIC_PRIVATE_OUTPUT');logs.mockRestore();
  });
 });
 
@@ -686,6 +686,6 @@ describe('privileged marker framing after Unicode escape', () => {
     expect(caught).toBeInstanceOf(TurnFailure);
     const row=privateDiagnosticRow((caught as TurnFailure).report,caught);
     if(enabled)expect(row).toMatchObject({sdk:{event:'turn.failed'}});else expect(row).not.toHaveProperty('sdk');
-    expect(JSON.stringify(row)).not.toContain('PRIVATE_SDK_FAILURE');expect(JSON.stringify(caught)).not.toContain('PRIVATE_SDK_FAILURE');expect(calls).toHaveLength(1);
+    expect(JSON.stringify(row)).not.toContain('PRIVATE_SDK_FAILURE');expect((caught as TurnFailure).report.finalError?.message).toBe('PRIVATE_SDK_FAILURE');expect(calls).toHaveLength(1);
   });
  });

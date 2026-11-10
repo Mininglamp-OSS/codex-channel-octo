@@ -69,8 +69,10 @@ describe('metadata-only diagnostics persist no arbitrary error text', () => {
         messageBytes: Buffer.byteLength(input), detail: { eventSubtype: type } });
       expect(encoded).not.toContain(input);
       expect(encoded).not.toContain('SYNTHETIC_');
-      expect(JSON.stringify(error)).not.toContain('SYNTHETIC_');
-      expect(failureReply(error.report)).not.toContain('SYNTHETIC_');
+      // Public reporting is deliberately original and bounded; persistence stays fingerprint-only.
+      expect(error.report.finalError?.message).toBe(input);
+      expect(failureReply(error.report)).toContain(input);
+      expect(Array.from(failureReply(error.report)).length).toBeLessThanOrEqual(4500);
     });
   }
 });

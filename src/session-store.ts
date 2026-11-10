@@ -3,6 +3,7 @@
  */
 
 import type { DbAdapter, PreparedStatement } from './db-adapter.js';
+import type { ThreadProblem } from './error-details.js';
 import { escapeRoleLabels, sanitizeDisplayName } from './prompt-safety.js';
 
 export interface Session {
@@ -96,6 +97,16 @@ CREATE TABLE IF NOT EXISTS sdk_sessions (
   updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS sdk_thread_health (
+  session_id TEXT PRIMARY KEY, sdk_session_id TEXT NOT NULL,
+  failures INTEGER NOT NULL DEFAULT 0, replacement_reason TEXT,
+  diagnostic_id TEXT, suppress_history INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS retired_sdk_threads (
+  session_id TEXT NOT NULL, sdk_session_id TEXT NOT NULL, diagnostic_id TEXT,
+  reason TEXT NOT NULL, retired_at INTEGER NOT NULL,
+  PRIMARY KEY(session_id, sdk_session_id)
+);
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
 CREATE TABLE IF NOT EXISTS conversation_document_state (
   session_id TEXT PRIMARY KEY,
@@ -418,6 +429,41 @@ export class SessionStore {
     }
   }
 
+  /** Called only inside a newly admitted, serialized turn, after prior runner cleanup.
+   * Does not touch execution quarantine, user history, or interrupted-turn records. */
+  prepareSdkSession(sessionId: string): { resume?: string; suppressHistory: boolean; replaced: boolean } {
+    return this.adapter.transaction(() => {
+      const state = this.getSdkThreadHealth(sessionId);
+      const current = this.getSdkSessionId(sessionId);
+      const replaced = !!(current && state.replacementReason && state.sdkSessionId === current);
+      if (replaced) {
+        this.adapter.prepare('INSERT OR IGNORE INTO retired_sdk_threads VALUES (?,?,?,?,?)')
+          .run(sessionId, current, state.diagnosticId ?? null, state.replacementReason!, Date.now());
+        this.deleteSdkSession.run(sessionId);
+        this.adapter.prepare('UPDATE sdk_thread_health SET replacement_reason=NULL, suppress_history=1 WHERE session_id=?').run(sessionId);
+      }
+      return { resume: replaced ? undefined : current, suppressHistory: replaced || state.suppressHistory, replaced };
+    })();
+  }
+  getSdkThreadHealth(sessionId: string): { sdkSessionId?: string; failures: number; replacementReason?: ThreadProblem; diagnosticId?: string; suppressHistory: boolean } {
+    const row = this.adapter.prepare('SELECT * FROM sdk_thread_health WHERE session_id=?').get(sessionId) as
+      {sdk_session_id:string; failures:number; replacement_reason:ThreadProblem | null; diagnostic_id:string | null; suppress_history:number} | undefined;
+    return {sdkSessionId: row?.sdk_session_id || undefined, failures:row?.failures ?? 0,
+      replacementReason:row?.replacement_reason ?? undefined, diagnosticId:row?.diagnostic_id ?? undefined, suppressHistory:row?.suppress_history === 1};
+  }
+  recordSdkFailure(sessionId: string, diagnosticId: string, replacementReason?: ThreadProblem): number {
+    const thread = this.getSdkSessionId(sessionId) ?? '';
+    this.adapter.prepare(`INSERT INTO sdk_thread_health(session_id,sdk_session_id,failures,replacement_reason,diagnostic_id)
+      VALUES (?,?,1,?,?) ON CONFLICT(session_id) DO UPDATE SET
+      failures=CASE WHEN sdk_thread_health.sdk_session_id=excluded.sdk_session_id THEN MIN(sdk_thread_health.failures+1,1000000) ELSE 1 END,
+      sdk_session_id=excluded.sdk_session_id,replacement_reason=excluded.replacement_reason,diagnostic_id=excluded.diagnostic_id`)
+      .run(sessionId,thread,replacementReason ?? null,diagnosticId);
+    return this.getSdkThreadHealth(sessionId).failures;
+  }
+  recordSdkSuccess(sessionId: string): void {
+    this.adapter.prepare('DELETE FROM sdk_thread_health WHERE session_id=?').run(sessionId);
+  }
+
   /** Return the stored SDK session UUID for a sessionKey, or undefined. */
   getSdkSessionId(sessionId: string): string | undefined {
     const row = this.selectSdkSession.get(sessionId) as
@@ -429,6 +475,7 @@ export class SessionStore {
   /** Forget the SDK session mapping (e.g. on /reset or a resume failure). */
   clearSdkSessionId(sessionId: string): void {
     this.deleteSdkSession.run(sessionId);
+    this.adapter.prepare('DELETE FROM sdk_thread_health WHERE session_id=?').run(sessionId);
   }
 
   getConversationDocumentSignature(sessionId: string, threadId: string): string | null | undefined {

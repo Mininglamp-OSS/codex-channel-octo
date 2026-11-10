@@ -1,7 +1,8 @@
+import { errorDetails, type ErrorDetails } from './error-details.js';
 import { inheritSdkDiagnostic } from './private-diagnostics.js';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { performance } from 'node:perf_hooks';
-import { TurnFailure, classifyFailure, diagnosticId, type FailureReport, type FailureSnapshot, type ExecutionRisk } from './agent-failure.js';
+import { TurnFailure, classifyFailure, diagnosticId, type FailureReport, type FailureSnapshot, type ExecutionRisk, type RecoveryStopReason } from './agent-failure.js';
 export interface RecoveryConfig { enabled?: boolean; maxAttempts?: number; maxElapsedMs?: number; baseDelayMs?: number; maxDelayMs?: number; }
 export const RECOVERY_DEFAULTS = { enabled: false, maxAttempts: 3, maxElapsedMs: 60_000, baseDelayMs: 1000, maxDelayMs: 10_000 };
 export function validateRecovery(value: unknown): void {
@@ -39,30 +40,32 @@ export async function* recover<T>(run: () => AsyncIterable<T>, options: {
   const config = { ...RECOVERY_DEFAULTS, ...options.config }; validateRecovery(config);
   const now = options.now ?? (() => performance.now());
   const wait = options.wait ?? (async (ms, signal) => { await sleep(ms, undefined, { signal }); });
-  const id = options.id ?? diagnosticId(); let first: FailureSnapshot | undefined; let recoveryStart: number | undefined;
+  const id = options.id ?? diagnosticId(); let firstError: Readonly<ErrorDetails> | undefined; let first: FailureSnapshot | undefined; let recoveryStart: number | undefined;
   for (let attempt = 1; ; attempt++) {
     options.signal?.throwIfAborted();
     if (now() >= (options.deadline ?? Infinity)) {
       const final: FailureSnapshot = {stage:'inference',category:'timeout',source:'local',evidence:'structured'};
-      throw new TurnFailure({diagnosticId:id,attempts:attempt-1,decision:'exhausted',executionRisk:options.risk(),first:first??final,final});
+      throw new TurnFailure({diagnosticId:id,attempts:attempt-1,decision:'exhausted',recoveryStopReason:'deadline',originalError:firstError,executionRisk:options.risk(),first:first??final,final});
     }
     try { yield* run(); return; }
     catch (error) {
-      const final = classifyFailure(error); first ??= final; recoveryStart ??= now();
+      const final = classifyFailure(error); const finalError = errorDetails(error); firstError ??= finalError; first ??= final; recoveryStart ??= now();
       const risk = final.stage === 'spawn' && final.evidence === 'structured' && options.risk() === 'proven_not_started' ? 'proven_not_started' : options.risk();
       let decision: FailureReport['decision'] = options.signal?.aborted ? 'cancelled' : risk !== 'proven_not_started' ? 'blocked_uncertain' : 'not_attempted';
+      let recoveryStopReason: RecoveryStopReason = options.signal?.aborted ? 'cancelled' : !config.enabled ? 'disabled' : risk !== 'proven_not_started' ? 'unsafe_effects' : 'ineligible_failure';
       if (config.enabled && !options.signal?.aborted && canRetry(final, risk)) {
         const delay = retryDelay(final, attempt, config, options.random);
         const end = Math.min(options.deadline ?? Infinity, recoveryStart + config.maxElapsedMs);
         if (attempt < config.maxAttempts && now() + delay < end) {
           console.info('[codex-channel-octo] recovery scheduled', JSON.stringify({diagnosticId:id,attempt,category:final.category,delayMs:delay,executionRisk:risk}));
           try { await wait(delay, options.signal); options.signal?.throwIfAborted(); }
-          catch { throw inheritSdkDiagnostic(new TurnFailure({ diagnosticId: id, attempts: attempt, first, final, executionRisk: risk, decision: 'cancelled' }),error); }
+          catch { throw inheritSdkDiagnostic(new TurnFailure({ diagnosticId: id, attempts: attempt, first, final, executionRisk: risk, decision: 'cancelled', recoveryStopReason:'cancelled', originalError:firstError, finalError }),error); }
           if (now() < end) continue;
         }
         decision = 'exhausted';
+        recoveryStopReason = attempt >= config.maxAttempts ? 'attempt_limit' : (options.deadline ?? Infinity) <= recoveryStart + config.maxElapsedMs ? 'deadline' : 'time_budget';
       }
-      throw inheritSdkDiagnostic(new TurnFailure({ diagnosticId: id, attempts: attempt, first, final, executionRisk: risk, decision }),error);
+      throw inheritSdkDiagnostic(new TurnFailure({ diagnosticId: id, attempts: attempt, first, final, executionRisk: risk, decision, recoveryStopReason, originalError:firstError, finalError }),error);
     }
   }
 }

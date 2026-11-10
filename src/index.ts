@@ -1,7 +1,8 @@
 #!/usr/bin/env node
+import { errorDetails } from './error-details.js';
 import { recordPrivateFailure } from './private-diagnostics.js';
 import { sendMessage as sendTurnMessage } from './octo/api.js';
-import { AgentFailure, TurnFailure, classifyFailure, failureReply, type FailureStage } from './agent-failure.js';
+import { AgentFailure, TurnFailure, classifyFailure, failureReply, type FailureStage, type FailureReport } from './agent-failure.js';
 import { safeNotice, type ReducedItemFacts } from './cards/redact.js';
 /**
  * codex-channel-octo — Entry point.
@@ -359,6 +360,9 @@ export async function handleMessage(
     };
     let stage: FailureStage = 'prepare';
     let modelAttempts = 0;
+    let resume: string | undefined;
+    let sessionMode: 'start' | 'resume' | undefined;
+    let suppressHistory = false;
 
     try {
       // --- Session ---
@@ -408,6 +412,17 @@ export async function handleMessage(
           }
           return; // skip context, history, and the agent query entirely
         }
+      }
+
+      // Admission is serialized and the router has already proved prior runner
+      // cleanup. Only this new user-authored turn may replace a broken thread.
+      const preparedThread = turnStore.prepareSdkSession(sessionKey);
+      resume = preparedThread.resume;
+      sessionMode = resume ? 'resume' : 'start';
+      suppressHistory = preparedThread.suppressHistory && !resume;
+      if (preparedThread.replaced) {
+        try { await sendMessage({apiUrl:config.apiUrl,botToken:config.botToken,channelId,channelType,
+          content:'旧模型线程已确认无法继续使用，本条新消息将建立新线程；不会重新执行上次失败任务，也不会载入旧线程历史。'}); } catch { /* A notice must not replay or prevent this new task. */ }
       }
 
       // --- Group context: refresh members + compute the unseen delta ---
@@ -661,7 +676,7 @@ export async function handleMessage(
       // has continuity. Migration (existing deployments with SQLite history but no
       // SDK session id) is the same code path. After this turn, onSessionId
       // persists the id and later turns inject nothing.
-      const resume = turnStore.getSdkSessionId(sessionKey);
+      // resume was selected before assembling any historical context.
       const isFirstTurn = !resume;
       // The history block: prior conversation rendered for one-time injection.
       // historyPrefix is already per-line escaped by renderTurn; only section
@@ -692,7 +707,7 @@ export async function handleMessage(
       // cursor was already advanced above, so dropping the delta here does not
       // strand messages — history covers them and they must not be re-shown.
       const serverMd = isGroup ? await router.prepareConversationMd(channelId, channelType, resume, sessionKey) : undefined;
-      const injectedContext = firstTurnHistory ? firstTurnHistory : groupContextBlock;
+      const injectedContext = suppressHistory ? '' : firstTurnHistory ? firstTurnHistory : groupContextBlock;
       const userContentForLLM = assembleUserMessage(
         injectedContext,
         userBody,
@@ -814,6 +829,7 @@ export async function handleMessage(
       await streamRelay.deliver(channelId, channelType, selectedChunks(), config.apiUrl, config.botToken, config.maxResponseChars, outboundNameToUid, isValidMentionUid, { turn, store: turnStore });
 
       turn.assertPublishable();
+      turnStore.recordSdkSuccess(sessionKey);
       // G8: Send read receipt after processing (fire-and-forget)
       if (msg.message_id && msg.channel_id && msg.channel_type !== undefined) {
         sendReadReceipt({
@@ -856,18 +872,24 @@ export async function handleMessage(
       if (turn.signal.aborted) return; // Router owns timeout/shutdown feedback.
       turn.interruption = 'failed';
       turn.assertPublishable();
-      const failure = err instanceof TurnFailure ? err.report : {
+      const raw = errorDetails(err);
+      const initialFailure: FailureReport = err instanceof TurnFailure ? err.report : {
         diagnosticId: turn.turnId, attempts: modelAttempts,
-        decision: 'not_attempted' as const, executionRisk: turn.executionRisk,
+        decision: 'not_attempted' as const, executionRisk: turn.executionRisk, originalError:raw,finalError:raw,
         first: { ...classifyFailure(err), stage: err instanceof AgentFailure ? err.snapshot.stage : stage }, final: { ...classifyFailure(err), stage: err instanceof AgentFailure ? err.snapshot.stage : stage },
       };
+      const inferenceFailed = modelAttempts > 0 && ['inference','jsonl_parse','process_exit','spawn'].includes(initialFailure.final.stage);
+      const problem = initialFailure.finalError?.threadProblem ?? (initialFailure.final.category === 'invalid_encrypted_content' ? 'invalid_encrypted_content' as const : undefined);
+      const failures = inferenceFailed ? turnStore.recordSdkFailure(sessionKey,turn.turnId,problem) : turnStore.getSdkThreadHealth(sessionKey).failures;
+      const failure: FailureReport = {...initialFailure, sessionMode, consecutiveFailures:failures,
+        nextSessionAction: problem ? 'replace' : 'continue'};
       turn.stage = failure.final.stage;
       if (failure.executionRisk !== 'proven_not_started' && ['inference','jsonl_parse','process_exit'].includes(failure.final.stage)) turn.needsReconciliation = true;
       if (!recordPrivateFailure(config.dataDir, config.sdk.privateDiagnostics === true, failure, err)) {
         console.warn('[codex-channel-octo] private diagnostics unavailable');
       }
-      console.error('[codex-channel-octo] turn failed', JSON.stringify(failure));
       const content = failureReply(failure);
+      console.error('[codex-channel-octo] turn failed', content);
       try {
         await sendMessage({
           apiUrl: config.apiUrl,

@@ -49,7 +49,7 @@ describe('fixed error categories and safe user feedback',()=>{
  });
  it('serializes no raw exception fields and reports uncertainty honestly',()=>{
   const error=new TurnFailure({diagnosticId:'local-id',attempts:1,decision:'blocked_uncertain',executionRisk:'unknown',first:classifyFailure(new Error('PRIVATE')),final:classifyFailure(new Error('PRIVATE'))});
-  expect(JSON.stringify(error)).not.toContain('PRIVATE');expect(failureReply(error.report)).toContain('未满足');expect(failureReply(error.report)).toContain('可能已部分执行');expect(failureReply(error.report)).not.toContain('已额外尝试');
+  expect(JSON.stringify(error)).not.toContain('PRIVATE');expect(failureReply(error.report)).toContain('无法确认原任务是否已产生副作用');expect(failureReply(error.report)).toContain('可能已部分执行');expect(failureReply(error.report)).not.toContain('已额外尝试');
  });
  it('revokes late callback and synchronous store publication',()=>{
   const turn=new TurnContext(1000);const store={write:vi.fn()};const guarded=turn.guard(store);turn.cancel();expect(()=>guarded.write()).toThrow();expect(store.write).not.toHaveBeenCalled();

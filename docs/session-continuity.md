@@ -19,7 +19,11 @@ Shutdown disposes and clears retained scopes from settled quarantined turns, inc
 
 The snapshot is consumed only after a following model turn that received it successfully commits a nonempty response. `/help`, `/config`, `/reset` and other pre-model returns preserve the pending snapshot, without deleting the audit record or marking external effects reconciled. Reset does not erase this interruption metadata. Consumed snapshots use seven-day retention; pending context survives until presented successfully. Historical/crash quarantine is not silently migrated into a stopped execution.
 
-If a thread is invalid or encrypted content cannot be resumed, this change does not add an automatic fresh-thread replay. The error remains explicit. A future thread repair can carry verified history but must not resubmit an already-started request without evidence.
+A recognized SDK thread-not-found, expired-thread or invalid-encrypted-content failure marks its exact stored SDK mapping for replacement. Ordinary repeated errors, network failures, quota/authentication errors and context overflow do not trigger replacement. Reporting the error does not clear the mapping and never reruns the failed prompt.
+
+Only the next newly admitted user request, after the previous runner has stopped under the existing admission rules, transactionally archives the old mapping and starts a new SDK thread. It carries the pending closed interruption snapshot and the current request, without injecting old local/group conversation history. It retains the original interruption/audit records and does not clear execution quarantine. Replacement intent and history suppression survive database reopen; `/reset` clears thread health with the SDK mapping, while retaining its existing interruption/quarantine semantics. Per-thread consecutive inference failures reset after success or after a new SDK thread ID is used. `sdk_thread_health` and `retired_sdk_threads` are additive SQLite tables and contain no exception payloads.
+
+A fresh thread is not a root-cause fix for every recurring failure: unrecognized errors explicitly keep the existing mapping. Error notices state the mode, consecutive failure count and planned next action.
 
 ## Tests and boundaries
 
