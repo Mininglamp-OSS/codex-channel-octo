@@ -381,3 +381,19 @@ Mention admission compatibility: an oversized routing UID array is scanned for a
 ## Source-checkout test tools
 
 See [Isolated test profiles and capture](docs/isolated-test-profiles.md) for profile lifecycle, protected capture/readback setup, runtime requirements and reproducible checks. These helpers are not included in the npm installation.
+
+## Incoming notification and interactive cards
+
+Octo Adaptive Cards (`type: 17`, distinct from contact cards at `type: 7`) use
+server-derived `plain` text for current input, passive group context, historical
+backfill, reply quotes and merged forwards. Card text is bounded to 32 KiB of
+UTF-8 including a truncation marker; quoted text retains the existing 4 KiB quote
+limit. Missing, blank or non-string `plain` yields `[卡片：正文不可用]`.
+Card bodies, hidden action data and action URLs are not interpreted. Text keeps
+the same untrusted prompt escaping as other chat content. Previously persisted
+`[消息]` rows cannot be reconstructed from their placeholder alone.
+
+An `[inbound-card]` console receipt records only a validated numeric message ID
+when available, type, string presence, UTF-16 character count and the selected
+`plain`/`unavailable` branch. It does not record card text or card JSON and is
+emitted before routing, including cards cached passively in a group.

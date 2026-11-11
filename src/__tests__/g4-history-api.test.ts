@@ -15,6 +15,22 @@ describe('getChannelMessages (G4)', () => {
     globalThis.fetch = originalFetch;
   });
 
+  it.each(['base64', 'object', 'flattened'])('preserves type-17 plain from %s history', async encoding => {
+    const { getChannelMessages } = await import('../octo/api.js');
+    const payload = { type: 17, plain: 'MR !1\nSource: feature\nTarget: main' };
+    const message = { from_uid: 'user1', timestamp: 1,
+      ...(encoding === 'flattened' ? payload : { payload: encoding === 'base64'
+        ? Buffer.from(JSON.stringify(payload)).toString('base64') : payload }),
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200,
+      text: async () => JSON.stringify({ messages: [message] }),
+    } as unknown as Response);
+    const [result] = await getChannelMessages({ apiUrl: 'https://api.example.com',
+      botToken: 'synthetic', channelId: 'g1', channelType: 2 });
+    expect(result.type).toBe(17);
+    expect(result.plain).toBe(payload.plain);
+  });
+
   it('returns parsed messages with decoded payload', async () => {
     const { getChannelMessages } = await import('../octo/api.js');
 
