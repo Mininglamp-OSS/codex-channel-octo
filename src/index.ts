@@ -790,6 +790,17 @@ export async function handleMessage(
         },
       };
 
+      // A stream can fail after the model has already executed tools. In that
+      // case replaying userContentForLLM is unsafe, but abandoning the thread
+      // leaves a recoverable review stranded. Keep the SDK thread id captured
+      // by onSessionId so the bounded continuation below can resume it.
+      let activeResume = resume;
+      const originalOnSessionId = sessionOpts.onSessionId;
+      sessionOpts.onSessionId = (id: string, prompt: string): void => {
+        activeResume = id;
+        originalOnSessionId?.(id, prompt);
+      };
+
       // GROUP.md: inject operator-provided per-group instructions (from
       // config.groupConfigDir/<channelId>.md) into the system text (AGENTS.md).
       // Only for groups — DMs key on the peer uid, not a shared channel.
@@ -804,8 +815,6 @@ export async function handleMessage(
         sessionOpts = { ...(sessionOpts ?? {}), privateMemoryContext: loadPrivateMemory(config, msg, ownerUid) };
       }
       stage = 'inference'; turn.stage = stage;
-      const agentEvents = queryAgentEvents(userContentForLLM, config, sessionCtx, undefined, sessionOpts, onSafeItem);
-
       // Select ONE reply for both delivery and history. The relay drains the
       // agent run through this iterable (so the typing heartbeat covers it),
       // then receives exactly one chunk: the selected, already-capped text. If
@@ -813,21 +822,48 @@ export async function handleMessage(
       const outputMode = (config.sdk.outputSelection ?? DEFAULT_OUTPUT_SELECTION_MODE) as OutputSelectionMode;
       let selected: SelectedOutput | undefined;
       async function* selectedChunks(): AsyncIterable<string> {
-        const collector = new OutputCollector();
-        for await (const ev of agentEvents) {
-          turn.assertPublishable();
-          if (ev.kind === 'attempt_start') { modelAttempts++; turn.executionRisk = 'unknown'; }
-          if (ev.kind === 'work' && ['command_execution','file_change','mcp_tool_call'].includes(ev.itemType)) turn.executionRisk = 'effects_observed';
-          collector.push(ev);
-        }
-        selected = collector.select({ mode: outputMode, maxChars: config.maxResponseChars ?? DEFAULT_MAX_RESPONSE_CHARS });
-        console.log(describeSelection(selected, outputMode, collector.attemptCount));
-        if (selected.text) {
-          turn.assertPublishable();
-          stage = 'history_commit'; turn.stage = stage;
-          turnStore.saveTurnOutput(turn.turnId, sessionKey, selected.text, msg.message_seq, botId);
-          stage = 'delivery'; turn.stage = stage;
-          yield selected.text;
+        const continuationPrompt = 'Continue the interrupted task. Inspect the current work and external results first. Continue only the remaining steps. Do not repeat completed operations or blindly retry uncertain external writes.';
+        let prompt = userContentForLLM;
+        let options = sessionOpts;
+        let continuationUsed = false;
+        for (;;) {
+          const collector = new OutputCollector();
+          try {
+            const agentEvents = queryAgentEvents(prompt, config, sessionCtx, undefined, options, onSafeItem);
+            for await (const ev of agentEvents) {
+              turn.assertPublishable();
+              if (ev.kind === 'attempt_start') {
+                modelAttempts++;
+                // Keep evidence from a failed earlier execution. A continuation
+                // must never downgrade observed side effects to "unknown".
+                if (turn.executionRisk === 'proven_not_started') turn.executionRisk = 'unknown';
+              }
+              if (ev.kind === 'work' && ['command_execution','file_change','mcp_tool_call'].includes(ev.itemType)) turn.executionRisk = 'effects_observed';
+              collector.push(ev);
+            }
+            selected = collector.select({ mode: outputMode, maxChars: config.maxResponseChars ?? DEFAULT_MAX_RESPONSE_CHARS });
+            console.log(describeSelection(selected, outputMode, collector.attemptCount));
+            if (selected.text) {
+              turn.assertPublishable();
+              stage = 'history_commit'; turn.stage = stage;
+              turnStore.saveTurnOutput(turn.turnId, sessionKey, selected.text, msg.message_seq, botId);
+              stage = 'delivery'; turn.stage = stage;
+              yield selected.text;
+            }
+            return;
+          } catch (err) {
+            const failure = classifyFailure(err);
+            const canContinue = !continuationUsed
+              && !!activeResume
+              && failure.stage === 'inference'
+              && ['stream_interrupted', 'network_transient', 'provider_unavailable'].includes(failure.category)
+              && !turn.signal.aborted;
+            if (!canContinue) throw err;
+            continuationUsed = true;
+            console.warn('[codex-channel-octo] stream interrupted; continuing the existing thread once');
+            prompt = continuationPrompt;
+            options = { ...options, resume: activeResume };
+          }
         }
       }
 

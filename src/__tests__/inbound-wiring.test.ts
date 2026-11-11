@@ -214,6 +214,35 @@ describe('production socket → gateway → onInbound → router wiring', () => 
     expect(vi.mocked(sendMessage).mock.calls.some(call=>call[0].content==='new response')).toBe(true);
   });
 
+  it('continues a stream interruption once on the same SDK thread without replaying the original prompt', async () => {
+    const route = vi.spyOn(stack!.router, 'routeAndHandle');
+    spies.push(route);
+    const prompts: string[] = [];
+    let calls = 0;
+    vi.mocked(queryAgent).mockImplementation(async function* (prompt, _config, _ctx, _progress, options) {
+      prompts.push(prompt);
+      calls++;
+      if (calls === 1) {
+        options?.onSessionId?.('resumable-thread', prompt);
+        throw new Error('stream disconnected before completion: stream closed before response.completed');
+      }
+      expect(options?.resume).toBe('resumable-thread');
+      yield 'continued review result';
+    });
+
+    const inbound = message({ channel_type: ChannelType.DM, channel_id: 'human',
+      payload: { type: MessageType.Text, content: 'review this merge request' } });
+    emit(inbound);
+    await route.mock.results[0].value;
+
+    expect(calls).toBe(2);
+    expect(prompts[0]).toContain('review this merge request');
+    expect(prompts[1]).toContain('Continue the interrupted task');
+    expect(prompts[1]).not.toContain('review this merge request');
+    expect(vi.mocked(sendMessage).mock.calls.some(call => call[0].content === 'continued review result')).toBe(true);
+    expect(vi.mocked(sendMessage).mock.calls.some(call => call[0].content.startsWith('执行失败：'))).toBe(false);
+  });
+
   it.each(['message','syscall'])('delivers an unknown failure for object-valued %s in the production catch path', async field => {
     const route=vi.spyOn(stack!.router,'routeAndHandle');spies.push(route);
     let calls=0;
