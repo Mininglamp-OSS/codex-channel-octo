@@ -45,7 +45,8 @@ export async function deliverImages(params: {
     report.push({ id: a.id, clientMsgNo: randomUUID(), generation: image ? 'ready' : unsupported.has(a.id) ? 'failed_unsupported_jpeg_sof' : 'failed', upload: 'not_started',
       delivery: a.disposition === 'external' ? 'external' : 'not_started' });
   }
-  check(); store.saveImageDeliveries(turn.turnId, report);
+  check();
+  if (!store.claimImageDeliveries(turn.turnId, report)) return store.readImageDeliveries(turn.turnId);
   const persist = (r: ImageDelivery) => { check(); store.updateImageDelivery(turn.turnId, r); };
   for (const [i, a] of params.artifacts.entries()) {
     check(); const r = report[i]; const image = snapshots.get(a.id);

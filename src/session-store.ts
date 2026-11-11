@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS delivery_parts (
   payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', message_id TEXT,
   PRIMARY KEY(turn_id, part_index)
 );
+CREATE TABLE IF NOT EXISTS image_delivery_turns (
+  turn_id TEXT PRIMARY KEY
+);
 CREATE TABLE IF NOT EXISTS image_deliveries (
   turn_id TEXT NOT NULL, artifact_id TEXT NOT NULL, part_index INTEGER NOT NULL,
   generation TEXT NOT NULL, upload TEXT NOT NULL, delivery TEXT NOT NULL,
@@ -211,11 +214,22 @@ export class SessionStore {
   saveDeliveryPart(turnId: string, index: number, clientMsgNo: string, payload: string): void {
     this.adapter.prepare('INSERT INTO delivery_parts(turn_id,part_index,client_msg_no,payload) VALUES (?,?,?,?)').run(turnId, index, clientMsgNo, payload);
   }
-  saveImageDeliveries(turnId: string, images: ReadonlyArray<ImageDelivery>): void {
-    this.adapter.transaction(() => images.forEach((r, i) => {
-      this.adapter.prepare('INSERT INTO image_deliveries VALUES (?,?,?,?,?,?,?,?)')
-        .run(turnId, r.id, i, r.generation, r.upload, r.delivery, r.clientMsgNo, r.messageId ?? null);
-    }))();
+  /** Claim the whole turn, including empty reports, before any external I/O.
+   * The first write serializes competing SQLite connections; losers read the
+   * winner's original message numbers and never initialize a second batch.
+   */
+  claimImageDeliveries(turnId: string, images: ReadonlyArray<ImageDelivery>): boolean {
+    return this.adapter.transaction(() => {
+      const claimed = this.adapter.prepare('INSERT OR IGNORE INTO image_delivery_turns(turn_id) VALUES (?)').run(turnId).changes;
+      if (!claimed) return false;
+      // Preserve ledgers written by versions predating the turn claim table.
+      if (this.readImageDeliveries(turnId).length) return false;
+      images.forEach((r, i) => {
+        this.adapter.prepare('INSERT INTO image_deliveries VALUES (?,?,?,?,?,?,?,?)')
+          .run(turnId, r.id, i, r.generation, r.upload, r.delivery, r.clientMsgNo, r.messageId ?? null);
+      });
+      return true;
+    })();
   }
   updateImageDelivery(turnId: string, r: ImageDelivery): void {
     this.adapter.prepare('UPDATE image_deliveries SET generation=?, upload=?, delivery=?, message_id=? WHERE turn_id=? AND artifact_id=?')
@@ -401,6 +415,7 @@ export class SessionStore {
       AND NOT EXISTS (SELECT 1 FROM turn_execution e
         WHERE e.turn_id=o.turn_id AND e.state IN ('active','quarantined'))`;
     this.adapter.prepare(`DELETE FROM delivery_parts WHERE turn_id IN (${expiredOutput})`).run(cutoff);
+    this.adapter.prepare(`DELETE FROM image_delivery_turns WHERE turn_id IN (${expiredOutput})`).run(cutoff);
     this.adapter.prepare(`DELETE FROM image_deliveries WHERE turn_id IN (${expiredOutput})`).run(cutoff);
     this.adapter.prepare(`DELETE FROM turn_outputs WHERE turn_id IN (${expiredOutput})`).run(cutoff);
     const result = this.deleteExpired.run(cutoff);
@@ -416,6 +431,7 @@ export class SessionStore {
   }
 
   deleteSession(sessionId: string): void {
+    this.adapter.prepare('DELETE FROM image_delivery_turns WHERE turn_id IN (SELECT turn_id FROM turn_outputs WHERE session_key=?)').run(sessionId);
     this.adapter.prepare('DELETE FROM image_deliveries WHERE turn_id IN (SELECT turn_id FROM turn_outputs WHERE session_key=?)').run(sessionId);
     this.adapter.prepare('DELETE FROM delivery_parts WHERE turn_id IN (SELECT turn_id FROM turn_outputs WHERE session_key=?)').run(sessionId);
     this.adapter.prepare('DELETE FROM turn_outputs WHERE session_key=?').run(sessionId);

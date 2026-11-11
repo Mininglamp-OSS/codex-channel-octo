@@ -18,10 +18,11 @@ describe('native image pipeline against a local HTTP service', () => {
   let uploadFails: boolean, sendMode: 'ok' | 'fail' | 'lost' | 'empty', cancelAfterPut: boolean;
   let presignMode: 'ok' | 'fail' | 'unsafe' | 'small', losePut: boolean, revokeOnSend: boolean;
   let onPut: (() => void) | undefined;
+  let presignContentType: string;
   beforeEach(async () => {
     requests = []; uploadFails = false; sendMode = 'ok'; cancelAfterPut = false;
     presignMode = 'ok'; losePut = false; revokeOnSend = false;
-    onPut = undefined;
+    onPut = undefined; presignContentType = 'image/png';
     root = mkdtempSync(join(tmpdir(), 'native-images-'));
     store = new SessionStore(createAdapter(':memory:')); store.init(); turn = new TurnContext(30000);
     server = createServer(async (req, res) => {
@@ -32,7 +33,7 @@ describe('native image pipeline against a local HTTP service', () => {
         if (presignMode === 'fail') { res.statusCode = 403; res.end('TOKEN SECRET'); return; }
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ method: 'PUT', uploadUrl: presignMode === 'unsafe' ? 'http://169.254.169.254/credentials' : apiUrl + '/put?signature=SECRET', downloadUrl: apiUrl + '/image.png?signature=PRIVATE',
-          contentType: 'image/png', contentDisposition: 'inline; filename="image.png"', maxFileSize: presignMode === 'small' ? 1 : 1024 }));
+          contentType: presignContentType, contentDisposition: 'inline; filename="image.png"', maxFileSize: presignMode === 'small' ? 1 : 1024 }));
       } else if (path.startsWith('/put')) {
         onPut?.();
         if (cancelAfterPut) turn.cancel();
@@ -72,6 +73,56 @@ describe('native image pipeline against a local HTTP service', () => {
     expect(store.readImageDeliveries(turn.turnId)).toHaveLength(2);
     expect(JSON.stringify(store.readImageDeliveries(turn.turnId))).not.toMatch(/SECRET|PRIVATE|TOKEN/);
     await deliverImages(params); expect(requests).toHaveLength(6); // no second send on reentry
+  });
+  it.each([false, true])('F-PR96-P1-LEDGER-RACE: stale first reads return the winner ledger without I/O (different ids=%s)', async differentIds => {
+    store.close();
+    const database = join(root, 'shared.sqlite');
+    store = new SessionStore(createAdapter(database)); store.init();
+    const other = new SessionStore(createAdapter(database)); other.init();
+    const params = input(['one.png']);
+    const winnerParams = { ...params, store: other, artifacts: params.artifacts.map(a => ({ ...a, id: differentIds ? 'winner' : a.id })) };
+    const read = store.readImageDeliveries.bind(store);
+    let winner: Promise<Awaited<ReturnType<typeof deliverImages>>> | undefined;
+    // Force both callers to observe the initial empty ledger. Only the read
+    // scheduling is controlled; both stores, transactions and HTTP are real.
+    vi.spyOn(store, 'readImageDeliveries').mockImplementationOnce(id => {
+      const stale = read(id);
+      winner = deliverImages(winnerParams);
+      return stale;
+    });
+    try {
+      const loser = deliverImages(params);
+      const outcomes = await Promise.allSettled([winner!, loser]);
+      expect.soft(requests.map(r => r.path.split('?')[0])).toEqual(['/v1/bot/upload/presigned', '/put', '/v1/bot/sendMessage']);
+      expect(outcomes.map(o => o.status)).toEqual(['fulfilled', 'fulfilled']);
+      if (outcomes[0].status !== 'fulfilled' || outcomes[1].status !== 'fulfilled') return;
+      expect(outcomes[1].value.map(r => [r.id, r.clientMsgNo])).toEqual(outcomes[0].value.map(r => [r.id, r.clientMsgNo]));
+      expect(requests.map(r => r.path.split('?')[0])).toEqual(['/v1/bot/upload/presigned', '/put', '/v1/bot/sendMessage']);
+      expect(read(turn.turnId).map(r => r.clientMsgNo)).toEqual(outcomes[0].value.map(r => r.clientMsgNo));
+    } finally { other.close(); }
+  });
+  it('F-PR96-P1-LEDGER-RACE: an empty first claim survives reopening and suppresses later artifacts', async () => {
+    store.close();
+    const database = join(root, 'empty.sqlite');
+    store = new SessionStore(createAdapter(database)); store.init();
+    const params = input(['one.png']);
+    expect(await deliverImages({ ...params, artifacts: [] })).toEqual([]);
+    store.close(); store = new SessionStore(createAdapter(database)); store.init();
+    expect.soft(await deliverImages({ ...params, store })).toEqual([]);
+    expect(requests).toEqual([]);
+  });
+  it.each(['text/html', 'image/gif', 'image/svg+xml', 'image/jpg'])('F-PR96-P2-PRESIGN-MIME: rejects PNG presigned as %s before PUT/send', async contentType => {
+    presignContentType = contentType;
+    const report = await deliverImages(input(['one.png']));
+    expect.soft(report[0]).toMatchObject({ upload: 'failed', delivery: 'not_started' });
+    expect(requests.map(r => r.path.split('?')[0])).toEqual(['/v1/bot/upload/presigned']);
+  });
+  it.each(['image/png', 'image/gif', 'image/jpeg'])('F-PR96-P2-PRESIGN-MIME: accepts only matching %s and preserves signed header case', async mime => {
+    presignContentType = mime.toUpperCase();
+    await uploadArtifact({ apiUrl, botToken: 'TOKEN', name: 'image', mime, bytes: png,
+      signal: turn.signal, check: () => turn.assertPublishable() });
+    expect(requests.map(r => r.path.split('?')[0])).toEqual(['/v1/bot/upload/presigned', '/put']);
+    expect(requests[1].headers['content-type']).toBe(presignContentType);
   });
   it('reports partial generation success without blocking later valid images', async () => {
     const results = await deliverImages(input(['missing.png', 'two.png']));

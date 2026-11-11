@@ -116,7 +116,13 @@ hash suppresses relay copies even when declared later in the array. Identical
 relay content is sent at most once. Never explicitly send an image and also
 declare it as relay. Undeclared independent external sends are not observable;
 no scanning of tool output/paths or server deduplication guarantee is implied.
-Reentry reads the durable ledger without resending. A new user-authorized turn
+A SQLite transaction claims the whole turn and writes its initial image ledger
+before any external request, including an empty report. Competing callers read
+the winner's persisted rows and client message numbers and return without
+uploading or sending. Existing ledgers from earlier versions remain authoritative.
+Turn claims follow the output ledger's reset/expiry retention. This is not a
+server-side deduplication guarantee. Reentry reads the durable ledger without
+resending. A new user-authorized turn
 must reconcile unknown outcomes before requesting another send.
 
 New diagnostics/ledger never contain Bot tokens, signed URLs, response bodies,
@@ -135,6 +141,13 @@ Reference: openclaw-channel-octo
    contentDisposition unchanged, without forwarding the Bot token. Redirects
    are rejected. Public HTTPS storage is required; a localhost API may return
    storage URLs on its exact origin for local deployments/tests.
+   The returned MIME must match the locally detected MIME, case-insensitively:
+   `image/png` → `image/png`, `image/gif` → `image/gif`, and `image/jpeg` →
+   `image/jpeg`. No cross-format mapping, parameters or aliases are accepted.
+   In particular, `image/jpg` has no verified alias contract here and is rejected
+   even for JPEG; failure is reported at presign before PUT/send. Validation
+   never rewrites the returned signed header string. This is local conservative
+   policy, not a verified server compatibility guarantee.
 3. POST `/v1/bot/sendMessage` with original channel ID/type and
    `{type:2,url:downloadUrl,width,height,name,size}`. client_msg_no is local
    correlation only; verified server deduplication is absent.

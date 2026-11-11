@@ -40,6 +40,8 @@ export async function uploadArtifact(params: MediaRequest & { name: string; mime
     const data = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
     if ((data.method !== undefined && data.method !== 'PUT') || typeof data.contentType !== 'string'
       || /[\r\n]/.test(data.contentType)
+      || !['image/png', 'image/gif', 'image/jpeg'].includes(params.mime)
+      || data.contentType.toLowerCase() !== params.mime
       || (data.contentDisposition !== undefined && (typeof data.contentDisposition !== 'string' || /[\r\n]/.test(data.contentDisposition)))
       || (data.maxFileSize !== undefined && (typeof data.maxFileSize !== 'number' || data.maxFileSize < params.bytes.length))) throw new Error('presign');
     const uploadUrl = await validateStorageUrl(data.uploadUrl, params.apiUrl);
