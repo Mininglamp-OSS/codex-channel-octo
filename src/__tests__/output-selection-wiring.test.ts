@@ -1,8 +1,9 @@
 /**
  * Output-selection wiring through the real handleMessage + StreamRelay:
  * delivery/history parity, cap behavior at the relay, mention offsets, error
- * and empty paths, and the small-limit startup warning. Only the network and
- * the agent bridge are mocked; the bridge is scripted with typed events.
+ * and empty paths, and the small-limit startup warning. The network/agent
+ * bridge are mocked. Report reentry cases also control admission/plain-text
+ * persistence explicitly to isolate the real report block and SQLite ledger.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -217,6 +218,67 @@ describe('output selection wiring', () => {
       expect(vi.mocked(sendNativeImage)).toHaveBeenCalledTimes(1);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
+  it.each(['pending', 'unknown', 'confirmed', 'repeat', 'fresh'] as const)(
+    'F-PR96-P1-IMAGE-REPORT-LEDGER: reuses report intent for %s', async mode => {
+      const root = mkdtempSync(join(tmpdir(), 'cco-report-intent-'));
+      const config = makeConfig({ cwd: root }, { nativeImages: { enabled: true }, sandboxMode: 'workspace-write', allowWorkspaceWrite: true });
+      setup(config);
+      const turn = new TurnContext(30000, 1, 'report-turn');
+      const key = 'report-turn-image-report';
+      const persisted = JSON.stringify({ channelId: USER_UID, channelType: ChannelType.DM, content: 'Previously persisted image report.' });
+      const seeded = ['pending', 'unknown', 'confirmed'].includes(mode);
+      const expectedIndex = seeded ? 7 : 0;
+      if (seeded) {
+        store.saveDeliveryPart(turn.turnId, expectedIndex, key, persisted);
+        if (mode !== 'pending') store.markDeliveryPart(turn.turnId, expectedIndex, mode as 'unknown' | 'confirmed', mode === 'confirmed' ? 'original-id' : undefined);
+        store.claimImageDeliveries(turn.turnId, [{ id: 'one', generation: 'ready', upload: 'confirmed', delivery: 'confirmed', clientMsgNo: 'image-intent', messageId: '456' }]);
+      }
+      const route = router.routeAndHandle.bind(router);
+      const routeSpy = vi.spyOn(router, 'routeAndHandle').mockImplementation((msg, handler) => route(msg, result => handler(result, turn)));
+      // Isolate reentry into the real report block from unrelated admission/text
+      // persistence: consume the real model stream but do not re-send its text.
+      const relaySpy = vi.spyOn(relay, 'deliver').mockImplementation(async (_channel, _type, chunks) => {
+        for await (const chunk of chunks) { void chunk; }
+        return { parts: [] };
+      });
+      const save = store.saveTurnOutput.bind(store);
+      const saveSpy = vi.spyOn(store, 'saveTurnOutput').mockImplementation((id, ...args) => {
+        if (!adapter.prepare('SELECT turn_id FROM turn_outputs WHERE turn_id=?').get(id)) save(id, ...args);
+      });
+      vi.mocked(queryAgentEvents).mockImplementation(async function* (_body, _config, _session, _tool, opts) {
+        const output = opts!.nativeImageOutput!;
+        writeFileSync(join(output.directory, 'one.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
+        yield start(); yield m('image', 0, JSON.stringify({ octo_output: 1, requestId: output.requestId, text: 'Image.',
+          artifacts: [{ id: 'one', kind: 'image', path: 'one.png', disposition: 'relay' }] })); yield end();
+      });
+      const markSpy = vi.spyOn(store, 'markDeliveryPart');
+      if (mode === 'pending' || mode === 'fresh' || mode === 'repeat') vi.mocked(sendMessage).mockImplementationOnce(async params => {
+        expect(params.clientMsgNo).toBe(key);
+        expect(store.readDeliveryParts(turn.turnId)).toEqual([{ index: expectedIndex, state: 'unknown', messageId: null }]);
+        return { message_id: '123', message_seq: 1, client_msg_no: key };
+      });
+      try {
+        await run(config);
+        if (mode === 'repeat') await run(config);
+        const sends = vi.mocked(sendMessage).mock.calls.map(([params]) => params);
+        const shouldSend = mode === 'pending' || mode === 'fresh' || mode === 'repeat';
+        expect(sends).toHaveLength(shouldSend ? 1 : 0);
+        if (shouldSend) {
+          expect(sends[0].clientMsgNo).toBe(key);
+          if (seeded) expect(sends[0].content).toBe('Previously persisted image report.');
+        }
+        const rows = adapter.prepare('SELECT part_index,client_msg_no,payload,state,message_id FROM delivery_parts WHERE turn_id=?').all(turn.turnId);
+        expect(rows).toEqual([{ part_index: expectedIndex, client_msg_no: key,
+          payload: seeded ? persisted : JSON.stringify({ channelId: USER_UID, channelType: ChannelType.DM, content: sends[0].content }),
+          state: mode === 'unknown' ? 'unknown' : 'confirmed', message_id: mode === 'confirmed' ? 'original-id' : mode === 'unknown' ? null : '123' }]);
+        if (mode === 'unknown') expect(historyInputs()).toEqual([]);
+        if (mode === 'unknown' || mode === 'confirmed') expect(markSpy).not.toHaveBeenCalled();
+        if (mode === 'pending' || mode === 'confirmed') expect(historyInputs()).toEqual(['Image.\n\nPreviously persisted image report.']);
+        if (mode === 'repeat') expect(historyInputs()).toHaveLength(1);
+      } finally {
+        markSpy.mockRestore(); routeSpy.mockRestore(); relaySpy.mockRestore(); saveSpy.mockRestore(); rmSync(root, { recursive: true, force: true });
+      }
+    });
   it.each(['success', 'empty', 'text-only', 'inference-failure', 'text-failure', 'upload-failure', 'send-failure', 'cancel-upload', 'late-send', 'timeout'])(
     'F-PR96-P1-SCOPE-LEAK: releases scopes after %s, never during an active send', async mode => {
       const root = mkdtempSync(join(tmpdir(), 'cco-scope-lifetime-'));

@@ -15,6 +15,14 @@ export interface Session {
   updatedAt: number;
 }
 
+export interface DeliveryPartIntent {
+  index: number;
+  state: 'pending' | 'unknown' | 'confirmed';
+  messageId: string | null;
+  clientMsgNo: string;
+  payload: string;
+}
+
 interface SessionRow {
   id: string;
   channel_id: string;
@@ -213,6 +221,36 @@ export class SessionStore {
   }
   saveDeliveryPart(turnId: string, index: number, clientMsgNo: string, payload: string): void {
     this.adapter.prepare('INSERT INTO delivery_parts(turn_id,part_index,client_msg_no,payload) VALUES (?,?,?,?)').run(turnId, index, clientMsgNo, payload);
+  }
+  /** Reserve the writer transaction before reading so competing connections
+   * cannot both observe a missing globally unique key. Existing intents win.
+   */
+  claimDeliveryPart(turnId: string, clientMsgNo: string, payload: string): DeliveryPartIntent {
+    const claim = (): DeliveryPartIntent => {
+      const existing = this.adapter.prepare('SELECT turn_id AS turnId,part_index AS "index",state,message_id AS messageId,client_msg_no AS clientMsgNo,payload FROM delivery_parts WHERE client_msg_no=?')
+        .get(clientMsgNo) as (DeliveryPartIntent & { turnId: string }) | undefined;
+      if (existing) {
+        if (existing.turnId !== turnId) throw new Error('Delivery key belongs to another turn');
+        return { index: existing.index, state: existing.state, messageId: existing.messageId, clientMsgNo: existing.clientMsgNo, payload: existing.payload };
+      }
+      const next = this.adapter.prepare('SELECT COALESCE(MAX(part_index),-1)+1 AS "index" FROM delivery_parts WHERE turn_id=?').get(turnId) as { index: number };
+      this.saveDeliveryPart(turnId, next.index, clientMsgNo, payload);
+      return { index: next.index, state: 'pending', messageId: null, clientMsgNo, payload };
+    };
+    if (this.adapter.inTransaction) return claim();
+    this.adapter.exec('BEGIN IMMEDIATE');
+    try {
+      const intent = claim();
+      this.adapter.exec('COMMIT');
+      return intent;
+    } catch (error) {
+      this.adapter.exec('ROLLBACK');
+      throw error;
+    }
+  }
+  /** Only one pending reader may cross the external-write boundary. */
+  startDeliveryPart(turnId: string, index: number): boolean {
+    return this.adapter.prepare("UPDATE delivery_parts SET state='unknown' WHERE turn_id=? AND part_index=? AND state='pending'").run(turnId, index).changes === 1;
   }
   /** Claim the whole turn, including empty reports, before any external I/O.
    * The first write serializes competing SQLite connections; losers read the

@@ -16,6 +16,26 @@ describe('SessionStore', () => {
     store.close();
   });
 
+  it('claims one delivery intent by key, reusing persisted payload/state and sparse index', () => {
+    store.saveDeliveryPart('turn', 7, 'text-key', 'text');
+    const intent = store.claimDeliveryPart('turn', 'turn-image-report', 'original');
+    expect(intent).toMatchObject({ index: 8, state: 'pending', messageId: null, payload: 'original', clientMsgNo: 'turn-image-report' });
+    expect(store.claimDeliveryPart('turn', 'turn-image-report', 'replacement')).toEqual(intent);
+    expect(store.startDeliveryPart('turn', 8)).toBe(true);
+    expect(store.startDeliveryPart('turn', 8)).toBe(false);
+    expect(store.claimDeliveryPart('turn', 'turn-image-report', 'replacement')).toMatchObject({ index: 8, state: 'unknown', payload: 'original' });
+    store.markDeliveryPart('turn', 8, 'confirmed', '123');
+    expect(store.claimDeliveryPart('turn', 'turn-image-report', 'replacement')).toMatchObject({ index: 8, state: 'confirmed', messageId: '123', payload: 'original' });
+    expect(store.startDeliveryPart('turn', 8)).toBe(false);
+    expect(store.readDeliveryParts('turn')).toHaveLength(2);
+  });
+  it('does not adopt another turn delivery key or leave an open claim transaction', () => {
+    store.saveDeliveryPart('owner', 0, 'existing-key', 'original');
+    expect(() => store.claimDeliveryPart('other', 'existing-key', 'replacement')).toThrow(/another turn/);
+    expect(adapter.inTransaction).toBe(false);
+    expect(store.readDeliveryParts('other')).toEqual([]);
+    expect(store.claimDeliveryPart('other', 'new-key', 'valid')).toMatchObject({ index: 0, state: 'pending' });
+  });
   it('getOrCreate creates new session', () => {
     const session = store.getOrCreate('s1', 'ch1', 2);
     expect(session.id).toBe('s1');

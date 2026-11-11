@@ -124,7 +124,11 @@ the winner's persisted rows and client message numbers and return without
 uploading or sending. Existing ledgers from earlier versions remain authoritative.
 Turn claims follow the output ledger's reset/expiry retention. This is not a
 server-side deduplication guarantee. Reentry reads the durable ledger without
-resending. A new user-authorized turn
+resending. Each turn’s image report is also a durable idempotent delivery part;
+reentry reuses its payload/message number and never resends an unknown or
+confirmed report. A pending report is atomically marked unknown before its
+single external attempt; only confirmed reports are appended to history.
+A new user-authorized turn
 must reconcile unknown outcomes before requesting another send.
 
 New diagnostics/ledger never contain Bot tokens, signed URLs, response bodies,

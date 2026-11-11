@@ -849,18 +849,28 @@ export async function handleMessage(
           maxBytes: config.sdk.nativeImages?.maxBytes ?? DEFAULT_IMAGE_BYTES,
           apiUrl: config.apiUrl, botToken: config.botToken, channelId, channelType, turn, store: turnStore });
         turn.assertPublishable();
-        const summary = imageDeliverySummary(images);
-        const summaryPart = turnStore.readDeliveryParts(turn.turnId).length;
         const summaryKey = `${turn.turnId}-image-report`;
-        turnStore.saveDeliveryPart(turn.turnId, summaryPart, summaryKey, JSON.stringify({ channelId, channelType, content: summary }));
-        turnStore.markDeliveryPart(turn.turnId, summaryPart, 'unknown');
-        const ack = await sendMessage({ apiUrl: config.apiUrl, botToken: config.botToken, channelId, channelType,
-          clientMsgNo: summaryKey, content: summary, signal: turn.signal });
-        turn.assertPublishable();
-        const summaryId = confirmedMessageId(ack?.message_id);
-        if (!summaryId) throw new AgentFailure({ stage: 'delivery', category: 'delivery_failed', source: 'octo_api', evidence: 'structured' });
-        turnStore.markDeliveryPart(turn.turnId, summaryPart, 'confirmed', summaryId);
-        turnStore.appendTurnOutputStatus(turn.turnId, summary);
+        const summaryPart = turnStore.claimDeliveryPart(turn.turnId, summaryKey,
+          JSON.stringify({ channelId, channelType, content: imageDeliverySummary(images) }));
+        if (summaryPart.state === 'unknown') {
+          turn.needsReconciliation = true;
+          return; // Never replay an attempted report or commit unconfirmed history.
+        }
+        const summary = JSON.parse(summaryPart.payload) as { channelId: string; channelType: number; content: string };
+        if (summaryPart.state === 'pending') {
+          if (!turnStore.startDeliveryPart(turn.turnId, summaryPart.index)) {
+            turn.needsReconciliation = true;
+            return; // Another pending reader already owns the external attempt.
+          }
+          const ack = await sendMessage({ apiUrl: config.apiUrl, botToken: config.botToken,
+            channelId: summary.channelId, channelType: summary.channelType,
+            clientMsgNo: summaryPart.clientMsgNo, content: summary.content, signal: turn.signal });
+          turn.assertPublishable();
+          const summaryId = confirmedMessageId(ack?.message_id);
+          if (!summaryId) throw new AgentFailure({ stage: 'delivery', category: 'delivery_failed', source: 'octo_api', evidence: 'structured' });
+          turnStore.markDeliveryPart(turn.turnId, summaryPart.index, 'confirmed', summaryId);
+        }
+        turnStore.appendTurnOutputStatus(turn.turnId, summary.content);
       }
 
       turn.assertPublishable();
