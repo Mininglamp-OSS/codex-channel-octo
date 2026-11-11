@@ -40,7 +40,7 @@ import { sendReadReceipt, getChannelMessages, getUploadCredentials } from './oct
 import type { HistoricalMessage } from './octo/api.js';
 import { ChannelType, MessageType } from './octo/types.js';
 import type { BotMessage } from './octo/types.js';
-import { resolveContent, tryResolveFile, resolveHistoricalMessagePlaceholder } from './inbound.js';
+import { resolveContent, tryResolveFile, resolveHistoricalMessagePlaceholder, resolveInteractiveCardText } from './inbound.js';
 import { downloadInboundImage, MAX_IMAGES_PER_MESSAGE } from './media-inbound.js';
 import { handleCommand } from './commands.js';
 import { loadGroupConfig } from './group-config.js';
@@ -339,6 +339,19 @@ export async function handleMessage(
   const channelType = msg.channel_type ?? ChannelType.DM;
   const isGroup = channelType === ChannelType.Group || channelType === ChannelType.CommunityTopic;
 
+  if (msg.payload.type === MessageType.InteractiveCard) {
+    // Content-free ingress evidence, including passively cached group cards.
+    // Only validated numeric transport IDs escape; never log plain/card/from.
+    const plain = msg.payload.plain;
+    console.info('[inbound-card]', {
+      messageId: /^\d{1,32}$/.test(msg.message_id) ? msg.message_id : undefined,
+      type: MessageType.InteractiveCard,
+      hasPlain: typeof plain === 'string',
+      plainChars: typeof plain === 'string' ? plain.length : 0,
+      resolution: typeof plain === 'string' && plain.trim() !== '' ? 'plain' : 'unavailable',
+    });
+  }
+
   // --- Route + pipeline under single session lock (no gap between route and processing) ---
   // For non-processed messages, routeAndHandle returns without calling handler.
   // We still need to cache group text messages for context.
@@ -572,8 +585,9 @@ export async function handleMessage(
       // every RichText turn. Same risk for File payloads that ship a content
       // field instead of using mediaUrl. Defense: only trust payload.content
       // when it is actually a string; otherwise use the type-safe
-      // historyRecord we already built.
-      const userContent = typeof msg.payload.content === 'string'
+      // historyRecord we already built. Type-17 cards always persist their bounded
+      // plain projection, even if an unrelated content field is also supplied.
+      const userContent = msg.payload.type !== MessageType.InteractiveCard && typeof msg.payload.content === 'string'
         ? msg.payload.content
         : historyRecord;
 
@@ -598,7 +612,9 @@ export async function handleMessage(
       const replyData = msg.payload?.reply;
       if (replyData) {
         const replyPayload = replyData?.payload;
-        const rawReplyContent = replyPayload?.content ?? '';
+        const rawReplyContent = replyPayload?.type === MessageType.InteractiveCard
+          ? resolveInteractiveCardText(replyPayload.plain)
+          : typeof replyPayload?.content === 'string' ? replyPayload.content : '';
         const rawReplyFrom = replyData.from_name ?? replyData.from_uid ?? 'unknown';
         if (rawReplyContent) {
           const QUOTE_MAX_BYTES = 4_096;
@@ -1030,9 +1046,9 @@ function seedHistoryFromApi(
       continue;
     }
     const placeholder = resolveHistoricalMessagePlaceholder(m.type, m.name);
-    const content = m.content && m.content.trim() !== ''
-      ? m.content
-      : placeholder;
+    const content = m.type === MessageType.InteractiveCard
+      ? resolveInteractiveCardText(m.payload?.plain ?? m.plain)
+      : m.content && m.content.trim() !== '' ? m.content : placeholder;
     if (!content) continue;
     if (botId && m.from_uid === botId) {
       store.appendAssistant(sessionKey, content, m.message_seq, botId);

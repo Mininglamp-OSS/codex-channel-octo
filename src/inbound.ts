@@ -215,6 +215,19 @@ export function buildMediaUrl(relUrl?: string, apiUrl?: string, cdnHost?: string
   return candidate;
 }
 
+/** Shared type-17 projection. Never interpret card actions, URLs or hidden data.
+ * Server contract: octo-server@c97b3ab, pkg/cardmsg/{cardmsg,plain}.go.
+ * The text remains untrusted; prompt/forward callers retain their own escaping.
+ */
+export function resolveInteractiveCardText(plain: unknown): string {
+  if (typeof plain !== 'string' || plain.trim() === '') return '[卡片：正文不可用]';
+  const marker = '\n[卡片正文已截断]';
+  const maxBytes = 32 * 1024;
+  if (Buffer.byteLength(plain, 'utf8') <= maxBytes) return plain;
+  const { truncated } = truncateUtf8ByBytes(plain, maxBytes - Buffer.byteLength(marker, 'utf8'));
+  return truncated + marker;
+}
+
 // ─── RichText (type=14) expansion ─────────────────────────────────────────
 
 function normalizeRichTextBlocks(content: unknown): Array<Record<string, unknown>> {
@@ -325,6 +338,8 @@ function resolveInnerMessageText(payload: ForwardMessage['payload'], apiUrl?: st
       return fullUrl ? `[视频]\n${fullUrl}` : '[视频]';
     case MessageType.Location:
       return '[位置信息]';
+    case MessageType.InteractiveCard:
+      return resolveInteractiveCardText(payload.plain);
     case MessageType.Card:
       return '[名片]';
     case MessageType.File: {
@@ -489,6 +504,9 @@ export function resolveContent(payload: MessagePayload | undefined, apiUrl?: str
       };
     }
 
+    case MessageType.InteractiveCard:
+      return { text: resolveInteractiveCardText(payload.plain) };
+
     case MessageType.Card: {
       // SECURITY: name + uid are user-controlled and land inside a `[名片: …]`
       // label; sanitize both so neither can forge a marker/role label.
@@ -536,6 +554,7 @@ export function resolveHistoricalMessagePlaceholder(type?: number, name?: string
     case MessageType.File: return `[文件: ${name ? sanitizeDisplayName(name, '未知文件') : '未知文件'}]`;
     case MessageType.Location: return '[位置信息]';
     case MessageType.Card: return '[名片]';
+    case MessageType.InteractiveCard: return '[卡片：正文不可用]';
     case MessageType.MultipleForward: return '[合并转发]';
     case MessageType.RichText: return '[图文消息]';
     case MessageType.Text:

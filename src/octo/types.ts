@@ -72,6 +72,8 @@ export interface ReplyPayload {
 export interface MessagePayload {
   type: MessageType;
   content?: string;
+  /** Server-derived text for type-17 cards; validated at the rendering boundary. */
+  plain?: unknown;
   url?: string;
   name?: string;
   mention?: MentionPayload;
@@ -113,6 +115,8 @@ export enum MessageType {
   MultipleForward = 11,
   /** Rich text (text + inline images), introduced in upstream v1.0.x */
   RichText = 14,
+  /** Adaptive/interactive card, distinct from the type-7 contact card. */
+  InteractiveCard = 17,
 }
 
 /**
@@ -141,6 +145,7 @@ export interface ForwardMessage {
   payload: {
     type: number;
     content?: string;
+    plain?: unknown;
     url?: string;
     name?: string;
     users?: ForwardUser[];

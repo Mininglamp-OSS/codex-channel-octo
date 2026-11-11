@@ -451,6 +451,8 @@ export async function fetchUserInfo(params: {
 
 /** Historical message returned by /v1/bot/messages/sync. */
 export interface HistoricalMessage {
+  /** Type-17 text projection, including flattened history responses. */
+  plain?: unknown;
   from_uid: string;
   from_name?: string;
   content?: string;
@@ -545,6 +547,7 @@ export async function getChannelMessages(params: {
             : typeof payload?.content === 'string'
               ? payload.content
               : undefined,
+        plain: payload?.plain ?? m.plain,
         timestamp: typeof m.timestamp === 'number' ? m.timestamp : 0,
         message_id: typeof m.message_id === 'string' ? m.message_id : undefined,
         message_seq: typeof m.message_seq === 'number' ? m.message_seq : undefined,
