@@ -2,7 +2,7 @@
 import { errorDetails } from './error-details.js';
 import { recordPrivateFailure } from './private-diagnostics.js';
 import { sendMessage as sendTurnMessage } from './octo/api.js';
-import { AgentFailure, TurnFailure, classifyFailure, failureReply, type FailureStage, type FailureReport } from './agent-failure.js';
+import { AgentFailure, TurnFailure, classifyFailure, failureReply, mergeExecutionRisk, type FailureStage, type FailureReport } from './agent-failure.js';
 import { safeNotice, type ReducedItemFacts } from './cards/redact.js';
 /**
  * codex-channel-octo — Entry point.
@@ -777,7 +777,7 @@ export async function handleMessage(
         onManagedExecution: execution => turn.registerExecution(execution),
         interruptedTurn: result.interruptedTurn,
         assertPublishable: () => turn.assertPublishable(),
-        onExecutionRisk: risk => { turn.executionRisk = risk; },
+        onExecutionRisk: risk => { turn.executionRisk = mergeExecutionRisk(turn.executionRisk, risk); },
         senderContext: buildSenderContext(msg, router.getOwnerUid(), botId),
         ...(resume ? { resume } : {}),
         onSessionId: (id: string, prompt: string) => {
@@ -836,9 +836,11 @@ export async function handleMessage(
                 modelAttempts++;
                 // Keep evidence from a failed earlier execution. A continuation
                 // must never downgrade observed side effects to "unknown".
-                if (turn.executionRisk === 'proven_not_started') turn.executionRisk = 'unknown';
+                turn.executionRisk = mergeExecutionRisk(turn.executionRisk, 'unknown');
               }
-              if (ev.kind === 'work' && ['command_execution','file_change','mcp_tool_call'].includes(ev.itemType)) turn.executionRisk = 'effects_observed';
+              if (ev.kind === 'work' && ['command_execution','file_change','mcp_tool_call'].includes(ev.itemType)) {
+                turn.executionRisk = mergeExecutionRisk(turn.executionRisk, 'effects_observed');
+              }
               collector.push(ev);
             }
             selected = collector.select({ mode: outputMode, maxChars: config.maxResponseChars ?? DEFAULT_MAX_RESPONSE_CHARS });

@@ -7,6 +7,12 @@ import { ERROR_LIMITS, limitText, type ErrorDetails } from './error-details.js';
 export type FailureStage = 'prepare' | 'spawn' | 'inference' | 'jsonl_parse' | 'process_exit' | 'delivery' | 'history_commit' | 'cleanup';
 export type FailureCategory = 'network_transient' | 'stream_interrupted' | 'rate_limited' | 'quota_exhausted' | 'provider_unavailable' | 'auth' | 'permission' | 'context_limit' | 'invalid_encrypted_content' | 'invalid_config' | 'jsonl_incomplete' | 'jsonl_invalid' | 'proxy_bootstrap' | 'process_exit' | 'cancelled' | 'timeout' | 'delivery_failed' | 'api_failed' | 'history_failed' | 'unknown';
 export type ExecutionRisk = 'proven_not_started' | 'effects_observed' | 'unknown';
+/** Merge execution evidence without ever forgetting an observed side effect. */
+export function mergeExecutionRisk(current: ExecutionRisk, next: ExecutionRisk): ExecutionRisk {
+  if (current === 'effects_observed' || next === 'effects_observed') return 'effects_observed';
+  if (current === 'unknown' || next === 'unknown') return 'unknown';
+  return 'proven_not_started';
+}
 export type RecoveryDecision = 'not_attempted' | 'blocked_uncertain' | 'exhausted' | 'cancelled' | 'fresh_retried';
 export type OctoEndpoint = '/v1/bot/sendMessage' | '/v1/bot/register' | '/v1/bot/typing'
   | '/v1/bot/heartbeat' | '/v1/bot/readReceipt' | '/v1/bot/messages/sync'
