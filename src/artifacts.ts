@@ -22,13 +22,14 @@ export function validateNativeImages(value?: NativeImageConfig): void {
 
 export function decodeArtifactEnvelope(text: string, requestId: string, singleMessage = true): { text: string; artifacts: ImageArtifact[] } {
   const invalid = { text: '[Image generation: invalid or stale artifact envelope; no images sent.]', artifacts: [] };
-  // Recognize the reserved protocol key only to suppress broken protocol output,
-  // never to extract paths or upload instructions from prose/fences/fragments.
-  const hasMarker = /"octo_output"\s*:/.test(text);
-  if (!singleMessage) return hasMarker ? invalid : { text, artifacts: [] };
+  // Only a bare object-shaped output can opt into the reserved protocol.
+  // Prose, fences and fragments remain ordinary text, even when quoting its key.
+  const t = text.trim();
+  if (!t.startsWith('{') || !t.endsWith('}') || !/"octo_output"\s*:/.test(t)) return { text, artifacts: [] };
   let value: unknown;
-  try { value = JSON.parse(text); } catch { return hasMarker ? invalid : { text, artifacts: [] }; }
-  if (!value || typeof value !== 'object' || Array.isArray(value) || !('octo_output' in value)) return hasMarker ? invalid : { text, artifacts: [] };
+  try { value = JSON.parse(t); } catch { return invalid; }
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !('octo_output' in value)) return { text, artifacts: [] };
+  if (!singleMessage) return invalid;
   const v = value as Record<string, unknown>;
   if (v.octo_output !== 1 || v.requestId !== requestId || typeof v.text !== 'string'
     || !Array.isArray(v.artifacts) || v.artifacts.length > MAX_IMAGE_ARTIFACTS) return invalid;

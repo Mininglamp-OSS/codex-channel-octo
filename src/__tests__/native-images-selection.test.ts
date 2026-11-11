@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { OutputCollector } from '../output-selection.js';
+import { decodeArtifactEnvelope } from '../artifacts.js';
 
 const envelope = (requestId = 'current') => JSON.stringify({ octo_output: 1, requestId,
   text: 'Here are your images.', artifacts: [{ id: 'one', kind: 'image', path: '画.png', disposition: 'relay' }] });
@@ -39,10 +40,36 @@ describe('explicit final image envelope', () => {
     base.artifacts = Array.from({ length: 5 }, (_, i) => ({ ...base.artifacts[0], id: `id${i}` }));
     expect(collect(JSON.stringify(base)).select({ mode: 'final', maxChars: 1000, artifactRequestId: 'current' }).artifacts).toEqual([]);
   });
-  it.each(['```json\n' + envelope() + '\n```', '{"octo_output":1,', envelope() + '\n' + envelope()])('RVW-2: hides malformed/fenced/joined protocol text', text => {
+  it.each(['{"octo_output":1,"text":"truncated}', '{"octo_output":1,}', envelope() + '\n' + envelope()])('RVW-2: hides object-shaped malformed/joined protocol text', text => {
     const selected = collect(text).select({ mode: 'final', maxChars: 1000, artifactRequestId: 'current' });
     expect(selected.artifacts).toEqual([]);
     expect(selected.text).toBe('[Image generation: invalid or stale artifact envelope; no images sent.]');
+  });
+  it.each([
+    ['  正文示例："octo_output": 1 不代表实际发图。\n', true],
+    ['```json\n' + envelope() + '\n```', true],
+    ['第一段说明 "octo_output": 1\n\n第二段是排错说明。', false],
+    ['{"octo_output":1,', true],
+    ['{"octo_output":1,', false],
+    ['{"answer":"ordinary JSON"}', true],
+    ['{"example":{"octo_output":1}}', true],
+    ['{"example":{"octo_output":1}}', false],
+  ] as const)('preserves non-envelope text byte-for-byte: %s (single=%s)', (text, single) => {
+    expect(decodeArtifactEnvelope(text, 'current', single)).toEqual({ text, artifacts: [] });
+  });
+  it('preserves protocol documentation through final output selection', () => {
+    const text = 'Use "octo_output": 1 only in a bare JSON envelope.';
+    expect(collect(text).select({ mode: 'final', maxChars: 1000, artifactRequestId: 'current' }))
+      .toMatchObject({ text, artifacts: [] });
+  });
+  it('still decodes a valid envelope and suppresses stale or malformed qualified envelopes', () => {
+    expect(decodeArtifactEnvelope(envelope(), 'current')).toEqual({ text: 'Here are your images.',
+      artifacts: [{ id: 'one', kind: 'image', path: '画.png', disposition: 'relay' }] });
+    for (const text of [envelope('old'), '{"octo_output":1,}', '{"octo_output":1,"text":"cut}', '{"octo_output":2}']) {
+      expect(decodeArtifactEnvelope(text, 'current')).toEqual({
+        text: '[Image generation: invalid or stale artifact envelope; no images sent.]', artifacts: [],
+      });
+    }
   });
   it('RVW-2: does not decode JSON assembled from multiple selected final messages', () => {
     const c = collect('{"octo_output":1,"requestId":"current",');

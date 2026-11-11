@@ -43,8 +43,10 @@ JSON object, without Markdown fences:
 ```
 
 Only one bare JSON object in a single selected message of a complete primary
-run supplies artifacts. Broken/fenced/joined protocol envelopes produce a fixed
-invalid-envelope notice rather than exposing protocol text. Ordinary paths,
+run supplies artifacts. Only object-shaped text with the reserved key enters
+protocol validation; malformed, stale or joined qualifying envelopes produce a
+fixed invalid notice. Prose, fenced examples and non-object fragments remain
+ordinary text, even when quoting the key. Ordinary paths,
 Markdown images and URLs never trigger uploads. Destination channel/type come
 from the host turn; model output cannot redirect delivery. Operator opt-in grants
 exports only from this fresh directory; prompt instructions ask the agent to
