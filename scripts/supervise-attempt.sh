@@ -24,8 +24,14 @@
 # before any signal is sent. Remembered processes are matched by PID and
 # start time, never PID alone.
 #
-# Exit status: the command's status; 124 on the deadline; 125 if an owned
-# process could not be reaped; 128+N when the supervisor got signal N.
+# Each attempt gets a private temporary directory (TMPDIR, TMP and TEMP), so
+# files left by one attempt cannot leak into the next; it is removed once the
+# attempt has been torn down.
+#
+# Exit status: the command's status; 124 on the deadline; 128+N when the
+# supervisor got signal N. A failure to reap an owned process is reported on
+# stderr and turns an otherwise successful attempt into 125; it never replaces
+# the originating failure or timeout status.
 set -u
 
 if [ "$#" -lt 4 ] || [ "$3" != "--" ]; then
@@ -40,7 +46,8 @@ token="$$-$(date +%s)-${RANDOM}${RANDOM}"
 reap_wait=5
 subreaper="$(dirname "$0")/attempt_subreaper.py"
 status_file=$(mktemp) || exit 2
-trap 'rm -f "$status_file"' EXIT
+attempt_tmp=$(mktemp -d) || { rm -f "$status_file"; exit 2; }
+trap 'rm -f "$status_file"; rm -rf "$attempt_tmp"' EXIT
 
 # Sets pi_state and pi_start for a live PID (fields 3 and 22 of
 # /proc/<pid>/stat, parsed after the last ")" so a comm with spaces is safe).
@@ -226,7 +233,8 @@ trap 'cancel 1' HUP
 
 # The subreaper leads the session and exits only once the command and every
 # descendant it adopted are gone; it records the command's status first.
-CODEX_CI_ATTEMPT=$token python3 "$subreaper" "$status_file" "$@" &
+CODEX_CI_ATTEMPT=$token TMPDIR=$attempt_tmp TMP=$attempt_tmp TEMP=$attempt_tmp \
+  python3 "$subreaper" "$status_file" "$@" &
 leader=$!
 leader_start=
 proc_info "$leader" && leader_start=$pi_start
@@ -257,10 +265,16 @@ if [ -z "$status" ]; then
   fi
   wait "$leader"
   status=$?
-  [ -s "$status_file" ] && status=$(cat "$status_file")
-  [ "$unreaped" -eq 0 ] || status=125
+  if [ -s "$status_file" ]; then
+    status=$(cat "$status_file")
+  elif [ "$unreaped" -ne 0 ]; then
+    status=125
+  fi
+  # A reaping failure must not hide why the attempt failed in the first place.
+  [ "$unreaped" -eq 0 ] || [ "$status" -ne 0 ] || status=125
 else
-  teardown || status=125
+  # The deadline stays the reported cause; teardown reports its own failures.
+  teardown
   wait "$leader" 2>/dev/null
 fi
 exit "$status"

@@ -72,6 +72,8 @@ jobs:
   test:
     name: Vitest
     runs-on: ubuntu-latest
+    # Probe 5 + repeat lane 15 + suite 10 minutes, plus setup.
+    timeout-minutes: 35
     strategy:
       matrix:
         node: ['22', '24.10.0']
@@ -83,6 +85,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - name: Probe the launcher attempt supervisor
+        timeout-minutes: 5
         run: python3 -m unittest discover -s scripts -p supervise_attempt_test.py -v
       - name: Repeat Unix launcher contracts
         # 20 attempts of at most 30 s each, plus at most 10 s TERM grace and 5 s
@@ -100,10 +103,13 @@ jobs:
             if [ "$status" -ne 0 ]; then exit "$status"; fi
           done
       - run: npm test
+        timeout-minutes: 10
 
   latest-sdk:
     name: Latest stable SDK (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    # Repeat lane 4 + suite 10 minutes, plus refresh, checks and build.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -124,5 +130,22 @@ jobs:
       - run: npm run type-check:continuity-tests
       - run: npm run lint
       - run: npm run build
+      - name: Repeat launcher contracts on the refreshed SDK
+        # Default worker concurrency, unlike the serial lane in the test job.
+        # 5 attempts of at most 30 s each, plus at most 10 s TERM grace and 5 s
+        # reaping per attempt for its teardown: 5 x 45 s < 4 min.
+        timeout-minutes: 4
+        run: |
+          for attempt in $(seq 1 5); do
+            echo "Launcher attempt ${attempt}/5"
+            start=$SECONDS
+            set +e
+            scripts/supervise-attempt.sh 30 10 -- npm run test -- src/__tests__/sdk-jsonl.test.ts src/__tests__/jsonl-proxy-path.test.ts
+            status=$?
+            set -e
+            echo "Launcher attempt ${attempt}/5 exit=${status} duration=$((SECONDS-start))s"
+            if [ "$status" -ne 0 ]; then exit "$status"; fi
+          done
       - run: npm test
+        timeout-minutes: 10
       - run: npm pack --dry-run

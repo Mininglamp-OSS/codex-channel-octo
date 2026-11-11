@@ -370,6 +370,8 @@ npm pack
 
 CI covers both the committed lock and a refreshed latest stable runtime on Node 22/24, including strict types, native CLI startup, the real SDK/proxy/process regression suite and packaging. Future latest releases require a passing compatibility lane; an update failure must be reported, not silently presented as a successful upgrade. To deliberately reproduce an older release, use that release's committed lockfile. Never independently override the CLI version selected by the SDK.
 
+On Linux, CI also repeats the SDK/proxy launcher tests under `scripts/supervise-attempt.sh`: 20 serial attempts on the committed lock and 5 default-concurrency attempts on the refreshed SDK. Each attempt has a deadline, its own temporary directory and an owned process tree that is torn down (TERM, bounded grace, then KILL) even when descendants detach. A timeout, a test failure and a cleanup failure keep distinct exit statuses, and repeated passes are a regression check, not a stability guarantee.
+
 ## License
 
 Apache-2.0
