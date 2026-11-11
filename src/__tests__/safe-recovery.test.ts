@@ -41,7 +41,7 @@ describe('safe recovery eligibility and budgets',()=>{
  it.each([{enabled:'yes'},{maxAttempts:0},{maxAttempts:6},{baseDelayMs:100,maxDelayMs:1},{unknown:true},{toString:1},[],null].map((value): [unknown] => [value]))('rejects invalid config %j',value=>expect(()=>validateRecovery(value)).toThrow());
 });
 describe('fixed error categories and safe user feedback',()=>{
- it.each([['429 rate limit exceeded','rate_limited'],['429 quota exhausted','quota_exhausted'],['503 service unavailable','provider_unavailable'],['401 unauthorized','auth'],['403 forbidden','permission'],['context_length_exceeded','context_limit'],['invalid encrypted content','invalid_encrypted_content']])('classifies %s', (text,category)=>expect(classifyFailure(new Error(text),'sdk_event').category).toBe(category));
+ it.each([['429 rate limit exceeded','rate_limited'],['429 quota exhausted','quota_exhausted'],['503 service unavailable','provider_unavailable'],['unexpected status 503 Service Unavailable: auth_unavailable: no auth available; server_is_overloaded','provider_unavailable'],['401 unauthorized','auth'],['403 forbidden','permission'],['context_length_exceeded','context_limit'],['invalid encrypted content','invalid_encrypted_content']])('classifies %s', (text,category)=>expect(classifyFailure(new Error(text),'sdk_event').category).toBe(category));
  it('never parses provider statuses from rejected JSONL or subprocess stderr',()=>{
   expect(classifyFailure(new Error('Failed to parse item: 429 rate limit exceeded',{cause:new SyntaxError('bad')}))).toMatchObject({category:'jsonl_invalid'});
   expect(classifyFailure(new Error('Codex Exec exited with code 1: 503 service unavailable'))).toMatchObject({category:'process_exit'});

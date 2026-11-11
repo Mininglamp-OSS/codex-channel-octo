@@ -7,6 +7,12 @@ import { ERROR_LIMITS, limitText, type ErrorDetails } from './error-details.js';
 export type FailureStage = 'prepare' | 'spawn' | 'inference' | 'jsonl_parse' | 'process_exit' | 'delivery' | 'history_commit' | 'cleanup';
 export type FailureCategory = 'network_transient' | 'stream_interrupted' | 'rate_limited' | 'quota_exhausted' | 'provider_unavailable' | 'auth' | 'permission' | 'context_limit' | 'invalid_encrypted_content' | 'invalid_config' | 'jsonl_incomplete' | 'jsonl_invalid' | 'proxy_bootstrap' | 'process_exit' | 'cancelled' | 'timeout' | 'delivery_failed' | 'api_failed' | 'history_failed' | 'unknown';
 export type ExecutionRisk = 'proven_not_started' | 'effects_observed' | 'unknown';
+/** Merge execution evidence without ever forgetting an observed side effect. */
+export function mergeExecutionRisk(current: ExecutionRisk, next: ExecutionRisk): ExecutionRisk {
+  if (current === 'effects_observed' || next === 'effects_observed') return 'effects_observed';
+  if (current === 'unknown' || next === 'unknown') return 'unknown';
+  return 'proven_not_started';
+}
 export type RecoveryDecision = 'not_attempted' | 'blocked_uncertain' | 'exhausted' | 'cancelled' | 'fresh_retried';
 export type OctoEndpoint = '/v1/bot/sendMessage' | '/v1/bot/register' | '/v1/bot/typing'
   | '/v1/bot/heartbeat' | '/v1/bot/readReceipt' | '/v1/bot/messages/sync'
@@ -78,6 +84,15 @@ export function classifyFailure(error: unknown, source: FailureSnapshot['source'
   // Never inspect subprocess stderr, rejected JSONL, or arbitrary tool text.
   if (/^Codex Exec exited with (?:code \d+|signal SIG[A-Z]+):/.test(msg)) return { stage: 'process_exit', category: 'process_exit', source, evidence: 'recognized_text' };
   if (source === 'sdk_event') {
+    // The gateway/SDK may wrap a transient upstream response instead of
+    // emitting the bare "503 service unavailable" token. Keep the match
+    // bounded to the structured HTTP status prefix; do not classify arbitrary
+    // tool or model text as retryable.
+    const wrappedStatus = /^unexpected status (503|502|500) (?:service unavailable|bad gateway|internal server error)(?::|$)/i.exec(msg);
+    if (wrappedStatus) {
+      const status = Number(wrappedStatus[1]);
+      return { stage: 'inference', category: 'provider_unavailable', source, evidence: 'recognized_text', httpStatus: status };
+    }
     const exact: Array<[RegExp, FailureCategory, number?]> = [
       [/^(?:429 )?(?:insufficient_quota|quota exceeded|quota exhausted)$/i, 'quota_exhausted', 429],
       [/^(?:429 )?rate limit exceeded$/i, 'rate_limited', 429],
