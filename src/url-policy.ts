@@ -4,15 +4,18 @@
  * Stage 6 W1: consolidates URL validation that was previously duplicated and
  * inconsistent across inbound.ts and config.ts.
  *
- * Three public surfaces:
+ * Public surfaces:
  *   - isPrivateOrLocalAddress(address): IP-range check (IPv4 + IPv6 + v4-mapped)
- *   - assertPublicUrl(url): throws if a URL resolves to a private/local address
+ *   - assertPublicUrl(url): preflight check only
+ *   - resolvePublicUrl(url): validated, request-scoped address snapshot
  *   - fetchWithRedirectGuard(url, init): fetch() wrapper that re-validates on every redirect
  *   - isAllowedApiUrl(url): boot-time apiUrl validation (https any non-private host, http localhost only)
  */
 
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import type { LookupAddress } from "node:dns";
+import { requestPinned } from "./pinned-transport.js";
 
 /**
  * Reject IP literals/resolved IPs in private/loopback/link-local/CGN ranges.
@@ -22,11 +25,9 @@ import { isIP } from "node:net";
  *   - IPv6 hex v4-mapped: `::ffff:7f00:1` (S5 — was a bypass of original PR#34 fix)
  *   - IPv4-compatible IPv6: `::7f00:1` (deprecated but resolvable)
  *
- * NOTE: DNS rebinding remains a residual risk. We validate at lookup time;
- * the OS resolver may return a different IP at fetch time. Mitigated by short
- * TTLs and the fact that an attacker would need to control authoritative DNS
- * for a domain we trust. For full protection, callers can pin IP and connect
- * by IP — not done here to preserve TLS SNI and CDN routing.
+ * Connection consumers must use resolvePublicUrl + requestPinned (or the
+ * redirect guard), so validation and connection share the same DNS snapshot.
+ * assertPublicUrl alone is only a preflight check, not a connection fence.
  */
 export function isPrivateOrLocalAddress(address: string): boolean {
   const fam = isIP(address);
@@ -128,38 +129,50 @@ function isPrivateIPv4(address: string): boolean {
  *   - IP literal in private/loopback/link-local range
  *   - hostname resolving to ANY private/local address
  */
+export interface ResolvedPublicUrl {
+  readonly rawUrl: string;
+  readonly url: URL;
+  readonly addresses: ReadonlyArray<LookupAddress>;
+}
+
+/** Resolve once; the returned addresses are the only allowed connection targets.
+ * The explicit localhost exception is only for configured local storage on its
+ * exact API origin; it never permits a remote hostname to resolve privately.
+ */
+export async function resolvePublicUrl(rawUrl: string, allowLocalhost = false, signal?: AbortSignal): Promise<ResolvedPublicUrl> {
+  signal?.throwIfAborted();
+  const url = new URL(rawUrl);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(`Refusing to fetch non-http(s) URL: ${url.protocol}`);
+  if (url.username || url.password) throw new Error('Refusing URL credentials');
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  const family = isIP(host);
+  let addresses: LookupAddress[];
+  if (family) addresses = [{ address: host, family }];
+  else {
+    // DNS itself has no AbortSignal API. Bound the wait, remove listeners on
+    // either outcome, and never connect if cancellation won the race.
+    addresses = await new Promise<LookupAddress[]>((resolve, reject) => {
+      const abort = () => reject(signal?.reason);
+      signal?.addEventListener('abort', abort, { once: true });
+      dnsLookup(host, { all: true }).then(resolve, reject).finally(() => signal?.removeEventListener('abort', abort));
+    });
+  }
+  signal?.throwIfAborted();
+  if (!addresses.length) throw new Error(`DNS resolution returned no addresses for: ${host}`);
+  const local = allowLocalhost && ['localhost', '127.0.0.1', '::1'].includes(host);
+  for (const row of addresses) {
+    const ipFamily = isIP(row.address);
+    if (!ipFamily || ipFamily !== row.family) throw new Error('Invalid resolved address');
+    const loopback = row.address === '::1' || /^127\./.test(row.address);
+    if (isPrivateOrLocalAddress(row.address) && !(local && loopback)) {
+      throw new Error(`Refusing to fetch ${host}: resolves to private/local address ${row.address}`);
+    }
+  }
+  return { rawUrl, url, addresses: addresses.map(a => Object.freeze({ ...a })) };
+}
+
 export async function assertPublicUrl(rawUrl: string): Promise<void> {
-  const u = new URL(rawUrl);
-
-  // Reject non-http(s) schemes — gopher://, file://, dict:// etc.
-  if (u.protocol !== "http:" && u.protocol !== "https:") {
-    throw new Error(`Refusing to fetch non-http(s) URL: ${u.protocol}`);
-  }
-
-  const host = u.hostname;
-  // IPv6 hostnames come bracketed in URL.hostname — strip for isIP/dns.
-  const bareHost = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-
-  // Reject IP literals in private/loopback/link-local ranges immediately.
-  if (isIP(bareHost)) {
-    if (isPrivateOrLocalAddress(bareHost)) {
-      throw new Error(`Refusing to fetch private/local address: ${bareHost}`);
-    }
-    return;
-  }
-
-  // Resolve hostname — reject if ANY resolved address is private/local.
-  const addresses = await dnsLookup(bareHost, { all: true });
-  if (addresses.length === 0) {
-    throw new Error(`DNS resolution returned no addresses for: ${bareHost}`);
-  }
-  for (const { address } of addresses) {
-    if (isPrivateOrLocalAddress(address)) {
-      throw new Error(
-        `Refusing to fetch ${bareHost}: resolves to private/local address ${address}`,
-      );
-    }
-  }
+  await resolvePublicUrl(rawUrl);
 }
 
 /** Maximum HTTP redirects to follow before giving up. */
@@ -189,9 +202,8 @@ export type PerHopInit = (
  * bypassing `assertPublicUrl(originalUrl)`. This wrapper sets
  * `redirect: 'manual'` and manually walks the chain, validating each hop.
  *
- * Callers should still call `assertPublicUrl(url)` once upfront; this wrapper
- * handles ONLY the redirect chain. The reason for the split: assertPublicUrl
- * fails fast before any network I/O for the obvious cases.
+ * Each hop resolves and validates once, then pins the request connection to
+ * those answers. Optional caller preflights do not authorize later connections.
  *
  * **Credential safety (S1 follow-up fix, addressed in PR#38 re-review):**
  *
@@ -222,10 +234,9 @@ export async function fetchWithRedirectGuard(
   let previousUrl: string | null = null;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     // Re-validate on every hop (including the first, in case of caller mistake).
-    await assertPublicUrl(currentUrl);
-
     const hopInit = buildInit(currentUrl, previousUrl);
-    const resp = await fetch(currentUrl, { ...hopInit, redirect: "manual" });
+    const target = await resolvePublicUrl(currentUrl, false, hopInit.signal ?? undefined);
+    const resp = await requestPinned(target.url, target.addresses, { ...hopInit, redirect: "manual" });
 
     // 3xx — follow manually after validation.
     if (resp.status >= 300 && resp.status < 400) {

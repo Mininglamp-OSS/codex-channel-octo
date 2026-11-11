@@ -1,4 +1,5 @@
 import { validateRecovery, type RecoveryConfig } from './agent-recovery.js';
+import { validateNativeImages, type NativeImageConfig } from './artifacts.js';
 /**
  * Configuration loading.
  *
@@ -114,6 +115,8 @@ export interface Config {
   groupConfigDir?: string;
   privateMemory?: { enabled?: boolean; maxBytes?: number };
   sdk: {
+    /** Explicit native-image exports only; disabled by default. Restart to apply. */
+    nativeImages?: NativeImageConfig;
     /** Codex model id (e.g. gpt-5.5). Omitted → codex default. */
     model?: string;
     /**
@@ -870,6 +873,7 @@ function assertAdditionalDirectories(
  * sets in agent-bridge; kept here (no import) to avoid a config↔bridge cycle.
  */
 function assertSdkEnums(id: string, sdk: Config['sdk']): void {
+  validateNativeImages(sdk.nativeImages);
   const check = (field: string, value: string | undefined, allowed: string[]): void => {
     if (value !== undefined && !allowed.includes(value)) {
       throw new Error(`Bot "${id}": invalid sdk.${field} '${value}' (allowed: ${allowed.join(', ')})`);

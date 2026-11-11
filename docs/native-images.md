@@ -1,0 +1,222 @@
+# Native outbound images (#95)
+
+Inbound image download, channel-native image delivery, and external `octo-cli`
+skills are separate paths. Receiving images does not enable outbound delivery.
+External skills need their own installation, credentials and authorization.
+This feature uses the configured Bot token directly, does not require octo-cli
+and does not add an image generation model.
+
+## Enable and use
+
+In the global or per-bot config:
+
+```json
+{
+  "sdk": {
+    "sandboxMode": "workspace-write",
+    "allowWorkspaceWrite": true,
+    "outputSelection": "final",
+    "nativeImages": { "enabled": true, "maxBytes": 10485760 }
+  }
+}
+```
+
+Restart to apply. Default: disabled. Enabling images does not grant workspace
+writes, network access or access to external directories. The existing sandbox
+double switch still applies. Compatibility output modes do not offer exports.
+`danger-full-access` also permits exports but needs an external isolation boundary.
+
+Ask the bot to generate/send images using its existing generation tool. Every
+turn (including resumed sessions) receives a fresh export directory and protocol.
+The agent writes/copies the requested images there, then returns ONE bare final
+JSON object, without Markdown fences:
+
+```json
+{
+  "octo_output": 1,
+  "requestId": "<host-provided current turn ID>",
+  "text": "Here are your images.",
+  "artifacts": [
+    { "id": "image1", "kind": "image", "path": "image.png", "disposition": "relay" }
+  ]
+}
+```
+
+Only one bare JSON object in a single selected message of a complete primary
+run supplies artifacts. Only object-shaped text with the reserved key enters
+protocol validation; malformed, stale or joined qualifying envelopes produce a
+fixed invalid notice. Prose, fenced examples and non-object fragments remain
+ordinary text, even when quoting the key. Ordinary paths,
+Markdown images and URLs never trigger uploads. Destination channel/type come
+from the host turn; model output cannot redirect delivery. Operator opt-in grants
+exports only from this fresh directory; prompt instructions ask the agent to
+export only images requested by the current user. This is an explicit protocol,
+not intent detection or an additional execution sandbox.
+
+One image per native message, at most **four per turn**. All selected text goes
+first, then images in array order, then a bounded numbered stage report. An
+image-only envelope receives a neutral introductory text. Text uses the response
+cap; the fixed stage report is additional. Once the report is acknowledged,
+history contains the same text and report; the independent stage ledger remains
+if an acknowledgment is lost. Per-item failures do not rerun generation or block
+other distinct images. Failed/unknown text delivery stops image delivery.
+
+## Authorization and client policy
+
+- Flat filenames relative to this turn's directory only: no nested/absolute
+  paths, URLs, hidden/config/credential names, symlinks, hardlinks or special files.
+- Before/after scope, inode, link-count, size and timestamp checks; no-follow
+  open; bounded reads. Upload uses captured bytes and never reopens the path.
+- PNG chunk lengths/CRCs, JPEG SOF/SOS component structure and complete entropy
+  scan boundaries, and every GIF frame's dimensions/offsets within the canvas
+  are checked against actual bytes and matching extensions. These structural
+  checks are not a complete image decoding library.
+- Default **10 MiB per file**, configurable integer `maxBytes` **1..50 MiB**.
+  Width/height **1..16384**, at most **40 million pixels**. These are conservative
+  **client policies, not verified server limits**. A returned presign
+  `maxFileSize` is also enforced.
+- JPEG policy supports Huffman DCT SOF0 (baseline), SOF1 (extended sequential)
+  and SOF2 (progressive) only. Other SOF markers, including lossless SOF3 and
+  arithmetic SOF9/SOF10, fail before upload with
+  `generation=failed_unsupported_jpeg_sof`. Export a supported JPEG or PNG;
+  no re-encoding or silent fallback is performed.
+- The turn owns its export scope and removes it in `finally` once inference and
+  all awaited delivery/report calls settle, including failure, cancellation,
+  timeout, and late acknowledgments. In-flight calls retain their scope until
+  they settle; uploads use captured bytes. Empty/text-only turns also clean up.
+  Cleanup validates directory identity, does not follow replacement scopes, and
+  emits only a fixed warning on failure without masking the turn outcome.
+  Abrupt process termination or refused/failed cleanup still relies on existing
+  **seven-day idle session TTL**; no detached cleanup job is started. Files are
+  temporary, so keep durable generated originals outside the export scope.
+
+If the per-turn export directory cannot be created, image exports are disabled
+for that turn and plain text remains available. Presign has a separate 30-second
+budget; PUT has 120 seconds, with both also bounded by the parent turn signal.
+
+The workspace is a starting directory, not a chroot. These checks protect the
+upload path against links/replacements; they cannot prevent an agent with
+separately granted filesystem access from copying sensitive pixel data.
+
+## Delivery and external tools
+
+SQLite `image_deliveries` records generation (`ready`/`failed`), upload
+(`not_started`/`unknown`/`confirmed`/`failed`) and delivery
+(`not_started`/`unknown`/`confirmed`/`external`/`duplicate`) separately by turn/item.
+`ready` means an authorized snapshot exists, not successful upload or delivery.
+Message intents are marked unknown before the request; only a valid positive
+int64 message ID confirms delivery. Revoked/canceled/expired turns cannot start
+another step or accept late acknowledgments. In-flight remote writes may already
+have happened and remain unknown. The verified API offers no orphan-object
+deletion; cancellation does not roll back uploads. No automatic upload/send
+retry or model replay occurs.
+
+If an explicit external sending tool delivers an image, the agent must declare
+the same local file with `disposition:"external"`, or omit it from relay
+artifacts. External delivery is unverified, never channel-confirmed. Its content
+hash suppresses relay copies even when declared later in the array. Identical
+relay content is sent at most once. Never explicitly send an image and also
+declare it as relay. Undeclared independent external sends are not observable;
+no scanning of tool output/paths or server deduplication guarantee is implied.
+A SQLite transaction claims the whole turn and writes its initial image ledger
+before any external request, including an empty report. Competing callers read
+the winner's persisted rows and client message numbers and return without
+uploading or sending. Existing ledgers from earlier versions remain authoritative.
+Turn claims follow the output ledger's reset/expiry retention. This is not a
+server-side deduplication guarantee. Reentry reads the durable ledger without
+resending. Each turn’s image report is also a durable idempotent delivery part;
+reentry reuses its payload/message number and never resends an unknown or
+confirmed report. A pending report is atomically marked unknown before its
+single external attempt; only confirmed reports are appended to history.
+A new user-authorized turn
+must reconcile unknown outcomes before requesting another send.
+
+New diagnostics/ledger never contain Bot tokens, signed URLs, response bodies,
+image bytes or content hashes. Reports use fixed stages and numeric positions.
+
+## Contract evidence and remaining manual validation
+
+Reference: openclaw-channel-octo
+[`3cdb7e794ba40ae617fb0215177d1493dd26460a`](https://github.com/Mininglamp-OSS/openclaw-channel-octo/tree/3cdb7e794ba40ae617fb0215177d1493dd26460a):
+`src/api-fetch.ts` (`getUploadPresign`, `uploadFileToPresignedUrl`,
+`sendMediaMessage`), `src/channel.ts` (`sendMedia`), and
+`skills/octo-bot-api/SKILL.md` (presign and image examples).
+
+1. GET `/v1/bot/upload/presigned` with filename/fileSize/contentType and Bot bearer.
+2. PUT the exact bytes to uploadUrl, echoing contentType and optional
+   contentDisposition unchanged, without forwarding the Bot token. Redirects
+   are rejected. Public HTTPS storage is required; a localhost API may return
+   storage URLs on its exact origin for local deployments/tests.
+   The returned MIME must match the locally detected MIME, case-insensitively:
+   `image/png` → `image/png`, `image/gif` → `image/gif`, and `image/jpeg` →
+   `image/jpeg`. No cross-format mapping, parameters or aliases are accepted.
+   In particular, `image/jpg` has no verified alias contract here and is rejected
+   even for JPEG; failure is reported at presign before PUT/send. Validation
+   never rewrites the returned signed header string. This is local conservative
+   policy, not a verified server compatibility guarantee.
+3. POST `/v1/bot/sendMessage` with original channel ID/type and
+   `{type:2,url:downloadUrl,width,height,name,size}`. client_msg_no is local
+   correlation only; verified server deduplication is absent.
+
+Connection binding: upload storage URLs are resolved once and every returned
+address is checked before connecting. A shared native Node HTTP(S) transport
+uses only that approved snapshot, including IPv6/IPv4 fallback, while retaining
+the original URL, Host, SNI and default CA/hostname verification. No global IP
+cache or pooled socket is reused across requests; redirects are refused for PUT.
+The same transport backs every hop of guarded inbound downloads, without
+changing their per-hop credential scoping. The explicit local-storage exception
+is limited to the configured localhost API's exact origin and loopback answers.
+Parent cancellation and independent presign/PUT budgets still apply; the
+returned Content-Type string and original upload bytes remain unchanged.
+
+This uses only Node built-ins (no new dependency). The tradeoff is a fresh
+connection/TLS handshake per request; environment/global proxy Agents are not
+used by this direct guarded transport. Streaming response limits remain at the
+existing callers; gzip/deflate/Brotli responses are decoded while streaming.
+Reverting the transport change restores the former DNS check/connection gap
+for both upload and guarded inbound paths; disable native images as the safer
+immediate feature rollback. Real deployment/CDN/proxy compatibility still needs
+operator acceptance; this does not assert the pending real-preview tests passed.
+
+Unknown: server format whitelist, size limits, dimension requirements/limits,
+GIF static/animated preview, actual DM/group/topic frontend preview, server
+message deduplication. The reference sends GIF as type=2; this does not prove
+animated rendering. No GIF animation guarantee is made.
+
+Mock HTTP tests cover exact bytes/headers, native payloads, ordered multiple
+images, partial outcomes, cancellation, deadlines, lost responses, late acks,
+external disposition and deduplication. Handler tests cover DM/group text-first
+delivery and history. **Real preview acceptance is pending** an independent
+test Bot identity and DM/group targets, unavailable to this team. Once supplied,
+compare downloaded PNG/JPEG bytes, inspect ordering and record GIF frontend
+behavior with the backend/client version.
+
+Team scope decision: #27 remains open with no common implementation at baseline
+`5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34`. This PR supplies minimum generic
+artifact/snapshot/upload/stage seams needed by #95, not #27's complete file scope.
+
+Rollback: disable sdk.nativeImages and restart, or revert this PR. The additive
+SQLite table is ignored by older code; unknown sends still require manual
+reconciliation, never automatic replay.
+
+## COD2-2 review remediation
+
+- `F-PR96-P1-SCOPE-LEAK`: scope creation preceded inference, but no owner
+  released it after delivery. The handler now owns cleanup in `finally`, across
+  text-only/empty output, inference/text/upload/send errors, cancellation,
+  timeout and late acknowledgment. The multi-turn wiring regression first
+  failed on the previous head, then passed with cleanup; it checks that an
+  in-flight send retains its files and completed turns remove their scope.
+  Cleanup tests also preserve sibling directories and refuse replaced scopes.
+- `F-PR96-P2-JPEG-SOF`: the parser already rejected unsupported SOF, but erased
+  the reason as `file_rejected`. The supported subset is now explicit in both
+  READMEs; fixed `unsupported_jpeg_sof` diagnostics survive snapshot validation
+  and persist as `generation=failed_unsupported_jpeg_sof` in reports. SOF3/9/10
+  marker tests first failed on the generic error, then passed with the explicit
+  diagnostic. These are rejection fixtures, not claims of decoding those modes.
+- Test gap: earlier delivery tests removed their temporary roots in teardown,
+  hiding per-turn retention, and only tested baseline/progressive accepted
+  fixtures. Handler tests now assert filesystem lifetime before teardown and
+  verify the unsupported-encoding report survives ledger reentry with zero HTTP.
+  Scope creation call sites were checked: production ownership is confined to
+  the handler; the transport consumes immutable snapshots and owns no directory.

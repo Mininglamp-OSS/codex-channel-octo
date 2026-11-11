@@ -96,6 +96,24 @@ Depends on `@openai/codex-sdk`, which bundles the Codex runtime (no separate Cod
 
 ## Configuration
 
+### Native outbound images (opt-in)
+
+Enable `sdk.nativeImages.enabled` with a writable sandbox and `final` output
+selection to send explicitly declared PNG/JPEG/GIF artifacts as native messages
+in the current conversation. Text goes first, then up to four images and per-item
+status. Ordinary paths, Markdown images and URLs never trigger uploads. Inbound
+image download and external octo-cli sending skills have separate configuration
+and authority. See [configuration, protocol and limits](docs/native-images.md).
+JPEG accepts Huffman DCT SOF0/1/2 only; other SOF encodings report
+`failed_unsupported_jpeg_sof` before upload. Per-turn exports are temporary and
+cleaned after the turn settles.
+A transactional turn claim prevents competing image batches, including empty
+reports. Presigned MIME must match detected PNG/GIF/JPEG (case-insensitive);
+PUT preserves the original header. Unverified aliases such as `image/jpg` are rejected.
+Storage PUT and guarded inbound downloads share request-scoped DNS pinning with
+original Host/SNI and TLS verification; no cross-request pool/IP cache is used.
+Server limits, GIF animation and real DM/group previews await manual validation.
+
 Server documents use a dedicated `[Server document — ...]` data marker, not the reserved `[Group context]` forgery marker or transcript labels. Empty documents generate no context on a fresh session; a withdrawal is sent only to a resumed SDK thread that previously received the document. Fresh retry snapshots omit absent documents. A second manager edit during a slow bounded refetch retains the last successfully verified snapshot instead of dropping it. Current-body role/section replicas are escaped and VT/FF/NEL normalized to newlines; this intentionally rewrites those control characters.
 
 Two-layer, bot-first:

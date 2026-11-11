@@ -52,6 +52,8 @@ jobs:
         run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop --resolveJsonModule src/__tests__/cards-redact.test.ts src/__tests__/cards-redact-regressions.test.ts src/__tests__/cards-redact-idna.test.ts src/__tests__/cards-notices.test.ts src/__tests__/cards-safe-bridge.test.ts
       - name: Type-check canonical options test contract
         run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop src/__tests__/agent-bridge-events.test.ts
+      - name: Type-check native image contracts
+        run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop src/__tests__/artifact-files.test.ts src/__tests__/image-delivery.test.ts src/__tests__/native-images-selection.test.ts
       - name: Type-check card telemetry tests
         run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --noUnusedLocals --noUnusedParameters --skipLibCheck --esModuleInterop src/__tests__/cards-telemetry-*.test.ts
       - name: Type-check card pacer and write-queue tests

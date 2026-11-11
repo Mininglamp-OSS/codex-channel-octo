@@ -21,6 +21,7 @@
     "docs/final-output-policy.md",
     "docs/private-diagnostics.md",
     "docs/session-continuity.md",
+    "docs/native-images.md",
     "scripts/check-codex-runtime.mjs"
   ],
   "repository": {

@@ -1,11 +1,12 @@
 /**
  * Output-selection wiring through the real handleMessage + StreamRelay:
  * delivery/history parity, cap behavior at the relay, mention offsets, error
- * and empty paths, and the small-limit startup warning. Only the network and
- * the agent bridge are mocked; the bridge is scripted with typed events.
+ * and empty paths, and the small-limit startup warning. The network/agent
+ * bridge are mocked. Report reentry cases also control admission/plain-text
+ * persistence explicitly to isolate the real report block and SQLite ledger.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,6 +31,10 @@ vi.mock('../octo/socket.js', () => ({
   WKSocket: vi.fn().mockImplementation(() => ({
     connect: vi.fn(), disconnectAndWait: vi.fn().mockResolvedValue(undefined),
   })),
+}));
+vi.mock('../octo/media.js', () => ({
+  uploadArtifact: vi.fn().mockResolvedValue('https://cdn.example/image.png'),
+  sendNativeImage: vi.fn().mockResolvedValue({ message_id: '456' }),
 }));
 
 vi.mock('../media-inbound.js', async (importOriginal) => {
@@ -56,6 +61,9 @@ import { queryAgentEvents, type AgentOutputEvent } from '../agent-bridge.js';
 import { resolveMentions } from '../mention-utils.js';
 import { handleMessage, startBot } from '../index.js';
 import { sendMessage, getGroupMembers } from '../octo/api.js';
+import { uploadArtifact, sendNativeImage } from '../octo/media.js';
+import { TurnContext } from '../turn-context.js';
+import * as artifactFiles from '../artifact-files.js';
 import { ChannelType, MessageType, type BotMessage } from '../octo/types.js';
 import type { Config } from '../config.js';
 import { TRUNCATION_SUFFIX } from '../output-selection.js';
@@ -111,7 +119,7 @@ function script(steps: Step[]): void {
 }
 const start = (attempt = 0): AgentOutputEvent => ({ kind: 'attempt_start', attempt, reason: 'initial', continues: null });
 const end = (attempt = 0): AgentOutputEvent => ({ kind: 'attempt_end', attempt, terminal: 'completed' });
-const m = (itemId: string, seq: number, text: string, attempt = 0): AgentOutputEvent => ({
+const m = (itemId: string, seq: number, text: string, attempt = 0): Extract<AgentOutputEvent, { kind: 'message' }> => ({
   kind: 'message', attempt, itemId, seq, text, phase: 'unknown',
 });
 const w = (itemId: string, seq: number, attempt = 0): AgentOutputEvent => ({
@@ -181,6 +189,155 @@ describe('output selection wiring', () => {
     expect(historyInputs()).toEqual(['two']);
     expect(sentContents()).toEqual(['two']);
     expect(relayInputs()).toEqual(['two']);
+  });
+  it.each([{ group: false, fail: false }, { group: true, fail: false }, { group: false, fail: true }])('wires current-turn images after text without model replay (%j)', async ({ group, fail }) => {
+    const root = mkdtempSync(join(tmpdir(), 'cco-images-wiring-'));
+    const config = makeConfig({ cwd: root }, { nativeImages: { enabled: true }, sandboxMode: 'workspace-write', allowWorkspaceWrite: true });
+    setup(config);
+    if (fail) vi.mocked(sendNativeImage).mockRejectedValueOnce(new Error('SECRET signed-url contents'));
+    vi.mocked(queryAgentEvents).mockImplementation(async function* (_body, _config, _session, _tool, opts) {
+      const output = opts!.nativeImageOutput!;
+      expect(output.requestId).toBeTruthy();
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64');
+      writeFileSync(join(output.directory, 'one.png'), png);
+      yield start();
+      yield m('image', 0, JSON.stringify({ octo_output: 1, requestId: output.requestId, text: 'Your image.',
+        artifacts: [{ id: 'one', kind: 'image', path: 'one.png', disposition: 'relay' }] }));
+      yield end();
+    });
+    try {
+      await run(config, group ? groupMsg('send an image') : dm('send an image'));
+      expect(sentContents()[0]).toBe('Your image.');
+      expect(sentContents()[1]).toContain(`delivery=${fail ? 'unknown' : 'confirmed'}`);
+      const summarySignal = vi.mocked(sendMessage).mock.calls[1][0].signal;
+      expect(summarySignal).toBe(vi.mocked(sendNativeImage).mock.calls[0][0].signal);
+      expect(historyInputs()[0]).toBe(sentContents().join('\n\n'));
+      expect(vi.mocked(sendMessage).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(uploadArtifact).mock.invocationCallOrder[0]);
+      expect(vi.mocked(sendNativeImage).mock.calls[0][0]).toMatchObject({ channelId: group ? GROUP : USER_UID, channelType: group ? 2 : 1 });
+      expect(vi.mocked(queryAgentEvents)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(sendNativeImage)).toHaveBeenCalledTimes(1);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+  it.each(['pending', 'unknown', 'confirmed', 'repeat', 'fresh'] as const)(
+    'F-PR96-P1-IMAGE-REPORT-LEDGER: reuses report intent for %s', async mode => {
+      const root = mkdtempSync(join(tmpdir(), 'cco-report-intent-'));
+      const config = makeConfig({ cwd: root }, { nativeImages: { enabled: true }, sandboxMode: 'workspace-write', allowWorkspaceWrite: true });
+      setup(config);
+      const turn = new TurnContext(30000, 1, 'report-turn');
+      const key = 'report-turn-image-report';
+      const persisted = JSON.stringify({ channelId: USER_UID, channelType: ChannelType.DM, content: 'Previously persisted image report.' });
+      const seeded = ['pending', 'unknown', 'confirmed'].includes(mode);
+      const expectedIndex = seeded ? 7 : 0;
+      if (seeded) {
+        store.saveDeliveryPart(turn.turnId, expectedIndex, key, persisted);
+        if (mode !== 'pending') store.markDeliveryPart(turn.turnId, expectedIndex, mode as 'unknown' | 'confirmed', mode === 'confirmed' ? 'original-id' : undefined);
+        store.claimImageDeliveries(turn.turnId, [{ id: 'one', generation: 'ready', upload: 'confirmed', delivery: 'confirmed', clientMsgNo: 'image-intent', messageId: '456' }]);
+      }
+      const route = router.routeAndHandle.bind(router);
+      const routeSpy = vi.spyOn(router, 'routeAndHandle').mockImplementation((msg, handler) => route(msg, result => handler(result, turn)));
+      // Isolate reentry into the real report block from unrelated admission/text
+      // persistence: consume the real model stream but do not re-send its text.
+      const relaySpy = vi.spyOn(relay, 'deliver').mockImplementation(async (_channel, _type, chunks) => {
+        for await (const chunk of chunks) { void chunk; }
+        return { parts: [] };
+      });
+      const save = store.saveTurnOutput.bind(store);
+      const saveSpy = vi.spyOn(store, 'saveTurnOutput').mockImplementation((id, ...args) => {
+        if (!adapter.prepare('SELECT turn_id FROM turn_outputs WHERE turn_id=?').get(id)) save(id, ...args);
+      });
+      vi.mocked(queryAgentEvents).mockImplementation(async function* (_body, _config, _session, _tool, opts) {
+        const output = opts!.nativeImageOutput!;
+        writeFileSync(join(output.directory, 'one.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
+        yield start(); yield m('image', 0, JSON.stringify({ octo_output: 1, requestId: output.requestId, text: 'Image.',
+          artifacts: [{ id: 'one', kind: 'image', path: 'one.png', disposition: 'relay' }] })); yield end();
+      });
+      const markSpy = vi.spyOn(store, 'markDeliveryPart');
+      if (mode === 'pending' || mode === 'fresh' || mode === 'repeat') vi.mocked(sendMessage).mockImplementationOnce(async params => {
+        expect(params.clientMsgNo).toBe(key);
+        expect(store.readDeliveryParts(turn.turnId)).toEqual([{ index: expectedIndex, state: 'unknown', messageId: null }]);
+        return { message_id: '123', message_seq: 1, client_msg_no: key };
+      });
+      try {
+        await run(config);
+        if (mode === 'repeat') await run(config);
+        const sends = vi.mocked(sendMessage).mock.calls.map(([params]) => params);
+        const shouldSend = mode === 'pending' || mode === 'fresh' || mode === 'repeat';
+        expect(sends).toHaveLength(shouldSend ? 1 : 0);
+        if (shouldSend) {
+          expect(sends[0].clientMsgNo).toBe(key);
+          if (seeded) expect(sends[0].content).toBe('Previously persisted image report.');
+        }
+        const rows = adapter.prepare('SELECT part_index,client_msg_no,payload,state,message_id FROM delivery_parts WHERE turn_id=?').all(turn.turnId);
+        expect(rows).toEqual([{ part_index: expectedIndex, client_msg_no: key,
+          payload: seeded ? persisted : JSON.stringify({ channelId: USER_UID, channelType: ChannelType.DM, content: sends[0].content }),
+          state: mode === 'unknown' ? 'unknown' : 'confirmed', message_id: mode === 'confirmed' ? 'original-id' : mode === 'unknown' ? null : '123' }]);
+        if (mode === 'unknown') expect(historyInputs()).toEqual([]);
+        if (mode === 'unknown' || mode === 'confirmed') expect(markSpy).not.toHaveBeenCalled();
+        if (mode === 'pending' || mode === 'confirmed') expect(historyInputs()).toEqual(['Image.\n\nPreviously persisted image report.']);
+        if (mode === 'repeat') expect(historyInputs()).toHaveLength(1);
+      } finally {
+        markSpy.mockRestore(); routeSpy.mockRestore(); relaySpy.mockRestore(); saveSpy.mockRestore(); rmSync(root, { recursive: true, force: true });
+      }
+    });
+  it.each(['success', 'empty', 'text-only', 'inference-failure', 'text-failure', 'upload-failure', 'send-failure', 'cancel-upload', 'late-send', 'timeout'])(
+    'F-PR96-P1-SCOPE-LEAK: releases scopes after %s, never during an active send', async mode => {
+      const root = mkdtempSync(join(tmpdir(), 'cco-scope-lifetime-'));
+      const config = makeConfig({ cwd: root }, { nativeImages: { enabled: true }, sandboxMode: 'workspace-write', allowWorkspaceWrite: true });
+      setup(config);
+      const state: { active?: TurnContext } = {};
+      const original = TurnContext.prototype.assertPublishable;
+      const publish = vi.spyOn(TurnContext.prototype, 'assertPublishable').mockImplementation(function (this: TurnContext) {
+        state.active = this; return original.call(this);
+      });
+      const directories: string[] = [];
+      const presentDuringSend: boolean[] = [];
+      vi.mocked(queryAgentEvents).mockImplementation(async function* (_body, _config, _session, _tool, opts) {
+        const output = opts!.nativeImageOutput!; directories.push(output.directory);
+        writeFileSync(join(output.directory, 'one.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==', 'base64'));
+        if (mode === 'inference-failure') throw new Error('generation failed');
+        if (mode === 'timeout') { Object.defineProperty(state.active!, 'deadline', { value: 0 }); }
+        yield start();
+        if (mode !== 'empty') yield m('image', 0, mode === 'text-only' ? 'Text only.' : JSON.stringify({ octo_output: 1, requestId: output.requestId, text: 'Image.',
+          artifacts: [{ id: 'one', kind: 'image', path: 'one.png', disposition: 'relay' }] }));
+        yield end();
+      });
+      if (mode === 'text-failure') vi.mocked(sendMessage).mockRejectedValueOnce(new Error('text failed'));
+      if (mode === 'upload-failure') vi.mocked(uploadArtifact).mockRejectedValueOnce(new Error('upload failed'));
+      if (mode === 'send-failure') vi.mocked(sendNativeImage).mockRejectedValueOnce(new Error('send failed'));
+      if (mode === 'cancel-upload') vi.mocked(uploadArtifact).mockImplementationOnce(async () => {
+        state.active!.cancel(); throw new DOMException('cancelled', 'AbortError');
+      });
+      if (mode === 'success' || mode === 'late-send') vi.mocked(sendNativeImage).mockImplementation(async () => {
+        // Cancellation revokes publishing immediately, but a late callback
+        // still owns its scope until this in-flight operation settles.
+        if (mode === 'late-send') state.active!.cancel();
+        await new Promise(resolve => setTimeout(resolve, 2));
+        presentDuringSend.push(directories.every(directory => existsSync(directory)));
+        return { message_id: '456', client_msg_no: 'test-image', message_seq: 1 };
+      });
+      try {
+        for (let i = 0; i < (mode === 'success' ? 3 : 1); i++) {
+          await run(config);
+          expect(vi.mocked(queryAgentEvents)).toHaveBeenCalledTimes(i + 1);
+          expect(directories).toHaveLength(1);
+          expect(directories.every(directory => !existsSync(directory))).toBe(true);
+          directories.length = 0;
+          if (mode === 'success' || mode === 'late-send') expect(presentDuringSend).toEqual(Array(i + 1).fill(true));
+        }
+      } finally { publish.mockRestore(); vi.mocked(sendNativeImage).mockResolvedValue({ message_id: '456', client_msg_no: 'test-image', message_seq: 1 }); rmSync(root, { recursive: true, force: true }); }
+    });
+
+  it('RVW-4: export scope creation failure does not block a text answer', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cco-image-scope-failure-'));
+    const config = makeConfig({ cwd: root }, { nativeImages: { enabled: true }, sandboxMode: 'workspace-write', allowWorkspaceWrite: true });
+    setup(config);
+    const create = vi.spyOn(artifactFiles, 'createArtifactScope').mockImplementationOnce(() => { throw new Error('SECRET filesystem path'); });
+    script([start(), m('answer', 0, 'A plain text answer.'), end()]);
+    try {
+      await run(config);
+      expect(sentContents()).toEqual(['A plain text answer.']);
+      expect(vi.mocked(queryAgentEvents).mock.calls[0][4]?.nativeImageOutput).toBeUndefined();
+    } finally { create.mockRestore(); rmSync(root, { recursive: true, force: true }); }
   });
 
   it('publishes and stores only the short tail after long unlabeled output', async () => {
