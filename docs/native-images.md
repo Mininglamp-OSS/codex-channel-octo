@@ -152,6 +152,26 @@ Reference: openclaw-channel-octo
    `{type:2,url:downloadUrl,width,height,name,size}`. client_msg_no is local
    correlation only; verified server deduplication is absent.
 
+Connection binding: upload storage URLs are resolved once and every returned
+address is checked before connecting. A shared native Node HTTP(S) transport
+uses only that approved snapshot, including IPv6/IPv4 fallback, while retaining
+the original URL, Host, SNI and default CA/hostname verification. No global IP
+cache or pooled socket is reused across requests; redirects are refused for PUT.
+The same transport backs every hop of guarded inbound downloads, without
+changing their per-hop credential scoping. The explicit local-storage exception
+is limited to the configured localhost API's exact origin and loopback answers.
+Parent cancellation and independent presign/PUT budgets still apply; the
+returned Content-Type string and original upload bytes remain unchanged.
+
+This uses only Node built-ins (no new dependency). The tradeoff is a fresh
+connection/TLS handshake per request; environment/global proxy Agents are not
+used by this direct guarded transport. Streaming response limits remain at the
+existing callers; gzip/deflate/Brotli responses are decoded while streaming.
+Reverting the transport change restores the former DNS check/connection gap
+for both upload and guarded inbound paths; disable native images as the safer
+immediate feature rollback. Real deployment/CDN/proxy compatibility still needs
+operator acceptance; this does not assert the pending real-preview tests passed.
+
 Unknown: server format whitelist, size limits, dimension requirements/limits,
 GIF static/animated preview, actual DM/group/topic frontend preview, server
 message deduplication. The reference sends GIF as type=2; this does not prove

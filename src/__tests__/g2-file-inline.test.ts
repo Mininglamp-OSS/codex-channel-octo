@@ -11,6 +11,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+vi.mock('../pinned-transport.js', () => ({
+  requestPinned: (url: URL, _addresses: unknown, init: RequestInit) => globalThis.fetch(url.toString(), init),
+}));
+
 vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(async (hostname: string) => {
     if (hostname.includes('example.com')) {

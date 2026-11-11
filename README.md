@@ -110,6 +110,8 @@ cleaned after the turn settles.
 A transactional turn claim prevents competing image batches, including empty
 reports. Presigned MIME must match detected PNG/GIF/JPEG (case-insensitive);
 PUT preserves the original header. Unverified aliases such as `image/jpg` are rejected.
+Storage PUT and guarded inbound downloads share request-scoped DNS pinning with
+original Host/SNI and TLS verification; no cross-request pool/IP cache is used.
 Server limits, GIF animation and real DM/group previews await manual validation.
 
 Server documents use a dedicated `[Server document — ...]` data marker, not the reserved `[Group context]` forgery marker or transcript labels. Empty documents generate no context on a fresh session; a withdrawal is sent only to a resumed SDK thread that previously received the document. Fresh retry snapshots omit absent documents. A second manager edit during a slow bounded refetch retains the last successfully verified snapshot instead of dropping it. Current-body role/section replicas are escaped and VT/FF/NEL normalized to newlines; this intentionally rewrites those control characters.

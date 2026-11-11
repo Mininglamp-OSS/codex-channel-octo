@@ -4,12 +4,17 @@
  * Verifies: content-type allow/deny, size cap, SSRF reject (private host),
  * Authorization scoping, path stays under the session cwd, and empty-body
  * handling. DNS is mocked so assertPublicUrl resolves deterministically;
- * globalThis.fetch is stubbed (fetchWithRedirectGuard calls it internally).
+ * The transport boundary delegates to the fetch response fixtures in this unit suite;
+ * real DNS/TLS pinning is covered by pinned-transport.test.ts.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
+
+vi.mock('../pinned-transport.js', () => ({
+  requestPinned: (url: URL, _addresses: unknown, init: RequestInit) => globalThis.fetch(url.toString(), init),
+}));
 
 vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(async (hostname: string) => {

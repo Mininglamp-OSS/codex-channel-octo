@@ -1,23 +1,23 @@
 /** Presigned transport contract: openclaw-channel-octo 3cdb7e794ba40ae617fb0215177d1493dd26460a. */
 import { ArtifactError } from '../artifact-files.js';
-import { assertPublicUrl } from '../url-policy.js';
+import { resolvePublicUrl, type ResolvedPublicUrl } from '../url-policy.js';
+import { requestPinned } from '../pinned-transport.js';
 import { postJson } from './api.js';
 import type { SendMessageResult } from './types.js';
 
 interface MediaRequest { apiUrl: string; botToken: string; signal: AbortSignal; check: () => void }
-async function validateStorageUrl(raw: unknown, apiUrl: string): Promise<string> {
+async function validateStorageUrl(raw: unknown, apiUrl: string, signal: AbortSignal): Promise<ResolvedPublicUrl> {
   if (typeof raw !== 'string' || raw.length > 16384) throw new Error('url');
   const u = new URL(raw); const api = new URL(apiUrl);
   if (u.username || u.password || u.hash) throw new Error('url');
   // Explicit localhost API configurations may use their own local storage.
   // Remote presigns never widen that exception to arbitrary internal targets.
-  if (u.origin === api.origin && ['127.0.0.1', 'localhost', '[::1]'].includes(api.hostname)) return raw;
+  if (u.origin === api.origin && ['127.0.0.1', 'localhost', '[::1]'].includes(api.hostname)) return resolvePublicUrl(raw, true, signal);
   if (u.protocol !== 'https:') throw new Error('url');
-  await assertPublicUrl(u.toString());
-  return raw;
+  return resolvePublicUrl(raw, false, signal);
 }
 
-/** Generic file upload transport; caller supplies already authorized byte snapshots. */
+/** PNG/GIF/JPEG upload transport; caller supplies authorized, validated image snapshots. */
 export async function uploadArtifact(params: MediaRequest & { name: string; mime: string; bytes: Buffer }): Promise<string> {
   let code = 'presign_failed';
   try {
@@ -44,8 +44,8 @@ export async function uploadArtifact(params: MediaRequest & { name: string; mime
       || data.contentType.toLowerCase() !== params.mime
       || (data.contentDisposition !== undefined && (typeof data.contentDisposition !== 'string' || /[\r\n]/.test(data.contentDisposition)))
       || (data.maxFileSize !== undefined && (typeof data.maxFileSize !== 'number' || data.maxFileSize < params.bytes.length))) throw new Error('presign');
-    const uploadUrl = await validateStorageUrl(data.uploadUrl, params.apiUrl);
-    const downloadUrl = await validateStorageUrl(data.downloadUrl, params.apiUrl);
+    const uploadUrl = await validateStorageUrl(data.uploadUrl, params.apiUrl, signal);
+    const downloadUrl = await validateStorageUrl(data.downloadUrl, params.apiUrl, signal);
     params.check(); signal.throwIfAborted();
     // The small presign request must not spend the upload's independent budget.
     // The parent turn signal still bounds both stages and every late callback.
@@ -53,11 +53,11 @@ export async function uploadArtifact(params: MediaRequest & { name: string; mime
     const headers: Record<string, string> = { 'Content-Type': data.contentType, 'Content-Length': String(params.bytes.length) };
     if (typeof data.contentDisposition === 'string') headers['Content-Disposition'] = data.contentDisposition;
     code = 'outcome_unknown';
-    const uploaded = await fetch(uploadUrl, { method: 'PUT', headers, body: new Uint8Array(params.bytes), signal: uploadSignal, redirect: 'error' });
+    const uploaded = await requestPinned(uploadUrl.url, uploadUrl.addresses, { method: 'PUT', headers, body: new Uint8Array(params.bytes), signal: uploadSignal, redirect: 'error' });
     await uploaded.body?.cancel();
     if (!uploaded.ok) { code = 'put_rejected'; throw new Error('put'); }
     params.check();
-    return downloadUrl;
+    return downloadUrl.rawUrl;
   } catch {
     params.check(); // Preserve revocation/cancellation as control flow.
     throw new ArtifactError('upload', code);
