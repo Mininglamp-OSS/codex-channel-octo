@@ -63,7 +63,7 @@ func TestXIN2795CurrentEndpointChunkAndRelayABI(t *testing.T) {
             "octo-cli/docs/op/docs.search",
         }
         allCatalogCaps := append([]string{}, allowedCaps...)
-        allCatalogCaps = append(allCatalogCaps, "octo-cli/docs/op/docs.scene.get")
+        allCatalogCaps = append(allCatalogCaps, "octo-cli/docs/op/docs.scene.get", "octo-cli/docs/op/docs.scene.edit")
         f.bundle.Capability.Rules[0]["capabilities"] = allowedCaps
         f.save()
         var err error
@@ -156,7 +156,7 @@ func TestXIN2795CurrentEndpointChunkAndRelayABI(t *testing.T) {
                     "items":      []map[string]any{{"docId": "d_bound", "snippet": strings.Repeat(`"`, 180)}},
                     "nextCursor": "",
                 })
-            case "/v1/bot/docs/board/scene":
+            case "/v1/bot/docs/board/scene", "/v1/bot/docs/board_1/scene":
                 deniedDispatches.Add(1)
                 w.WriteHeader(http.StatusOK)
                 _, _ = w.Write([]byte(`{"elements":[]}`))

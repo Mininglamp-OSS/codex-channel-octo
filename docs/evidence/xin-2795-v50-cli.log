@@ -1,24 +1,26 @@
 === RUN   TestXIN2795CurrentEndpointChunkAndRelayABI
 === RUN   TestXIN2795CurrentEndpointChunkAndRelayABI/http
-2026/11/12 08:15:05 http: TLS handshake error from 127.0.0.1:50091: EOF
-2026/11/12 08:15:05 http: TLS handshake error from 127.0.0.1:50092: EOF
-2026/11/12 08:15:05 http: TLS handshake error from 127.0.0.1:50093: EOF
+2026/11/12 09:46:49 http: TLS handshake error from 127.0.0.1:62955: EOF
+2026/11/12 09:46:49 http: TLS handshake error from 127.0.0.1:62956: EOF
+2026/11/12 09:46:49 http: TLS handshake error from 127.0.0.1:62957: EOF
+2026/11/12 09:46:49 http: TLS handshake error from 127.0.0.1:62958: EOF
     xin2795_endpoint_consumer_test.go:211: ENDPOINT_ABI_OK http 218289 complete-core-bytes
 === RUN   TestXIN2795CurrentEndpointChunkAndRelayABI/stdio
-2026/11/12 08:15:08 http: TLS handshake error from 127.0.0.1:50587: remote error: tls: bad certificate
-2026/11/12 08:15:08 http: TLS handshake error from 127.0.0.1:50588: remote error: tls: bad certificate
+2026/11/12 09:46:51 http: TLS handshake error from 127.0.0.1:63472: remote error: tls: bad certificate
+2026/11/12 09:46:52 http: TLS handshake error from 127.0.0.1:63473: remote error: tls: bad certificate
     xin2795_endpoint_consumer_test.go:211: ENDPOINT_ABI_OK stdio 218289 complete-core-bytes
 === RUN   TestXIN2795CurrentEndpointChunkAndRelayABI/https_tls
-2026/11/12 08:15:10 http: TLS handshake error from 127.0.0.1:51081: EOF
-2026/11/12 08:15:10 http: TLS handshake error from 127.0.0.1:51082: EOF
-2026/11/12 08:15:10 http: TLS handshake error from 127.0.0.1:51083: EOF
+2026/11/12 09:46:54 http: TLS handshake error from 127.0.0.1:63986: EOF
+2026/11/12 09:46:54 http: TLS handshake error from 127.0.0.1:63987: EOF
+2026/11/12 09:46:54 http: TLS handshake error from 127.0.0.1:63988: EOF
+2026/11/12 09:46:54 http: TLS handshake error from 127.0.0.1:63989: EOF
     xin2795_endpoint_consumer_test.go:211: ENDPOINT_ABI_OK http 218289 complete-core-bytes
---- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI (7.93s)
-    --- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI/http (2.32s)
-    --- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI/stdio (2.49s)
-    --- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI/https_tls (2.17s)
+--- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI (8.21s)
+    --- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI/http (2.30s)
+    --- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI/stdio (2.81s)
+    --- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI/https_tls (2.29s)
 PASS
-ok  	github.com/Mininglamp-OSS/octo-cli/internal/mcp	11.163s
+ok  	github.com/Mininglamp-OSS/octo-cli/internal/mcp	8.700s
 === RUN   TestXIN2794V45EndpointA3164dedRelayAndControlParity
 2026/11/12 08:15:15 http: TLS handshake error from 127.0.0.1:51579: remote error: tls: bad certificate
 --- PASS: TestXIN2794V45EndpointA3164dedRelayAndControlParity (1.92s)

@@ -8,7 +8,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { createServer as createHttpsServer } from 'node:https';
 import { once } from 'node:events';
 import { promisify } from 'node:util';
-import { createIsolatingWorkerLauncher, postHttpTurnRelay, preparePrivateWorker, verifyHttpRelayTlsPin } from '../permissions/worker-launch.js';
+import { createIsolatingWorkerLauncher, postHttpTurnRelay, preparePrivateWorker, startTurnRelayBridge, verifyHttpRelayTlsPin } from '../permissions/worker-launch.js';
 import { queryAgentEvents } from '../agent-bridge.js';
 import type { ManagedExecution } from '../execution-scope.js';
 import type { Config } from '../config.js';
@@ -306,9 +306,13 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
     })).toThrow('CA digest mismatch');
 
     let responseMode: 'ok' | 'overflow-cl' | 'overflow-stream' = 'ok';
-    const httpsServer = createHttpsServer({ key: keyPem, cert: certPem, minVersion: 'TLSv1.3' }, (_req, res) => {
+    const httpsServer = createHttpsServer({ key: keyPem, cert: certPem, minVersion: 'TLSv1.3' }, async (req, res) => {
+      let body = '';
+      for await (const chunk of req) body += String(chunk);
+      const parsed = body ? JSON.parse(body) as { id?: unknown } : {};
+      const id = parsed.id ?? 1;
       if (responseMode === 'overflow-cl') {
-        const big = JSON.stringify({ jsonrpc: '2.0', id: 1, result: { pad: 'x'.repeat(2048) } });
+        const big = JSON.stringify({ jsonrpc: '2.0', id, result: { pad: 'x'.repeat(2048) } });
         res.writeHead(200, {
           'content-type': 'application/json',
           'x-octo-acquisition-budget-bytes': '512',
@@ -322,7 +326,7 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
           'content-type': 'application/json',
           'x-octo-acquisition-budget-bytes': '512',
         });
-        res.write(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { pad: 'y'.repeat(1024) } }));
+        res.write(JSON.stringify({ jsonrpc: '2.0', id, result: { pad: 'y'.repeat(1024) } }));
         res.end();
         return;
       }
@@ -330,7 +334,7 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
         'content-type': 'application/json',
         'x-octo-acquisition-budget-bytes': '512',
       });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { ok: true } }));
+      res.end(JSON.stringify({ jsonrpc: '2.0', id, result: { ok: true } }));
     });
     httpsServer.listen(0, '127.0.0.1');
     await once(httpsServer, 'listening');
@@ -415,6 +419,117 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
       responseMode = 'overflow-stream';
       await expect(postHttpTurnRelay(validLaunch, bearer, { jsonrpc: '2.0', id: 1, method: 'ping' }))
         .rejects.toThrow('RESPONSE_BUDGET_EXCEEDED');
+
+      // Actual worker MCP HTTP consuming path through startTurnRelayBridge (and UDS netns bridge)
+      responseMode = 'ok';
+      const bridge = await startTurnRelayBridge(validLaunch);
+      try {
+        expect(bridge.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+        expect(bridge.udsPath).toMatch(/\/r\.sock$/);
+        expect(bridge.launch.configOverrides[0]).toContain(bridge.url);
+
+        // Positive request through bridge
+        const okResp = await fetch(bridge.url!, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${bridge.bridgeBearerToken}`,
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 101, method: 'tools/list' }),
+        });
+        expect(okResp.status).toBe(200);
+        expect(await okResp.json()).toEqual({ jsonrpc: '2.0', id: 101, result: { ok: true } });
+
+        // Wrong bearer token is rejected at the local bridge before upstream dispatch
+        const unauthResp = await fetch(bridge.url!, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer wrong',
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 102, method: 'tools/list' }),
+        });
+        expect(unauthResp.status).toBe(401);
+
+        // Acquisition budget overflow returns a bounded <=1024-byte JSON-RPC replacement error envelope
+        responseMode = 'overflow-cl';
+        const overResp = await fetch(bridge.url!, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${bridge.bridgeBearerToken}`,
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id: `${'long_id_'.repeat(40)}`, method: 'tools/call' }),
+        });
+        expect(overResp.status).toBe(200);
+        const overText = await overResp.text();
+        expect(Buffer.byteLength(overText, 'utf8')).toBeLessThanOrEqual(1024);
+        const overJson = JSON.parse(overText) as { error?: { code: number; data?: { category?: string } } };
+        expect(overJson.error?.code).toBe(-32007);
+        expect(overJson.error?.data?.category).toBe('response_budget_exceeded');
+
+        // Verify Linux bwrap --unshare-net UDS bridge script forwards loopback relay traffic over CODEX_OCTO_RELAY_UDS
+        responseMode = 'ok';
+        const fakeBwrap = join(root, 'fake-bwrap-exec');
+        // Fake bwrap that strips bwrap flags until '--' and runs the inner command on a different local port
+        // so bwrap-netns-bridge.cjs listens on an ephemeral port and forwards over CODEX_OCTO_RELAY_UDS
+        writeFileSync(fakeBwrap, `#!${process.execPath}
+const { spawn } = require('node:child_process');
+const idx = process.argv.indexOf('--');
+const cmd = process.argv[idx + 1];
+const args = process.argv.slice(idx + 2);
+const child = spawn(cmd, args, { stdio: 'inherit', env: process.env });
+child.on('exit', (code) => process.exit(code ?? 1));
+`, { mode: 0o700 });
+        const bridgeTestPort = Number(execFileSync(process.execPath, ['-e', "const s=require('node:net').createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close()})"], { encoding: 'utf8' }).trim());
+        const netnsProbe = join(root, 'netns-probe-worker');
+        writeFileSync(netnsProbe, `#!${process.execPath}
+const http = require('node:http');
+const body = JSON.stringify({ jsonrpc: '2.0', id: 202, method: 'ping' });
+const req = http.request({
+  hostname: '127.0.0.1',
+  port: ${bridgeTestPort},
+  path: '/mcp',
+  method: 'POST',
+  headers: {
+    'content-type': 'application/json',
+    'authorization': 'Bearer ${bridge.bridgeBearerToken}',
+    'content-length': Buffer.byteLength(body),
+  },
+}, res => {
+  let out = '';
+  res.on('data', c => out += String(c));
+  res.on('end', () => {
+    console.log(JSON.stringify({ envHasUds: Boolean(process.env.CODEX_OCTO_RELAY_UDS), reply: JSON.parse(out) }));
+  });
+});
+req.end(body);
+`, { mode: 0o700 });
+        const netnsProbeSha = createHash('sha256').update(readFileSync(netnsProbe)).digest('hex');
+        const linuxIsolated = createIsolatingWorkerLauncher({
+          root,
+          targetExecutable: netnsProbe,
+          targetExecutableSha256: netnsProbeSha,
+          deniedPaths: [root],
+          allowNetwork: false,
+          platform: 'linux',
+          sandboxExecutable: fakeBwrap,
+        });
+        const { stdout: netnsOut } = await exec(linuxIsolated.launcher, [], {
+          cwd: validLaunch.workdir,
+          env: {
+            ...bridge.launch.env,
+            CODEX_OCTO_RELAY_UDS: bridge.udsPath!,
+            CODEX_OCTO_RELAY_PORT: String(bridgeTestPort),
+          },
+          timeout: 10000,
+        });
+        const parsedNetns = JSON.parse(netnsOut.trim()) as { envHasUds: boolean; reply: Record<string, unknown> };
+        expect(parsedNetns.envHasUds).toBe(false);
+        expect(parsedNetns.reply).toEqual({ jsonrpc: '2.0', id: 202, result: { ok: true } });
+      } finally {
+        await bridge.close();
+      }
     } finally {
       httpsServer.closeAllConnections();
       await new Promise<void>(resolve => httpsServer.close(() => resolve()));

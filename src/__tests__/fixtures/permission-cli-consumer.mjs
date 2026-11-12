@@ -13,7 +13,7 @@ const { PermissionControlClient, canonicalControl } = await import(pathToFileURL
 const { bindContextManifest } = await import(pathToFileURL(join(dist, 'permissions/context-manifest.js')));
 const { catalogBootPin, verifyCatalogBoot } = await import(pathToFileURL(join(dist, 'permissions/catalog-boot.js')));
 const { checkedTurnRelay } = await import(pathToFileURL(join(dist, 'permissions/endpoint-factory.js')));
-const { preparePrivateWorker, verifyHttpRelayTlsPin, postHttpTurnRelay } = await import(pathToFileURL(join(dist, 'permissions/worker-launch.js')));
+const { preparePrivateWorker, verifyHttpRelayTlsPin, postHttpTurnRelay, startTurnRelayBridge } = await import(pathToFileURL(join(dist, 'permissions/worker-launch.js')));
 if (fixture.catalogManifestPath) {
   const manifestBytes = readFileSync(fixture.catalogManifestPath);
   const manifestSha256 = createHash('sha256').update(manifestBytes).digest('hex');
@@ -180,18 +180,36 @@ try {
       },
     },
   }));
-  const deniedSceneRequests = ['execute', 'call_op'].map((name, i) => ({
-    jsonrpc: '2.0',
-    id: 50 + i,
-    method: 'tools/call',
-    params: {
-      name,
-      arguments: {
-        operation_id: 'docs.scene.get',
-        arguments: { docId: 'board_1' },
+  const deniedSceneRequests = [
+    ...['execute', 'call_op'].map((name, i) => ({
+      jsonrpc: '2.0',
+      id: 50 + i,
+      method: 'tools/call',
+      params: {
+        name,
+        arguments: {
+          operation_id: 'docs.scene.get',
+          arguments: { docId: 'board_1' },
+        },
       },
-    },
-  }));
+    })),
+    ...['execute', 'call_op'].map((name, i) => ({
+      jsonrpc: '2.0',
+      id: 60 + i,
+      method: 'tools/call',
+      params: {
+        name,
+        arguments: {
+          operation_id: 'docs.scene.edit',
+          arguments: {
+            docId: 'board_1',
+            'base-version': 'v1',
+            deletedElementIds: ['el_1'],
+          },
+        },
+      },
+    })),
+  ];
   const allRequests = [
     initReq,
     ...positiveRequests,
@@ -274,9 +292,26 @@ try {
       /Turn relay peer certificate digest mismatch/,
     );
 
-    results = [];
-    for (const request of allRequests) {
-      results.push(await postHttpTurnRelay(worker, relay.handle, request));
+    const bridge = await startTurnRelayBridge(worker);
+    try {
+      assert(bridge.url, 'expected HTTP turn-relay bridge URL');
+      assert(bridge.launch.configOverrides[0].includes(bridge.url));
+      results = [];
+      for (const request of allRequests) {
+        const resp = await fetch(bridge.url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            Authorization: `Bearer ${bridge.bridgeBearerToken}`,
+          },
+          body: JSON.stringify(request),
+        });
+        assert.equal(resp.status, 200);
+        results.push(await resp.json());
+      }
+    } finally {
+      await bridge.close();
     }
   }
 
@@ -306,8 +341,8 @@ try {
     assert(serialized.includes('RESPONSE_BUDGET_EXCEEDED'), serialized);
     assert(serialized.includes('serialized_rpc_bytes'), serialized);
   }
-  // Journey 3: Denied capability during admitted turn with zero backend dispatch
-  for (const res of results.slice(11, 13)) {
+  // Journey 3: Denied read (docs.scene.get) + write (docs.scene.edit) capabilities during admitted turn with zero backend dispatch
+  for (const res of results.slice(11, 15)) {
     assert(res.error, 'expected capability_denied JSON-RPC error');
     assert.equal(res.error.code, -32007);
     assert(JSON.stringify(res.error.data).includes('capability_denied'));

@@ -12,7 +12,7 @@ import { bindContextManifest } from '../permissions/context-manifest.js';
 import { canonicalControl, PermissionRefusal } from '../permissions/control-client.js';
 import { TurnLease } from '../permissions/turn-lease.js';
 import { startPermissionCoordinator, type CoordinatorBoot } from '../permissions/coordinator-process.js';
-import { checkedTurnRelay, managedPermissionFactory } from '../permissions/endpoint-factory.js';
+import { checkedTurnRelay, createNativeEndpointDriver, managedPermissionFactory } from '../permissions/endpoint-factory.js';
 import { privateFile } from '../permissions/private-files.js';
 import { createAdapter } from '../db-adapter.js';
 import type { Config } from '../config.js';
@@ -314,8 +314,10 @@ describe('private bootstrap and relay selection', () => {
     const boot = bootFixture();
     const sentMessages: Array<Record<string, unknown>> = [];
     const factsOps: string[] = [];
-    let includeRecoveryFence = false;
+    const relayMcpBodies: Array<Record<string, unknown>> = [];
     let proveOriginalVisibility = false;
+    let replySendAllowed = true;
+    let admitVersionExact = true;
     const msgUnknownVis: BotMessage = {
       message_id: '776', message_seq: 10, from_uid: 'alice', channel_id: 'alice@bot',
       channel_type: ChannelType.DM, timestamp: 1, payload: { type: 1, content: 'UNKNOWN_ORIGINAL_VISIBILITY' },
@@ -327,20 +329,29 @@ describe('private bootstrap and relay selection', () => {
     };
     const rawPayloadJson = JSON.stringify(msg.payload);
     const payloadSha256 = createHash('sha256').update(rawPayloadJson).digest('hex');
-    const authorities = {
-      sql: {
-        authority_id: 'octo-server-message-store',
-        incarnation: 'a'.repeat(32),
-        commit_epoch: '11',
-        ack_before_read_start: true,
-      },
-      im: {
-        authority_id: 'octo-server-im-channel-seq',
+    const authorities = [
+      {
+        authority_id: 'im',
+        kind: 'im' as const,
         incarnation: 'b'.repeat(32),
-        commit_epoch: '11',
-        ack_before_read_start: true,
+        position: 'im_pos_11',
+        read_nonce: 'c'.repeat(32),
+        consistency: 'ack_before_read_start' as const,
+        started_at: '2026-11-12T00:00:00Z',
+        completed_at: '2026-11-12T00:00:00Z',
       },
-    };
+      {
+        authority_id: 'sql',
+        kind: 'sql' as const,
+        incarnation: 'a'.repeat(32),
+        position: 'sql_pos_11',
+        read_nonce: 'd'.repeat(32),
+        consistency: 'ack_before_read_start' as const,
+        started_at: '2026-11-12T00:00:00Z',
+        completed_at: '2026-11-12T00:00:00Z',
+      },
+    ];
+    const authorityRefs = ['c'.repeat(32), 'd'.repeat(32)];
     const header776 = {
       header_version: 1 as const,
       header_reference: 'h1-native_hdr_776',
@@ -374,49 +385,45 @@ describe('private bootstrap and relay selection', () => {
       key: readFileSync(join(root, 'key.pem')),
       cert: readFileSync(join(root, 'cert.pem')),
       minVersion: 'TLSv1.3',
-    }, (_req, res) => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end('{"ok":true}');
+    }, async (req, res) => {
+      let body = '';
+      for await (const chunk of req) body += String(chunk);
+      const parsed = body ? JSON.parse(body) as Record<string, unknown> : {};
+      relayMcpBodies.push(parsed);
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'X-Octo-Acquisition-Budget-Bytes': '4096',
+      });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: parsed.id ?? 1, result: { bridged: true } }));
     });
     relayHttpsServer.listen(0, '127.0.0.1');
     await once(relayHttpsServer, 'listening');
     const relayAddr = relayHttpsServer.address();
     if (!relayAddr || typeof relayAddr === 'string') throw new Error('No relay address');
-    const relayHttpsUrl = `https://localhost:${relayAddr.port}/mcp`;
+    // Note: bootFixture cert has SAN DNS:localhost only (no IP:127.0.0.1), so connecting to 127.0.0.1
+    // requires startTurnRelayBridge -> postHttpTurnRelay to enforce server_name='localhost'.
+    const relayHttpsUrl = `https://127.0.0.1:${relayAddr.port}/mcp`;
 
     const nativeServer = createServer(async (req, res) => {
       let body = '';
       for await (const chunk of req) body += String(chunk);
       const parsed = body ? JSON.parse(body) as Record<string, unknown> : {};
-      if (req.url === '/v1/bot/permission-facts/v1/fence?space_id=space') {
-        factsOps.push('fence');
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({
-          fence_version: 1,
-          space_id: 'space',
-          read_id: parsed.read_id,
-          read_nonce: parsed.read_nonce,
-          authority_id: 'octo-server-message-store',
-          commit_marker: 'ms:777:11:1',
-          ...(includeRecoveryFence ? {
-            recovery_fence_v1: {
-              sql_incarnation: 'a'.repeat(32),
-              im_incarnation: 'b'.repeat(32),
-              ack_before_read_start: true,
-            },
-          } : {}),
-        }));
-        return;
-      }
+      const responseKey = { origin: apiUrl, bot_uid: 'bot', space_id: 'space' };
       if (req.url === '/v1/bot/permission-facts/v1/bind-delivery?space_id=space') {
         expect(parsed.operation).toBe('bind_delivery');
+        expect(parsed.schema_version).toBe(1);
+        expect(parsed.key).toBeUndefined();
         factsOps.push('bind_delivery');
         const is776 = parsed.message_id === '776';
         const targetHeader = is776 ? header776 : header;
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({
           schema_version: 1,
+          profile_version: 1,
+          key: responseKey,
           request_id: parsed.request_id,
+          read_id: 'e'.repeat(32),
+          observed_at: '2026-11-12T00:00:00Z',
           authorities,
           binding: {
             status: 'bound',
@@ -426,14 +433,21 @@ describe('private bootstrap and relay selection', () => {
             native_message_version: targetHeader.native_message_version,
             observed_payload_sha256: targetHeader.payload_sha256,
             header: targetHeader,
-            proven_predicates: [
-              'bot_current_visible',
-              'caller_current_visible',
-              'delivery_current_exact',
-              'message_space_exact',
-              'sender_identity_exact',
-              ...(proveOriginalVisibility ? ['bot_original_visible', 'caller_original_visible'] : []),
-            ],
+            authority_refs: authorityRefs,
+            proven_predicates: {
+              message_source_exact: true,
+              message_author_exact: true,
+              message_recipient_exact: true,
+              message_version_exact: true,
+              caller_current_read: true,
+              bot_current_read: true,
+              bot_current_send: true,
+              message_space_exact: true,
+              ...(proveOriginalVisibility ? {
+                caller_original_visible: true,
+                bot_original_visible: true,
+              } : {}),
+            },
             unknown_predicates: proveOriginalVisibility ? [] : ['bot_original_visible', 'caller_original_visible'],
             resolvable_purposes: proveOriginalVisibility ? ['admit', 'contributor', 'reply'] : ['reply'],
           },
@@ -442,46 +456,115 @@ describe('private bootstrap and relay selection', () => {
       }
       if (req.url === '/v1/bot/permission-facts/v1?space_id=space') {
         const operation = String(parsed.operation);
-        factsOps.push(operation);
+        expect(parsed.schema_version).toBe(1);
+        expect(parsed.profile_version).toBe(1);
+        expect(parsed.key).toBeUndefined();
+        factsOps.push(operation === 'resolve' ? `resolve:${String(parsed.purpose)}` : operation);
         res.setHeader('Content-Type', 'application/json');
         if (operation === 'history_disclosure') {
+          expect(typeof parsed.context_epoch).toBe('string');
+          expect(String(parsed.context_epoch)).toMatch(/^(0|[1-9][0-9]{0,19})$/);
+          expect(String(parsed.context_id)).toMatch(/^[0-9a-f]{32}$/);
+          const reqRefs = parsed.headers as Array<{ header_reference: string }>;
           res.end(JSON.stringify({
             schema_version: 1,
             profile_version: 1,
+            key: responseKey,
             request_id: parsed.request_id,
+            read_id: 'e'.repeat(32),
+            observed_at: '2026-11-12T00:00:00Z',
             authorities,
-            results: [
-              proveOriginalVisibility
+            results: reqRefs.map(r => {
+              const target = r.header_reference === header776.header_reference ? header776 : header;
+              return proveOriginalVisibility
                 ? {
-                    header_reference: header.header_reference,
-                    status: 'disclosed',
-                    header,
-                    content: rawPayloadJson,
+                    reference: target.header_reference,
+                    status: 'resolved',
+                    permit: `pmt1-${'1'.repeat(64)}`,
+                    header_reference: target.header_reference,
+                    context_id: parsed.context_id,
+                    context_epoch: parsed.context_epoch,
+                    payload_sha256: target.payload_sha256,
+                    authority_refs: authorityRefs,
                   }
                 : {
-                    header_reference: header776.header_reference,
-                    status: 'unknown',
-                    reason: 'caller_original_visibility_unknown',
-                  },
-            ],
+                    reference: target.header_reference,
+                    status: 'unavailable',
+                    reason: 'disclosure_unavailable',
+                  };
+            }),
           }));
           return;
         }
         if (operation === 'resolve') {
+          const purpose = String(parsed.purpose);
           const refs = parsed.references as Array<{ delivery_reference: string }>;
-          const ref = refs[0].delivery_reference;
           res.end(JSON.stringify({
             schema_version: 1,
             profile_version: 1,
+            key: responseKey,
             request_id: parsed.request_id,
+            read_id: 'e'.repeat(32),
+            observed_at: '2026-11-12T00:00:00Z',
             authorities,
-            results: [
-              {
-                delivery_reference: ref,
-                status: 'resolved',
-                header: ref === 's1-deliv_776' ? header776 : header,
-              },
-            ],
+            results: refs.map(r => ({
+              reference: r.delivery_reference,
+              status: 'resolved',
+              header: r.delivery_reference === 's1-deliv_776' ? header776 : header,
+              profile: `dm_${purpose}_v1`,
+              authority_refs: authorityRefs,
+              predicates: purpose === 'reply'
+                ? {
+                    identity_supported: true,
+                    author_is_human: true,
+                    author_active: true,
+                    author_not_destroyed: true,
+                    bot_user_active: true,
+                    bot_robot_active: true,
+                    bot_creator_eligible: true,
+                    space_active: true,
+                    caller_space_member: true,
+                    bot_space_member: true,
+                    message_source_exact: true,
+                    message_space_exact: true,
+                    message_author_exact: true,
+                    message_recipient_exact: true,
+                    message_version_exact: true,
+                    source_exists: true,
+                    dm_peer_exact: true,
+                    dm_human_blocks_bot_clear: true,
+                    dm_bot_blocks_human_clear: true,
+                    dm_bot_to_human_send_relation: replySendAllowed,
+                    bot_current_send: replySendAllowed,
+                  }
+                : {
+                    identity_supported: true,
+                    author_is_human: true,
+                    author_active: true,
+                    author_not_destroyed: true,
+                    bot_user_active: true,
+                    bot_robot_active: true,
+                    bot_creator_eligible: true,
+                    space_active: true,
+                    caller_space_member: true,
+                    bot_space_member: true,
+                    message_source_exact: true,
+                    message_space_exact: true,
+                    message_author_exact: true,
+                    message_recipient_exact: true,
+                    message_version_exact: admitVersionExact,
+                    source_exists: true,
+                    dm_peer_exact: true,
+                    dm_human_blocks_bot_clear: true,
+                    dm_bot_blocks_human_clear: true,
+                    dm_human_to_bot_relation: true,
+                    dm_bot_to_human_read_relation: true,
+                    caller_current_read: true,
+                    bot_current_read: true,
+                    caller_original_visible: true,
+                    bot_original_visible: true,
+                  },
+            })),
           }));
           return;
         }
@@ -571,12 +654,51 @@ server.listen(Number(cfg.control_address.split(':').pop()), '127.0.0.1', () => {
     const workerExec = join(root, 'worker-bin');
     const workerSource = `#!${process.execPath}
 const fs = require('node:fs');
+const http = require('node:http');
 fs.readFileSync(0, 'utf8');
 let keyLeak = 'NONE';
 try { keyLeak = fs.readFileSync(${JSON.stringify(join(root, 'journal.key'))}, 'utf8'); } catch (e) { keyLeak = 'BLOCKED:' + e.code; }
-console.log(JSON.stringify({ type: 'thread.started', thread_id: '33333333-3333-4333-8333-333333333333' }));
-console.log(JSON.stringify({ type: 'item.completed', item: { id: 'msg1', type: 'agent_message', text: 'CONTAINED_REPLY|' + keyLeak } }));
-console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+const args = process.argv.slice(2);
+const mcpArg = args.find(a => a.startsWith('mcp_servers='));
+let mcpStatus = 'NO_MCP';
+(async () => {
+  if (mcpArg) {
+    const urlMatch = /"url"="([^"]+)"/.exec(mcpArg);
+    const authMatch = /"Authorization"="Bearer ([^"]+)"/.exec(mcpArg);
+    const url = new URL(urlMatch[1]);
+    const token = authMatch ? authMatch[1] : '';
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 77, method: 'tools/list' });
+    mcpStatus = await new Promise((resolve) => {
+      const req = http.request({
+        hostname: url.hostname,
+        port: Number(url.port),
+        path: url.pathname,
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'authorization': 'Bearer ' + token,
+          'content-length': Buffer.byteLength(body),
+        },
+      }, res => {
+        let data = '';
+        res.on('data', c => data += String(c));
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            resolve(parsed.result && parsed.result.bridged ? 'MCP_BRIDGED_OK' : 'MCP_UNEXPECTED:' + data);
+          } catch {
+            resolve('MCP_PARSE_ERR');
+          }
+        });
+      });
+      req.on('error', err => resolve('MCP_ERR:' + err.message));
+      req.end(body);
+    });
+  }
+  console.log(JSON.stringify({ type: 'thread.started', thread_id: '33333333-3333-4333-8333-333333333333' }));
+  console.log(JSON.stringify({ type: 'item.completed', item: { id: 'msg1', type: 'agent_message', text: 'CONTAINED_REPLY|' + keyLeak + '|' + mcpStatus } }));
+  console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+})();
 `;
     writeFileSync(workerExec, workerSource, { mode: 0o700 });
     const workerSha256 = createHash('sha256').update(workerSource).digest('hex');
@@ -623,12 +745,23 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
     const db = createAdapter(join(root, 'journal-full.db'));
     let endpoint: PermissionEndpoint | undefined;
     try {
-      // Default server v7 fence returns only octo-server-message-store read-time marker -> fails closed!
+      // Default NativeEndpointDriver.recover fails closed without calling any unmounted /fence route
       await expect(managedPermissionFactory(config)!({ config, adapter: db, botId: 'bot' })).rejects.toThrow('PERMISSION_NATIVE_RECOVERY_FENCE_UNAVAILABLE');
+      expect(factsOps).toEqual([]);
 
-      // Opt-in synthetic recovery_fence_v1 allows component test to proceed past startup recovery gate
-      includeRecoveryFence = true;
-      endpoint = await managedPermissionFactory(config)!({ config, adapter: db, botId: 'bot' });
+      const realNative = createNativeEndpointDriver({ config, botId: 'bot', key: descriptor.key });
+      // Rejects message_seq <= 0 before any HTTP request
+      await expect(realNative.inspect({
+        recipientUid: 'bot',
+        message: { ...msg, message_seq: 0 },
+        payloadSha256,
+      })).rejects.toThrow('Native delivery transport observation incomplete');
+      expect(factsOps).toEqual([]);
+
+      // Compose endpoint with realNative (overriding only startup recover gate) and real ContainedWorkerDriver
+      endpoint = await managedPermissionFactory(config, {
+        native: { ...realNative, recover: async () => {} },
+      })!({ config, adapter: db, botId: 'bot' });
 
       // 1. When bind_delivery reports bot_original_visible / caller_original_visible in unknown_predicates,
       // prepareInput fails closed and sends refusal via operation="resolve", purpose="reply" without starting worker.
@@ -641,9 +774,11 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
       }
       expect(sentMessages).toHaveLength(1);
       expect(String((sentMessages[0].payload as Record<string, unknown>).content)).toContain('Permissions could not be checked. Try again later.');
+      expect(relayMcpBodies).toHaveLength(0);
 
-      // 2. When original visibility is proven and history_disclosure returns status="disclosed",
-      // full pipeline executes worker (after verifying HTTP relay TLS 1.3 leaf pin) and publishes reply.
+      // 2. When original visibility is proven and history_disclosure returns status="resolved" with permit,
+      // full pipeline executes worker (whose MCP HTTP request traverses startTurnRelayBridge -> postHttpTurnRelay
+      // to relayHttpsServer with custom CA + server_name + leaf pin) and publishes reply.
       proveOriginalVisibility = true;
       const res = await endpoint.reserveBeforeAck({ recipientUid: 'bot', message: msg, payloadSha256 });
       expect(res.disposition).toBe('reserved');
@@ -652,17 +787,68 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
         expect(disp).toBe('terminal');
         res.finish(disp);
       }
-      expect(factsOps).toEqual(['fence', 'fence', 'bind_delivery', 'resolve', 'bind_delivery', 'history_disclosure', 'history_disclosure', 'resolve']);
+      expect(factsOps).toEqual(['bind_delivery', 'resolve:reply', 'bind_delivery', 'history_disclosure', 'resolve:admit', 'resolve:reply']);
+      expect(relayMcpBodies).toHaveLength(1);
+      expect(relayMcpBodies[0]).toMatchObject({ jsonrpc: '2.0', id: 77, method: 'tools/list' });
       expect(sentMessages).toHaveLength(2);
       expect(sentMessages[1]).toMatchObject({
         channel_id: 'alice@bot',
         channel_type: ChannelType.DM,
         payload: {
           type: 1,
-          content: expect.stringMatching(/^CONTAINED_REPLY\|BLOCKED:(EPERM|EACCES|ENOENT)$/),
+          content: expect.stringMatching(/^CONTAINED_REPLY\|BLOCKED:(EPERM|EACCES|ENOENT)\|MCP_BRIDGED_OK$/),
           reply: { message_id: '777' },
         },
       });
+
+      // 3. Direct driver conformance checks for revalidateOriginal (purpose='admit'), false reply predicates,
+      // and multi-contributor metadata-only disclosure permit fail-closed behavior.
+      const inspected = await realNative.inspect({ recipientUid: 'bot', message: msg, payloadSha256 });
+      const origIdentity = {
+        headerReference: inspected.header.header_reference,
+        messageVersion: inspected.header.native_message_version,
+        payloadSha256: inspected.header.payload_sha256,
+        authorUid: inspected.header.author_uid,
+        sourceKind: inspected.header.source.kind,
+        sourceId: inspected.header.source.id,
+        spaceId: inspected.header.space_id,
+      };
+      expect(await realNative.revalidateOriginal!(origIdentity, inspected.header, new AbortController().signal)).toBe('allow');
+      admitVersionExact = false;
+      expect(await realNative.revalidateOriginal!(origIdentity, inspected.header, new AbortController().signal)).toBe('deny');
+      admitVersionExact = true;
+
+      // False reply predicate (bot_current_send: false / dm_bot_to_human_send_relation: false) must refuse before sendMessage
+      const binding777 = {
+        ingressId: '1'.repeat(32),
+        capsuleId: '2'.repeat(32),
+        turnId: '3'.repeat(32),
+        contextId: '3'.repeat(32),
+        generation: '4'.repeat(32),
+        header: inspected.header,
+        scopeIncarnation: '5'.repeat(32),
+        contextEpoch: '1',
+      };
+      replySendAllowed = false;
+      await expect(realNative.publish(binding777, 'SHOULD_NOT_SEND', new AbortController().signal))
+        .rejects.toThrow('required reply predicate false');
+      await realNative.refuse(
+        inspected,
+        { version: 1, category: 'invocation_denied', correlation: 'c'.repeat(32) },
+        'Permissions could not be checked. Try again later.',
+        new AbortController().signal,
+      );
+      expect(sentMessages).toHaveLength(2);
+      replySendAllowed = true;
+
+      // Historical contributor with metadata-only disclosure permit (no body content) fails closed
+      await expect(realNative.prepareInput(
+        {
+          ...binding777,
+          contributors: [header776],
+        },
+        new AbortController().signal,
+      )).rejects.toThrow('PERMISSION_NATIVE_HISTORY_BODY_CONSUMER_UNAVAILABLE');
     } finally {
       await endpoint?.stop();
       db.close();

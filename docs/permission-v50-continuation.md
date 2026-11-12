@@ -1,13 +1,12 @@
-# V50 endpoint continuation — latest 3-head tuple convergence, receiving-connection TLS & budget evidence, and residual classification
+# V50 / V52 endpoint continuation — latest 3-head tuple convergence, A-B1/A-B2/A-B3 blocking repairs, receiving-connection TLS & budget evidence, and residual classification
 
-This continuation implements the `ACTIVE v50` slice (`Owner2120905444695117824`) on
+This continuation implements the `ACTIVE v50` (`Owner2120905444695117824`, comment `e98ac4b3-105a-420f-81f0-a20177c61f57`) and `ACTIVE v52` (`Owner2120917153384140800`, Charter comment `32e49395-62f6-4aea-bd5b-4b583797d2a3`, independent review `XIN-2834` verdict `9a49c03b-542a-4223-9ac3-3513fb717752`, trigger comment `f3b841df-c529-43d9-96b7-4f02551a3613`) slices on
 `XIN-2795` (`2f4a34e9-2be3-48ac-99f0-38a30f077acd`) under parent charter
-`XIN-2323` (`17e81670-5b49-461d-9509-7c22ca127939`), authorized by comment
-`e98ac4b3-105a-420f-81f0-a20177c61f57`. It closes the cross-repository version
-skew by verifying the exact latest 3-head tuple:
+`XIN-2323` (`17e81670-5b49-461d-9509-7c22ca127939`). It closes the cross-repository version
+skew and repairs the three endpoint blocking review findings (`A-B1`, `A-B2`, `A-B3`) plus shutdown drain order against the exact 3-head tuple:
 - **Endpoint (`XIN-2795` = `2f4a34e9-2be3-48ac-99f0-38a30f077acd`, Draft #102):**
-  builds on `afd3241073c880319703a8a27daf66ff7507682e` (backed up locally at
-  `backup/xin-2795-v50-afd3241`).
+  builds on `131dc9c38bfe6813a0a0e9f207398fa06112cb9e` (backed up locally at
+  `backup/xin-2795-v52-131dc9c`) and `afd3241073c880319703a8a27daf66ff7507682e`.
 - **CLI (`XIN-2794` = `229ad215-8526-4a04-8f5b-36f073f81a16`, Draft #234):**
   `3ef52206809ade6b10fcb6976e4c7ab7c8af69a7` (source outcome
   `3293488e-4d14-4b75-a3a4-951c454b1eac`).
@@ -53,68 +52,31 @@ repository or task is modified.
    (`67108864`) in `octo-cli` are engineering validation guardrails, not
    Owner-selected production defaults.
 
-## V50 endpoint updates and latest-tuple verification (`COVERAGE`)
+## V50 / V52 endpoint updates and latest-tuple verification (`COVERAGE`)
 
-1. **Receiving-connection custom-CA & leaf-pin enforcement (`postHttpTurnRelay`
-   and `checkTurnRelayTrust`).**
-   - `checkTurnRelayTrust` (`src/permissions/endpoint-factory.ts`) verifies
-     `hostConfig.relay_ca_sha256` against the SHA-256 of the actual CA PEM bytes
-     even when `relay.tls` uses the 3-field `{ ca_file, cert_sha256, server_name }`
-     shape emitted by `octo-cli` `3ef52206809ade6b10fcb6976e4c7ab7c8af69a7` on
-     `include_tls_trust: true`.
-   - `postHttpTurnRelay` (`src/permissions/worker-launch.ts`) executes HTTPS
-     JSON-RPC POST requests against the turn relay over TLS 1.3 using the staged
-     custom CA (`ca_sha256`/`ca_file`), `servername`, and `checkServerIdentity`
-     leaf certificate DER SHA-256 verification (`cert_sha256`/`peer_sha256`) on
-     the **actual receiving connection** before application payload exchange, and
-     enforces `X-Octo-Acquisition-Budget-Bytes` (`Content-Length` pre-check and
-     streaming byte cap) fail-closed.
-   - Both `http`/`https_tls` (`postHttpTurnRelay`) and `stdio` (`--turn-relay`)
-     are verified for positive custom-CA + leaf-pin receiving connections and
-     negative wrong-CA and wrong-leaf refusals on the actual receiving connection.
-2. **Latest CLI `3ef52206809ade6b10fcb6976e4c7ab7c8af69a7` binary/relay
-   acquisition and replacement-envelope budget behavior.**
+1. **`[A-B1]` Actual worker consuming MCP HTTP path routed through `startTurnRelayBridge` -> `postHttpTurnRelay`.**
+   - `startTurnRelayBridge` (`src/permissions/worker-launch.ts`) and `createContainedWorkerDriver.execute` (`src/permissions/endpoint-factory.ts`) start a host-owned per-turn local bridge and rebind `mcp_servers.octo.url` (`http://127.0.0.1:<bridgePort>/mcp` with a per-turn 256-bit bearer token) so every actual MCP HTTP call made by the spawned Codex worker traverses `postHttpTurnRelay`.
+   - `postHttpTurnRelay` enforces the staged custom CA (`ca_sha256`/`ca_file`), `servername` (`server_name` SNI/SAN override on `https://127.0.0.1:<port>/mcp`), `checkServerIdentity` leaf certificate DER SHA-256 pin (`cert_sha256`/`peer_sha256`), and client-side `X-Octo-Acquisition-Budget-Bytes` (`Content-Length` pre-check and streaming byte cap, returning a bounded `<= 1024 B` JSON-RPC `-32007` `response_budget_exceeded` replacement error envelope on overflow) on every actual worker request.
+2. **`[A-B3]` Linux `bwrap --unshare-net` UDS turn-relay bridge (`bwrap-netns-bridge.cjs`).**
+   - `createIsolatingWorkerLauncher` (`src/permissions/worker-launch.ts`) preserves `--unshare-net` when `allowNetwork: false` (`descriptor.worker.provider === null`).
+   - When `startTurnRelayBridge` is active, it exposes a private mode-`0600` Unix domain socket (`r.sock`) for both HTTP MCP and `octo --turn-relay` stdio transports, bind-mounts the UDS directory into the `bwrap` sandbox, and starts `bwrap-netns-bridge.cjs` inside the isolated network namespace to forward `127.0.0.1:<relayPort>` over `CODEX_OCTO_RELAY_UDS` while stripping `CODEX_OCTO_RELAY_UDS` and `CODEX_OCTO_RELAY_PORT` before `exec`ing the worker.
+3. **`[A-B2]` `createNativeEndpointDriver` aligned with `octo-server` v7 wire envelopes, boolean predicate maps, decimal-string epochs, and `resolve`/`reply`/`reference` shapes.**
+   - Validates `octo-server` v7 response envelopes (`schema_version: 1`, `profile_version: 1`, `key`, `request_id`, `read_id`, `observed_at`, 2-element `authorities` array `[{ authority_id, kind: 'sql'|'im', incarnation, position, read_nonce, consistency: 'ack_before_read_start', started_at, completed_at }]`, and `authority_refs`).
+   - Requires `message_seq > 0` in `inspect` and parses `binding.proven_predicates` as `octo-server`'s boolean map (`Record<string, boolean>`).
+   - Preserves mandatory `bot_original_visible === true` and `caller_original_visible === true` checks in `prepareInput` (refusing when either is in `unknown_predicates` or `false`), formats `context_epoch` as a decimal string, validates `octo-server` v7's `HistoryDisclosureResponse` (`status: 'resolved'`, `permit: 'pmt1-...'`, `payload_sha256`), extracts the invoking turn's input from the bound delivered `WKSocket` frame, and fails closed (`PERMISSION_NATIVE_HISTORY_BODY_CONSUMER_UNAVAILABLE`) if additional historical contributors return metadata-only permits without body content.
+   - Uses `operation: 'resolve', purpose: 'admit'` in `revalidateOriginal` with mandatory all-`true` `result.predicates` checks (`verifyResolvedPredicates`).
+   - Matches `resolved.reference === deliveryReference` in `publish` and `refuse` and verifies all `reply` predicates are `=== true` (refusing before `sendMessage` whenever any reply predicate such as `bot_current_send` or `dm_bot_to_human_send_relation` is `false`).
+   - Removes the unmounted `/v1/bot/permission-facts/v1/fence` call and keeps `recover` explicitly fail-closed (`PERMISSION_NATIVE_RECOVERY_FENCE_UNAVAILABLE`) until Owner decision on `XIN-2830` Decision 1.
+4. **Non-blocking shutdown drain order (`src/index.ts:321-327`).**
+   - `shutdown` drains `await router.stopTurns()` and `await gateway.stop(activeHandlers)` before `await permissionEndpoint?.stop()`.
+5. **Latest CLI `3ef52206809ade6b10fcb6976e4c7ab7c8af69a7` binary/relay
+   acquisition, replacement-envelope budget behavior, and denied read/write Journey 3.**
    - Verified against `octo-cli` `3ef52206809ade6b10fcb6976e4c7ab7c8af69a7` with
      `ResponseBudgets` (`MaxAcquisitionBytes: 512`, `MaxPageItems: 10`,
      `MaxPages: 2`, `MaxCumulativeBytes: 1024`,
-     `MaxSerializedRPCBytes: MinSerializedRPCBudgetBytes = 1024`):
-     - Within-budget binary `docs.scene.export` (`128 B` PNG) succeeds across
-       `execute` and `call_op` on `http`, `stdio`, and `https_tls`.
-     - Oversized binary `docs.scene.export` via declared `Content-Length`
-       (`2048 B > 512 B`) and chunked stream (`2048 B > 512 B`) fails closed
-       with `RESPONSE_BUDGET_EXCEEDED` (`acquisition_bytes`) in a single attempt
-       without retry across `execute` and `call_op` on `http`, `stdio`, and
-       `https_tls`.
-     - Quote-heavy `docs.search` (`q: "bound"`) with a 180-character request ID
-       triggers `enforceSerializedRPCBudget` at the lower boundary
-       `MinSerializedRPCBudgetBytes = 1024`, producing a valid
-       `RESPONSE_BUDGET_EXCEEDED` (`serialized_rpc_bytes`) JSON-RPC envelope
-       whose serialized length is `<= 1024` bytes across `execute` and `call_op`
-       on `http`, `stdio`, and `https_tls`.
-3. **Explicit mapping of the 4 user journeys across `http`, `stdio`, and
-   `https_tls`.**
-   - **Journey 1 (Allowed call + read/reply):** Turn 1 `register_ingress`
-     (`delivery_0`) -> `admit` -> `resolve_contributors` (253 contributor refs in
-     `<=32` batches) -> `bind_context` (`218,289`-byte 255-Header chunked core +
-     `contributor_references: ['delivery_254']`) -> `renew` -> `open_relay`
-     (`include_tls_trust: true`) -> positive `execute` and `call_op` for
-     `message.send` and within-budget binary `docs.scene.export` -> owned reply
-     publication. Turn 2 verifies same-generation context reuse via
-     `prior_generation` (`256`-Header union).
-   - **Journey 2 (Admission denied before model work):** `delivery_denied` is
-     rejected at Stage 1 `admit` with `invocation_denied` before `bind_context`,
-     `open_relay`, `prepareInput`, or worker launch; `EndpointPermissionHost`
-     publishes the fixed refusal when original reply route authority is proven.
-   - **Journey 3 (Admitted turn denied write with zero refused-attempt dispatch):**
-     ungranted `docs.scene.get` during an admitted turn is rejected across both
-     `execute` and `call_op` with JSON-RPC error `-32007` (`capability_denied`)
-     and `deniedDispatches === 0` at the backend.
-   - **Journey 4 (Revoke / restart / replay):** bundle rotation to
-     `context_epoch = "1"` invalidates `prior_generation` reuse and allocates a
-     fresh generation; `WKSocket.onRecv` and `ReplayJournal` withhold `RECVACK`
-     until handler completion and durable SQLite `'terminal'` commit; uncertain
-     or draining duplicates return `unavailable` without `RECVACK` or worker
-     re-entry; ordinary restart converts `'reserved'` rows to `'uncertain'`.
+     `MaxSerializedRPCBytes: MinSerializedRPCBudgetBytes = 1024`).
+   - **Journey 3 (Admitted turn denied read + write with zero refused-attempt dispatch):**
+     ungranted read (`docs.scene.get`) and write (`docs.scene.edit`) during an admitted turn are rejected across both `execute` and `call_op` with JSON-RPC error `-32007` (`capability_denied`) and `deniedDispatches === 0` at the backend.
 
 ## Consumed sibling revisions and exact byte/hash inventory
 

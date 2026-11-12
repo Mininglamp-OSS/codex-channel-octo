@@ -320,9 +320,9 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
 
     const shutdown = async (): Promise<void> => {
       clearInterval(cwdCleanupTimer);
-      await permissionEndpoint?.stop();
       await router.stopTurns();
       await gateway.stop(activeHandlers);
+      await permissionEndpoint?.stop();
       store.close();
     };
     // Single-bot: the gateway's own SIGINT/SIGTERM handler invokes this.

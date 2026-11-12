@@ -1,6 +1,9 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { createConnection as createNetConnection, createServer as createNetServer } from 'node:net';
+import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { checkServerIdentity as tlsCheckServerIdentity, connect as tlsConnect } from 'node:tls';
 
@@ -215,6 +218,8 @@ const { isAbsolute } = require('node:path');
 const { realpathSync } = require('node:fs');
 const cwdLex = process.cwd();
 const codexHomeLex = process.env.CODEX_HOME || '';
+delete process.env.CODEX_OCTO_RELAY_UDS;
+delete process.env.CODEX_OCTO_RELAY_PORT;
 if (!isAbsolute(cwdLex) || !isAbsolute(codexHomeLex)) {
   process.stderr.write('Isolated worker requires absolute cwd and CODEX_HOME\\n');
   process.exit(78);
@@ -268,13 +273,66 @@ child.on('error', () => process.exit(78));
       ...(options.allowNetwork === false ? ['--unshare-net'] : []),
       '--die-with-parent',
     ];
+    const bridgeScriptPath = join(launcherDir, 'bwrap-netns-bridge.cjs');
+    const bridgeScriptSource = `const { spawn } = require('node:child_process');
+const net = require('node:net');
+const [target, ...args] = process.argv.slice(2);
+const udsPath = process.env.CODEX_OCTO_RELAY_UDS || '';
+const relayPort = Number(process.env.CODEX_OCTO_RELAY_PORT || '0');
+delete process.env.CODEX_OCTO_RELAY_UDS;
+delete process.env.CODEX_OCTO_RELAY_PORT;
+function runTarget(effectiveArgs) {
+  const child = spawn(target, effectiveArgs, { stdio: 'inherit', env: process.env });
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+    process.on(sig, () => { try { child.kill(sig); } catch {} });
+  }
+  child.on('exit', (code, signal) => {
+    if (signal) { try { process.kill(process.pid, signal); } catch {} process.exit(1); }
+    process.exit(code ?? 1);
+  });
+  child.on('error', () => process.exit(78));
+}
+function pipeToUds(client) {
+  const upstream = net.createConnection(udsPath);
+  client.pipe(upstream);
+  upstream.pipe(client);
+  client.on('error', () => upstream.destroy());
+  upstream.on('error', () => client.destroy());
+}
+if (!udsPath || !Number.isInteger(relayPort) || relayPort <= 0) {
+  runTarget(args);
+} else {
+  const server = net.createServer(pipeToUds);
+  server.unref();
+  server.once('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+      const fallback = net.createServer(pipeToUds);
+      fallback.unref();
+      fallback.once('error', () => process.exit(78));
+      fallback.listen(0, '127.0.0.1', () => {
+        const addr = fallback.address();
+        const newPort = addr && typeof addr === 'object' ? addr.port : relayPort;
+        const rewritten = args.map(a => a.replaceAll('127.0.0.1:' + relayPort, '127.0.0.1:' + newPort));
+        runTarget(rewritten);
+      });
+      return;
+    }
+    process.exit(78);
+  });
+  server.listen(relayPort, '127.0.0.1', () => runTarget(args));
+}
+`;
+    writeFileSync(bridgeScriptPath, bridgeScriptSource, { mode: 0o700, flag: 'wx' });
+    const bridgeScriptReal = realpathSync(bridgeScriptPath);
     const launcherPath = join(launcherDir, 'isolated-worker');
     const wrapperSource = `#!${process.execPath}
 const { spawn } = require('node:child_process');
 const { existsSync, lstatSync, realpathSync } = require('node:fs');
-const { isAbsolute } = require('node:path');
+const { dirname, isAbsolute } = require('node:path');
 const cwdLex = process.cwd();
 const codexHomeLex = process.env.CODEX_HOME || '';
+const relayUds = process.env.CODEX_OCTO_RELAY_UDS || '';
+const relayPort = process.env.CODEX_OCTO_RELAY_PORT || '';
 if (!isAbsolute(cwdLex) || !isAbsolute(codexHomeLex)) {
   process.stderr.write('Isolated worker requires absolute cwd and CODEX_HOME\\n');
   process.exit(78);
@@ -295,12 +353,27 @@ if (${JSON.stringify(options.targetExecutable)} !== ${JSON.stringify(targetRealp
   bwrapArgs.push('--ro-bind', ${JSON.stringify(options.targetExecutable)}, ${JSON.stringify(options.targetExecutable)});
 }
 bwrapArgs.push('--bind', cwdReal, cwdReal, '--bind', codexHomeReal, codexHomeReal);
+let useNetnsBridge = false;
+let udsDirReal = '';
+if (relayUds && relayPort && isAbsolute(relayUds) && existsSync(dirname(relayUds))) {
+  udsDirReal = realpathSync(dirname(relayUds));
+  bwrapArgs.push('--bind', udsDirReal, udsDirReal);
+  bwrapArgs.push('--ro-bind', ${JSON.stringify(bridgeScriptReal)}, ${JSON.stringify(bridgeScriptReal)});
+  useNetnsBridge = true;
+} else {
+  delete process.env.CODEX_OCTO_RELAY_UDS;
+  delete process.env.CODEX_OCTO_RELAY_PORT;
+}
 for (const dir of [...deniedDirs].reverse()) {
-  if (dir !== cwdReal && dir !== codexHomeReal && dir !== cwdLex && dir !== codexHomeLex) {
+  if (dir !== cwdReal && dir !== codexHomeReal && dir !== cwdLex && dir !== codexHomeLex && dir !== udsDirReal) {
     bwrapArgs.push('--remount-ro', dir);
   }
 }
-bwrapArgs.push('--', ${JSON.stringify(options.targetExecutable)}, ...${JSON.stringify(targetArgs)}, ...process.argv.slice(2));
+if (useNetnsBridge) {
+  bwrapArgs.push('--', ${JSON.stringify(process.execPath)}, ${JSON.stringify(bridgeScriptReal)}, ${JSON.stringify(options.targetExecutable)}, ...${JSON.stringify(targetArgs)}, ...process.argv.slice(2));
+} else {
+  bwrapArgs.push('--', ${JSON.stringify(options.targetExecutable)}, ...${JSON.stringify(targetArgs)}, ...process.argv.slice(2));
+}
 const child = spawn(${JSON.stringify(bwrap)}, bwrapArgs, { stdio: 'inherit', env: process.env });
 for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
   process.on(sig, () => { try { child.kill(sig); } catch {} });
@@ -918,4 +991,259 @@ export async function postHttpTurnRelay(
     req.once('error', (err) => finish(new Error(`Turn relay TLS verification failed: ${err.message}`)));
     req.end(bodyBytes);
   });
+}
+
+export interface TurnRelayBridge {
+  readonly launch: Readonly<PrivateWorkerLaunch>;
+  readonly url?: string;
+  readonly bridgeUrl?: string;
+  readonly bridgeBearerToken?: string;
+  readonly udsPath?: string;
+  close(): Promise<void>;
+}
+
+/**
+ * Start a host-owned per-turn local relay bridge so the contained worker's
+ * actual consuming MCP connection traverses `postHttpTurnRelay` (enforcing
+ * custom CA `ca_sha256`, `server_name` SNI/SAN, leaf certificate pin
+ * `cert_sha256` / `peer_sha256`, and `X-Octo-Acquisition-Budget-Bytes` caps on
+ * every request) and bridges across Linux `bwrap --unshare-net` network
+ * namespaces over a bind-mounted Unix domain socket.
+ */
+export async function startTurnRelayBridge(
+  launch: Readonly<PrivateWorkerLaunch>,
+  options?: {
+    readonly signal?: AbortSignal;
+    readonly maxResponseBytes?: number;
+  },
+): Promise<TurnRelayBridge> {
+  const signal = options?.signal;
+  signal?.throwIfAborted();
+  let supportsNetnsUds = false;
+  try {
+    supportsNetnsUds = readFileSync(launch.launcher, 'utf8').includes('CODEX_OCTO_RELAY_UDS');
+  } catch { /* ignore */ }
+
+  if (launch.relayUrl) {
+    await verifyHttpRelayTlsPin(launch, signal);
+    const mcpOverride = launch.configOverrides.find(item => item.startsWith('mcp_servers='));
+    const bearerMatch = mcpOverride?.match(/"Authorization"="Bearer ([A-Za-z0-9_-]{1,512})"/);
+    if (!bearerMatch) throw new Error('Turn relay bearer unavailable');
+    const upstreamBearer = bearerMatch[1];
+    const bridgeBearerToken = randomBytes(32).toString('hex');
+    const expectedAuth = Buffer.from(`Bearer ${bridgeBearerToken}`, 'utf8');
+
+    const udsDir = mkdtempSync(join(tmpdir(), 'octo-r-'));
+    chmodSync(udsDir, 0o700);
+    const udsPath = join(udsDir, 'r.sock');
+
+    const handleHttp = (req: IncomingMessage, res: ServerResponse): void => {
+      void (async () => {
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' });
+          res.end('{"error":"METHOD_NOT_ALLOWED"}');
+          return;
+        }
+        const authHeader = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
+        const actualAuth = Buffer.from(authHeader, 'utf8');
+        if (actualAuth.byteLength !== expectedAuth.byteLength || !timingSafeEqual(actualAuth, expectedAuth)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end('{"error":"UNAUTHORIZED"}');
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let total = 0;
+        for await (const chunk of req) {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          total += buf.byteLength;
+          if (total > 1024 * 1024) {
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end('{"error":"REQUEST_TOO_LARGE"}');
+            return;
+          }
+          chunks.push(buf);
+        }
+        let rpcPayload: unknown;
+        try {
+          rpcPayload = JSON.parse(Buffer.concat(chunks, total).toString('utf8'));
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end('{"error":"INVALID_JSON"}');
+          return;
+        }
+        try {
+          const rpcResult = await postHttpTurnRelay(launch, upstreamBearer, rpcPayload, {
+            signal,
+            maxResponseBytes: options?.maxResponseBytes,
+          });
+          const body = JSON.stringify(rpcResult);
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(body)),
+          });
+          res.end(body);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg === 'RESPONSE_BUDGET_EXCEEDED'
+            && rpcPayload && typeof rpcPayload === 'object' && !Array.isArray(rpcPayload) && 'id' in rpcPayload) {
+            const replacement = JSON.stringify({
+              jsonrpc: '2.0',
+              id: (rpcPayload as Record<string, unknown>).id ?? null,
+              error: {
+                code: -32007,
+                message: 'Permission denied',
+                data: {
+                  version: 1,
+                  category: 'response_budget_exceeded',
+                  correlation: randomBytes(16).toString('hex'),
+                },
+              },
+            });
+            res.writeHead(200, {
+              'Content-Type': 'application/json',
+              'Content-Length': String(Buffer.byteLength(replacement)),
+              'X-Octo-Relay-Error': 'RESPONSE_BUDGET_EXCEEDED',
+            });
+            res.end(replacement);
+            return;
+          }
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: msg }));
+        }
+      })();
+    };
+
+    const httpServer = createHttpServer(handleHttp);
+    const udsServer = createHttpServer(handleHttp);
+    let closed = false;
+    const close = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      httpServer.closeAllConnections();
+      udsServer.closeAllConnections();
+      await Promise.all([
+        new Promise<void>(resolve => httpServer.close(() => resolve())),
+        new Promise<void>(resolve => udsServer.close(() => resolve())),
+      ]);
+      try { rmSync(udsDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    };
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.once('error', reject);
+        httpServer.listen(0, '127.0.0.1', () => resolve());
+      });
+      await new Promise<void>((resolve, reject) => {
+        udsServer.once('error', reject);
+        udsServer.listen(udsPath, () => resolve());
+      });
+      chmodSync(udsPath, 0o600);
+      const addr = httpServer.address();
+      if (!addr || typeof addr === 'string') throw new Error('Turn relay bridge address unavailable');
+      const bridgeUrl = `http://127.0.0.1:${addr.port}/mcp`;
+      const bridgedServer = {
+        url: bridgeUrl,
+        http_headers: { Authorization: `Bearer ${bridgeBearerToken}` },
+      };
+      const bridgedOverrides = Object.freeze(
+        launch.configOverrides.map(item =>
+          item.startsWith('mcp_servers=') ? `mcp_servers=${inlineTable({ octo: bridgedServer })}` : item,
+        ),
+      );
+      const bridgedEnv = Object.freeze({
+        ...launch.env,
+        ...(supportsNetnsUds ? {
+          CODEX_OCTO_RELAY_UDS: udsPath,
+          CODEX_OCTO_RELAY_PORT: String(addr.port),
+        } : {}),
+      });
+      const bridgedLaunch: Readonly<PrivateWorkerLaunch> = Object.freeze({
+        ...launch,
+        env: bridgedEnv,
+        configOverrides: bridgedOverrides,
+      });
+      return {
+        launch: bridgedLaunch,
+        url: bridgeUrl,
+        bridgeUrl,
+        bridgeBearerToken,
+        udsPath,
+        close,
+      };
+    } catch (err) {
+      await close();
+      throw err;
+    }
+  }
+
+  // Stdio (--turn-relay) UDS forwarder for Linux bwrap --unshare-net
+  const mcpOverride = launch.configOverrides.find(item => item.startsWith('mcp_servers='));
+  const handleMatch = mcpOverride?.match(/"args"=\["--turn-relay","([A-Za-z0-9_-]{1,512})"\]/);
+  if (handleMatch && supportsNetnsUds) {
+    let targetHost = '127.0.0.1';
+    let targetPort = 0;
+    try {
+      const rawBytes = Buffer.from(handleMatch[1], 'base64url');
+      if (rawBytes.toString('base64url') === handleMatch[1]) {
+        const decoded = JSON.parse(rawBytes.toString('utf8')) as Record<string, unknown>;
+        if (typeof decoded.endpoint === 'string') {
+          const parsedUrl = new URL(decoded.endpoint);
+          if (parsedUrl.protocol === 'https:') {
+            targetHost = parsedUrl.hostname.startsWith('[') && parsedUrl.hostname.endsWith(']')
+              ? parsedUrl.hostname.slice(1, -1)
+              : parsedUrl.hostname;
+            targetPort = parsedUrl.port ? Number(parsedUrl.port) : 443;
+          }
+        }
+      }
+    } catch { /* non-JSON synthetic test handle */ }
+
+    if (targetPort > 0) {
+      const udsDir = mkdtempSync(join(tmpdir(), 'octo-r-'));
+      chmodSync(udsDir, 0o700);
+      const udsPath = join(udsDir, 'r.sock');
+      const udsServer = createNetServer(client => {
+        const upstream = createNetConnection({ host: targetHost, port: targetPort });
+        client.pipe(upstream);
+        upstream.pipe(client);
+        client.on('error', () => upstream.destroy());
+        upstream.on('error', () => client.destroy());
+      });
+      let closed = false;
+      const close = async (): Promise<void> => {
+        if (closed) return;
+        closed = true;
+        await new Promise<void>(resolve => udsServer.close(() => resolve()));
+        try { rmSync(udsDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      };
+      try {
+        await new Promise<void>((resolve, reject) => {
+          udsServer.once('error', reject);
+          udsServer.listen(udsPath, () => resolve());
+        });
+        chmodSync(udsPath, 0o600);
+        const bridgedLaunch: Readonly<PrivateWorkerLaunch> = Object.freeze({
+          ...launch,
+          env: Object.freeze({
+            ...launch.env,
+            CODEX_OCTO_RELAY_UDS: udsPath,
+            CODEX_OCTO_RELAY_PORT: String(targetPort),
+          }),
+        });
+        return {
+          launch: bridgedLaunch,
+          udsPath,
+          close,
+        };
+      } catch (err) {
+        await close();
+        throw err;
+      }
+    }
+  }
+
+  return {
+    launch,
+    async close(): Promise<void> {},
+  };
 }

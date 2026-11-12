@@ -13,7 +13,7 @@ import { decodeControl, object, type ControlConnection, type RefusalRecord } fro
 import { startPermissionCoordinator, type CoordinatorBoot } from './coordinator-process.js';
 import { privateFile, verifyExecutable } from './private-files.js';
 import { ReplayJournal } from './replay-journal.js';
-import { createIsolatingWorkerLauncher, preparePrivateWorker, validRelayServerName, verifyHttpRelayTlsPin, type PrivateWorkerLaunch, type TurnRelay, type TurnRelayTrust } from './worker-launch.js';
+import { createIsolatingWorkerLauncher, preparePrivateWorker, startTurnRelayBridge, validRelayServerName, type PrivateWorkerLaunch, type TurnRelay, type TurnRelayBridge, type TurnRelayTrust } from './worker-launch.js';
 import { catalogBootPin, verifyCatalogBoot } from './catalog-boot.js';
 import type { OriginalIdentity } from './context-provenance.js';
 import type { ReceivedDelivery } from './ingress-reservation.js';
@@ -44,6 +44,12 @@ export interface NativeEndpointDriverOptions {
   readonly ownerUid?: string;
   readonly router?: SessionRouter;
   readonly fetchImpl?: typeof fetch;
+  /** Isolated synthetic test hook only; production startup has no recovery fence route on octo-server v7. */
+  readonly syntheticRecoveryFence?: Readonly<{
+    readonly sql_incarnation: string;
+    readonly im_incarnation: string;
+    readonly ack_before_read_start: boolean;
+  }>;
 }
 
 export interface ContainedWorkerDriverOptions {
@@ -60,7 +66,6 @@ export interface ContainedWorkerDriverOptions {
 
 const NATIVE_FACTS_PATH = '/v1/bot/permission-facts/v1';
 const NATIVE_BIND_DELIVERY_PATH = '/v1/bot/permission-facts/v1/bind-delivery';
-const NATIVE_FENCE_PATH = '/v1/bot/permission-facts/v1/fence';
 
 function channelTypeForSource(kind: NativeHeader['source']['kind']): ChannelType {
   if (kind === 'dm') return ChannelType.DM;
@@ -69,17 +74,185 @@ function channelTypeForSource(kind: NativeHeader['source']['kind']): ChannelType
   throw new Error('Native source kind unavailable');
 }
 
-function verifyNativeAuthorities(rawAuthorities: unknown): void {
-  const auth = object(rawAuthorities, ['sql', 'im']);
-  for (const cut of [auth.sql, auth.im]) {
-    const c = object(cut, ['authority_id', 'incarnation', 'commit_epoch', 'ack_before_read_start']);
-    if (typeof c.authority_id !== 'string' || !c.authority_id
+function verifyNativeAuthorities(rawAuthorities: unknown): ReadonlyMap<string, 'sql' | 'im'> {
+  if (!Array.isArray(rawAuthorities) || rawAuthorities.length !== 2) {
+    throw new Error('PERMISSION_NATIVE_AUTHORITY_CUT_INVALID');
+  }
+  const nonceToKind = new Map<string, 'sql' | 'im'>();
+  const seenKinds = new Set<string>();
+  for (const item of rawAuthorities) {
+    const c = object(item, [
+      'authority_id',
+      'kind',
+      'incarnation',
+      'position',
+      'read_nonce',
+      'consistency',
+      'started_at',
+      'completed_at',
+    ]);
+    if (typeof c.authority_id !== 'string' || !/^[\x21-\x7e]{1,64}$/.test(c.authority_id)
+      || (c.kind !== 'sql' && c.kind !== 'im')
       || typeof c.incarnation !== 'string' || !/^[0-9a-f]{32}$/.test(c.incarnation)
-      || typeof c.commit_epoch !== 'string' || !/^(?:0|[1-9][0-9]{0,19})$/.test(c.commit_epoch)
-      || c.ack_before_read_start !== true) {
+      || typeof c.position !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(c.position)
+      || typeof c.read_nonce !== 'string' || !/^[0-9a-f]{32}$/.test(c.read_nonce)
+      || c.consistency !== 'ack_before_read_start'
+      || typeof c.started_at !== 'string' || Number.isNaN(Date.parse(c.started_at))
+      || typeof c.completed_at !== 'string' || Number.isNaN(Date.parse(c.completed_at))) {
       throw new Error('PERMISSION_NATIVE_AUTHORITY_CUT_INVALID');
     }
+    if (nonceToKind.has(c.read_nonce) || seenKinds.has(c.kind)) {
+      throw new Error('PERMISSION_NATIVE_AUTHORITY_CUT_INVALID');
+    }
+    nonceToKind.set(c.read_nonce, c.kind);
+    seenKinds.add(c.kind);
   }
+  if (!seenKinds.has('sql') || !seenKinds.has('im')) {
+    throw new Error('PERMISSION_NATIVE_AUTHORITY_CUT_INVALID');
+  }
+  return nonceToKind;
+}
+
+function verifyAuthorityRefs(rawRefs: unknown, authoritiesByNonce: ReadonlyMap<string, 'sql' | 'im'>): void {
+  if (!Array.isArray(rawRefs) || rawRefs.length < 2) {
+    throw new Error('PERMISSION_NATIVE_AUTHORITY_REFS_INVALID');
+  }
+  const seenKinds = new Set<'sql' | 'im'>();
+  for (const ref of rawRefs) {
+    if (typeof ref !== 'string') throw new Error('PERMISSION_NATIVE_AUTHORITY_REFS_INVALID');
+    const kind = authoritiesByNonce.get(ref);
+    if (!kind) throw new Error('PERMISSION_NATIVE_AUTHORITY_REFS_INVALID');
+    seenKinds.add(kind);
+  }
+  if (!seenKinds.has('sql') || !seenKinds.has('im')) {
+    throw new Error('PERMISSION_NATIVE_AUTHORITY_REFS_INVALID');
+  }
+}
+
+function verifyNativeEnvelope(
+  data: Record<string, unknown>,
+  expectedKey: Readonly<PermissionKey>,
+  expectedRequestId: string,
+  payloadField: 'binding' | 'results' | 'page',
+): { readonly reply: Record<string, unknown>; readonly authoritiesByNonce: ReadonlyMap<string, 'sql' | 'im'> } {
+  const reply = object(data, [
+    'schema_version',
+    'profile_version',
+    'key',
+    'request_id',
+    'read_id',
+    'observed_at',
+    'authorities',
+    payloadField,
+  ]);
+  if (reply.schema_version !== 1
+    || reply.profile_version !== 1
+    || reply.request_id !== expectedRequestId
+    || typeof reply.read_id !== 'string' || !/^[0-9a-f]{32}$/.test(reply.read_id)
+    || typeof reply.observed_at !== 'string' || Number.isNaN(Date.parse(reply.observed_at))) {
+    throw new Error('PERMISSION_NATIVE_ENVELOPE_MISMATCH');
+  }
+  const keyObj = object(reply.key, ['origin', 'bot_uid', 'space_id']);
+  if (keyObj.origin !== expectedKey.origin
+    || keyObj.bot_uid !== expectedKey.bot_uid
+    || keyObj.space_id !== expectedKey.space_id) {
+    throw new Error('PERMISSION_NATIVE_ENVELOPE_KEY_MISMATCH');
+  }
+  const authoritiesByNonce = verifyNativeAuthorities(reply.authorities);
+  return { reply, authoritiesByNonce };
+}
+
+const REQUIRED_COMMON_RESOLVE_PREDICATES = [
+  'identity_supported',
+  'author_is_human',
+  'author_active',
+  'author_not_destroyed',
+  'bot_user_active',
+  'bot_robot_active',
+  'bot_creator_eligible',
+  'space_active',
+  'caller_space_member',
+  'bot_space_member',
+  'message_source_exact',
+  'message_space_exact',
+  'message_author_exact',
+  'message_recipient_exact',
+  'message_version_exact',
+  'source_exists',
+] as const;
+
+function verifyResolvedPredicates(
+  rawPredicates: unknown,
+  purpose: 'admit' | 'reply',
+  sourceKind: NativeHeader['source']['kind'],
+): boolean {
+  if (!rawPredicates || typeof rawPredicates !== 'object' || Array.isArray(rawPredicates)) {
+    return false;
+  }
+  const preds = rawPredicates as Record<string, unknown>;
+  const entries = Object.entries(preds);
+  if (entries.length === 0) return false;
+  for (const [, val] of entries) {
+    if (typeof val !== 'boolean' || val !== true) return false;
+  }
+  for (const reqKey of REQUIRED_COMMON_RESOLVE_PREDICATES) {
+    if (preds[reqKey] !== true) return false;
+  }
+  if (purpose === 'reply') {
+    if (preds.bot_current_send !== true) return false;
+    if (sourceKind === 'dm') {
+      return preds.dm_peer_exact === true
+        && preds.dm_human_blocks_bot_clear === true
+        && preds.dm_bot_blocks_human_clear === true
+        && preds.dm_bot_to_human_send_relation === true;
+    }
+    if (sourceKind === 'group') {
+      return preds.group_space_exact === true
+        && preds.bot_group_active_member === true
+        && preds.bot_external_access === true;
+    }
+    if (sourceKind === 'thread') {
+      return preds.parent_verified === true
+        && preds.thread_not_deleted === true
+        && preds.parent_space_exact === true
+        && preds.bot_parent_active_member === true
+        && preds.bot_external_access === true;
+    }
+    return false;
+  }
+  // purpose === 'admit'
+  if (preds.caller_current_read !== true
+    || preds.bot_current_read !== true
+    || preds.caller_original_visible !== true
+    || preds.bot_original_visible !== true) {
+    return false;
+  }
+  if (sourceKind === 'dm') {
+    return preds.dm_peer_exact === true
+      && preds.dm_human_blocks_bot_clear === true
+      && preds.dm_bot_blocks_human_clear === true
+      && preds.dm_human_to_bot_relation === true
+      && preds.dm_bot_to_human_read_relation === true;
+  }
+  if (sourceKind === 'group') {
+    return preds.group_space_exact === true
+      && preds.caller_group_active_member === true
+      && preds.bot_group_active_member === true
+      && preds.caller_external_access === true
+      && preds.bot_external_access === true;
+  }
+  if (sourceKind === 'thread') {
+    return preds.parent_verified === true
+      && preds.thread_not_deleted === true
+      && preds.parent_space_exact === true
+      && preds.caller_parent_active_member === true
+      && preds.bot_parent_active_member === true
+      && preds.caller_parent_current_read === true
+      && preds.bot_parent_current_read === true
+      && preds.caller_external_access === true
+      && preds.bot_external_access === true;
+  }
+  return false;
 }
 
 function sameHeaderIdentity(actual: Readonly<Record<string, unknown>>, expected: Readonly<NativeHeader>, key: Readonly<PermissionKey>): void {
@@ -98,18 +271,23 @@ function sameHeaderIdentity(actual: Readonly<Record<string, unknown>>, expected:
   }
 }
 
+interface BoundDeliveryRecord {
+  readonly deliveryReference: string;
+  readonly header: Readonly<NativeHeader>;
+  readonly message: Readonly<BotMessage>;
+  readonly payloadSha256: string;
+  readonly proven: Readonly<Record<string, boolean>>;
+  readonly unknown: readonly string[];
+  readonly resolvablePurposes: readonly string[];
+}
+
 export function createNativeEndpointDriver(options: NativeEndpointDriverOptions): NativeEndpointDriver {
   const expectedKey = Object.freeze({ ...options.key });
   const router = options.router ?? new SessionRouter(options.config, options.botId, options.ownerUid ?? '');
   const fetchFn = options.fetchImpl ?? fetch;
   const apiUrl = options.config.apiUrl.replace(/\/+$/, '');
   const botToken = options.config.botToken;
-  const deliveryRefByHeaderRef = new Map<string, string>();
-  const boundPredicatesByHeaderRef = new Map<string, {
-    proven: readonly string[];
-    unknown: readonly string[];
-    resolvablePurposes: readonly string[];
-  }>();
+  const boundDeliveryByHeaderRef = new Map<string, BoundDeliveryRecord>();
 
   async function callNativeEndpoint(
     routePath: string,
@@ -153,46 +331,21 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
       if (key.origin !== expectedKey.origin || key.bot_uid !== expectedKey.bot_uid || key.space_id !== expectedKey.space_id) {
         throw new Error('PERMISSION_NATIVE_AND_CONTAINMENT_BINDINGS_UNAVAILABLE: key mismatch');
       }
-      const readId = randomBytes(16).toString('hex');
-      const readNonce = randomBytes(16).toString('hex');
-      const data = await callNativeEndpoint(
-        NATIVE_FENCE_PATH,
-        {
-          space_id: expectedKey.space_id,
-          read_id: readId,
-          read_nonce: readNonce,
-          requested_at: new Date().toISOString(),
-        },
-        AbortSignal.timeout(5000),
-        'PERMISSION_NATIVE_AND_CONTAINMENT_BINDINGS_UNAVAILABLE',
-      );
-      if (data.fence_version !== 1
-        || data.space_id !== expectedKey.space_id
-        || data.read_id !== readId
-        || data.read_nonce !== readNonce
-        || typeof data.authority_id !== 'string' || !data.authority_id
-        || typeof data.commit_marker !== 'string' || !data.commit_marker) {
-        throw new Error('PERMISSION_NATIVE_AND_CONTAINMENT_BINDINGS_UNAVAILABLE: invalid fence response');
-      }
-      if (Object.hasOwn(data, 'recovery_fence_v1')) {
-        const rf = object(data.recovery_fence_v1, ['sql_incarnation', 'im_incarnation', 'ack_before_read_start']);
+      if (options.syntheticRecoveryFence) {
+        const rf = options.syntheticRecoveryFence;
         if (typeof rf.sql_incarnation !== 'string' || !/^[0-9a-f]{32}$/.test(rf.sql_incarnation)
           || typeof rf.im_incarnation !== 'string' || !/^[0-9a-f]{32}$/.test(rf.im_incarnation)
           || rf.ack_before_read_start !== true) {
-          throw new Error('PERMISSION_NATIVE_AND_CONTAINMENT_BINDINGS_UNAVAILABLE: invalid recovery_fence_v1');
+          throw new Error('PERMISSION_NATIVE_AND_CONTAINMENT_BINDINGS_UNAVAILABLE: invalid syntheticRecoveryFence');
         }
         return;
       }
-      if (Object.hasOwn(data, 'authorities')) {
-        verifyNativeAuthorities(data.authorities);
-        return;
-      }
-      // Production octo-server /v1/bot/permission-facts/v1/fence returns an ordinary
-      // SQL read-time marker (octo-server-message-store) without a durable SQL+IM
-      // crash/restore fence. Fail closed rather than mistaking it for recovery proof.
+      // Production octo-server v7 mounts only /v1/bot/permission-facts/v1 and
+      // /v1/bot/permission-facts/v1/bind-delivery (no /fence route, and ordinary
+      // SQL recovery cutover in XIN-2830 Decision 1 remains awaiting Owner decision).
       throw new Error(
         'PERMISSION_NATIVE_AND_CONTAINMENT_BINDINGS_UNAVAILABLE: PERMISSION_NATIVE_RECOVERY_FENCE_UNAVAILABLE ' +
-        '(ordinary SQL read-time marker is not a durable SQL+IM crash/restore fence)',
+        '(octo-server v7 mounts no recovery fence route; awaiting Owner decision on XIN-2830 Decision 1)',
       );
     },
 
@@ -202,9 +355,9 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
       }
       if (typeof delivery.message.channel_type !== 'number'
         || typeof delivery.message.channel_id !== 'string' || !delivery.message.channel_id
-        || typeof delivery.message.message_id !== 'string' || !delivery.message.message_id
+        || typeof delivery.message.message_id !== 'string' || !/^[1-9][0-9]{0,18}$/.test(delivery.message.message_id)
         || typeof delivery.message.from_uid !== 'string' || !delivery.message.from_uid
-        || !Number.isSafeInteger(delivery.message.message_seq) || delivery.message.message_seq < 0) {
+        || !Number.isSafeInteger(delivery.message.message_seq) || delivery.message.message_seq <= 0) {
         throw new Error('Native delivery transport observation incomplete');
       }
       const requestId = randomBytes(16).toString('hex');
@@ -223,12 +376,9 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
         },
         AbortSignal.timeout(5000),
       );
-      const reply = object(data, ['schema_version', 'request_id', 'authorities', 'binding']);
-      if (reply.schema_version !== 1 || reply.request_id !== requestId) {
-        throw new Error('Native bind_delivery response mismatch');
-      }
-      verifyNativeAuthorities(reply.authorities);
+      const { reply, authoritiesByNonce } = verifyNativeEnvelope(data, expectedKey, requestId, 'binding');
       const binding = object(reply.binding);
+      verifyAuthorityRefs(binding.authority_refs, authoritiesByNonce);
       if (binding.status !== 'bound' || binding.current !== true) {
         throw new Error(`Native delivery binding refused or non-current: ${String(binding.reason ?? binding.status)}`);
       }
@@ -240,14 +390,27 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
         || binding.observed_payload_sha256 !== delivery.payloadSha256) {
         throw new Error('Native delivery binding tokens invalid');
       }
-      const proven = Array.isArray(binding.proven_predicates) ? binding.proven_predicates.map(String) : [];
+      const rawProven = object(binding.proven_predicates);
+      const proven: Record<string, boolean> = {};
+      for (const [k, v] of Object.entries(rawProven)) {
+        if (typeof v !== 'boolean') throw new Error('Native delivery proven_predicates invalid');
+        proven[k] = v;
+      }
       const unknown = Array.isArray(binding.unknown_predicates) ? binding.unknown_predicates.map(String) : [];
       const resolvablePurposes = Array.isArray(binding.resolvable_purposes) ? binding.resolvable_purposes.map(String) : [];
-      if (!proven.includes('delivery_current_exact')
-        || !proven.includes('sender_identity_exact')
-        || !proven.includes('message_space_exact')
+      if (proven.message_source_exact !== true
+        || proven.message_author_exact !== true
+        || proven.message_recipient_exact !== true
+        || proven.message_version_exact !== true
+        || proven.message_space_exact !== true
+        || proven.bot_current_read !== true
+        || proven.caller_current_read !== true
         || unknown.includes('message_space_exact')) {
         throw new Error('Native delivery required predicates unproven');
+      }
+      if (delivery.message.channel_type !== ChannelType.DM
+        && (proven.bot_parent_current_read !== true || proven.caller_parent_current_read !== true)) {
+        throw new Error('Native delivery required parent predicates unproven');
       }
       const rawHeader = object(binding.header);
       if (rawHeader.header_reference !== headerReference
@@ -257,22 +420,25 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
         || rawHeader.recipient_bot_uid !== expectedKey.bot_uid) {
         throw new Error('Native bound header mismatch');
       }
-      if (deliveryRefByHeaderRef.size >= 4096) {
-        const oldest = deliveryRefByHeaderRef.keys().next().value;
+      if (boundDeliveryByHeaderRef.size >= 4096) {
+        const oldest = boundDeliveryByHeaderRef.keys().next().value;
         if (oldest !== undefined) {
-          deliveryRefByHeaderRef.delete(oldest);
-          boundPredicatesByHeaderRef.delete(oldest);
+          boundDeliveryByHeaderRef.delete(oldest);
         }
       }
-      deliveryRefByHeaderRef.set(headerReference, deliveryReference);
-      boundPredicatesByHeaderRef.set(headerReference, {
+      const typedHeader = rawHeader as unknown as Readonly<NativeHeader>;
+      boundDeliveryByHeaderRef.set(headerReference, Object.freeze({
+        deliveryReference,
+        header: typedHeader,
+        message: delivery.message,
+        payloadSha256: delivery.payloadSha256,
         proven: Object.freeze(proven),
         unknown: Object.freeze(unknown),
         resolvablePurposes: Object.freeze(resolvablePurposes),
-      });
+      }));
       return {
         deliveryReference,
-        header: rawHeader as unknown as NativeHeader,
+        header: typedHeader,
       };
     },
 
@@ -287,6 +453,8 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
       signal: AbortSignal,
     ): Promise<'allow' | 'deny' | 'unknown'> {
       try {
+        const bound = boundDeliveryByHeaderRef.get(original.headerReference);
+        if (!bound) return 'unknown';
         const effectiveSignal = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
         const requestId = randomBytes(16).toString('hex');
         const data = await callNativeEndpoint(
@@ -295,22 +463,28 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
             schema_version: 1,
             profile_version: 1,
             request_id: requestId,
-            operation: 'history_disclosure',
-            context_id: 'revalidation',
-            context_epoch: 0,
-            headers: [{ header_reference: original.headerReference }],
+            operation: 'resolve',
+            purpose: 'admit',
+            references: [{ delivery_reference: bound.deliveryReference }],
           },
           effectiveSignal,
         );
-        if (data.schema_version !== 1 || data.profile_version !== 1 || data.request_id !== requestId) {
+        const { reply, authoritiesByNonce } = verifyNativeEnvelope(data, expectedKey, requestId, 'results');
+        if (!Array.isArray(reply.results) || reply.results.length !== 1) return 'unknown';
+        const result = object(reply.results[0]);
+        const resolvedRef = typeof result.reference === 'string' ? result.reference : result.delivery_reference;
+        if (resolvedRef !== bound.deliveryReference) return 'unknown';
+        if (result.status === 'unavailable') {
+          if (result.reason === 'expired_reference'
+            || result.reason === 'visibility_denied'
+            || result.reason === 'version_mismatch'
+            || result.reason === 'identity_mismatch') {
+            return 'deny';
+          }
           return 'unknown';
         }
-        verifyNativeAuthorities(data.authorities);
-        if (!Array.isArray(data.results) || data.results.length !== 1) return 'unknown';
-        const result = object(data.results[0]);
-        if (result.header_reference !== original.headerReference) return 'unknown';
-        if (result.status === 'redacted' || result.status === 'refused') return 'deny';
-        if (result.status !== 'disclosed') return 'unknown';
+        if (result.status !== 'resolved') return 'unknown';
+        verifyAuthorityRefs(result.authority_refs, authoritiesByNonce);
         const disclosedHeader = object(result.header);
         if (disclosedHeader.header_reference !== original.headerReference
           || disclosedHeader.space_id !== expectedKey.space_id
@@ -321,11 +495,10 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
           || disclosedHeader.payload_sha256 !== original.payloadSha256) {
           return 'deny';
         }
-        if (typeof result.content !== 'string'
-          || createHash('sha256').update(result.content, 'utf8').digest('hex') !== original.payloadSha256) {
+        sameHeaderIdentity(disclosedHeader, header, expectedKey);
+        if (!verifyResolvedPredicates(result.predicates, 'admit', header.source.kind)) {
           return 'deny';
         }
-        sameHeaderIdentity(disclosedHeader, header, expectedKey);
         return 'allow';
       } catch {
         return 'unknown';
@@ -337,17 +510,39 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
       originals: readonly Readonly<NativeHeader>[];
       contributorReferences?: readonly string[];
     }> {
-      const boundPredicates = boundPredicatesByHeaderRef.get(binding.header.header_reference);
-      if (boundPredicates && (
-        boundPredicates.unknown.includes('bot_original_visible')
-        || boundPredicates.unknown.includes('caller_original_visible')
-      )) {
-        throw new Error('PERMISSION_NATIVE_ORIGINAL_VISIBILITY_UNKNOWN: bind_delivery reported unknown original visibility');
+      const bound = boundDeliveryByHeaderRef.get(binding.header.header_reference);
+      if (!bound) {
+        throw new Error('PERMISSION_NATIVE_FACT_SOURCE_UNAVAILABLE: unbound header_reference');
+      }
+      sameHeaderIdentity(bound.header as unknown as Record<string, unknown>, binding.header, expectedKey);
+      if (bound.payloadSha256 !== binding.header.payload_sha256
+        || bound.message.message_id !== binding.header.message_id
+        || bound.message.from_uid !== binding.header.author_uid
+        || bound.message.channel_id !== binding.header.source.id
+        || ({ dm: ChannelType.DM, group: ChannelType.Group, thread: ChannelType.CommunityTopic })[binding.header.source.kind] !== bound.message.channel_type) {
+        throw new Error('PERMISSION_NATIVE_HEADER_MISMATCH: delivered frame does not match bound header');
+      }
+      if (bound.unknown.includes('bot_original_visible')
+        || bound.unknown.includes('caller_original_visible')
+        || bound.proven.bot_original_visible !== true
+        || bound.proven.caller_original_visible !== true) {
+        throw new Error('PERMISSION_NATIVE_ORIGINAL_VISIBILITY_UNKNOWN: bind_delivery did not prove original visibility');
+      }
+      const rawPayload = bound.message.payload as unknown as Record<string, unknown>;
+      if (rawPayload.reply !== undefined || rawPayload.quote !== undefined || rawPayload.forward !== undefined) {
+        throw new Error('PERMISSION_NATIVE_EMBEDDED_REFERENCE_UNRESOLVED: delivered frame contains unresolved embedded reference');
       }
       const effectiveSignal = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
       const requestId = randomBytes(16).toString('hex');
-      const rawEpoch = Number(binding.contextEpoch ?? '0');
-      const contextEpoch = Number.isSafeInteger(rawEpoch) && rawEpoch >= 0 ? rawEpoch : 0;
+      const contextEpoch = typeof binding.contextEpoch === 'string' && /^(?:0|[1-9][0-9]{0,19})$/.test(binding.contextEpoch)
+        ? binding.contextEpoch
+        : '0';
+      const requestedHeaders = [
+        { header_reference: binding.header.header_reference },
+        ...(binding.contributors ?? [])
+          .filter(c => c.header_reference !== binding.header.header_reference)
+          .map(c => ({ header_reference: c.header_reference })),
+      ];
       const data = await callNativeEndpoint(
         NATIVE_FACTS_PATH,
         {
@@ -357,59 +552,43 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
           operation: 'history_disclosure',
           context_id: binding.contextId,
           context_epoch: contextEpoch,
-          headers: [{ header_reference: binding.header.header_reference }],
+          headers: requestedHeaders,
         },
         effectiveSignal,
       );
-      if (data.schema_version !== 1 || data.profile_version !== 1 || data.request_id !== requestId) {
-        throw new Error('Native history_disclosure response mismatch');
-      }
-      verifyNativeAuthorities(data.authorities);
-      if (!Array.isArray(data.results) || data.results.length < 1) {
+      const { reply, authoritiesByNonce } = verifyNativeEnvelope(data, expectedKey, requestId, 'results');
+      if (!Array.isArray(reply.results) || reply.results.length !== requestedHeaders.length) {
         throw new Error('Native history_disclosure results invalid');
       }
-      const primary = object(data.results[0]);
-      if (primary.header_reference !== binding.header.header_reference) {
+      const primary = object(reply.results[0]);
+      const primaryRef = typeof primary.reference === 'string' ? primary.reference : primary.header_reference;
+      if (primaryRef !== binding.header.header_reference) {
         throw new Error('Native history_disclosure header_reference mismatch');
       }
-      if (primary.status !== 'disclosed') {
+      if (primary.status !== 'resolved') {
         throw new Error(`PERMISSION_NATIVE_ORIGINAL_VISIBILITY_UNKNOWN: status=${String(primary.status)} reason=${String(primary.reason ?? 'unknown')}`);
       }
-      const disclosedHeader = object(primary.header);
-      sameHeaderIdentity(disclosedHeader, binding.header, expectedKey);
-      if (typeof primary.content !== 'string'
-        || createHash('sha256').update(primary.content, 'utf8').digest('hex') !== binding.header.payload_sha256) {
-        throw new Error('Native history_disclosure payload sha256 mismatch');
+      verifyAuthorityRefs(primary.authority_refs, authoritiesByNonce);
+      if (primary.header_reference !== binding.header.header_reference
+        || primary.context_id !== binding.contextId
+        || primary.context_epoch !== contextEpoch
+        || primary.payload_sha256 !== binding.header.payload_sha256
+        || typeof primary.permit !== 'string' || !/^pmt1-[A-Za-z0-9_-]{1,507}$/.test(primary.permit)) {
+        throw new Error('Native history_disclosure permit binding mismatch');
       }
-      let extractedInput = primary.content;
-      try {
-        const parsedContent = JSON.parse(primary.content) as Record<string, unknown>;
-        if (parsedContent && typeof parsedContent === 'object' && !Array.isArray(parsedContent) && typeof parsedContent.content === 'string') {
-          extractedInput = parsedContent.content;
-        }
-      } catch {
-        // Plain-text payload whose UTF-8 bytes directly hash to payload_sha256.
+      if (reply.results.length > 1 || requestedHeaders.length > 1) {
+        // octo-server v7 history_disclosure issues metadata-only permits (pmt1-...)
+        // and does not mount an HTTP body consumer route for historical contributors.
+        // A metadata-only disclosure permit is NOT body content; fail closed.
+        throw new Error('PERMISSION_NATIVE_HISTORY_BODY_CONSUMER_UNAVAILABLE: metadata-only disclosure permit is not body content');
       }
-      const disclosedOriginals: Readonly<NativeHeader>[] = [disclosedHeader as unknown as Readonly<NativeHeader>];
-      for (let i = 1; i < data.results.length; i++) {
-        const extra = object(data.results[i]);
-        if (extra.status !== 'disclosed') {
-          throw new Error('PERMISSION_NATIVE_ORIGINAL_VISIBILITY_UNKNOWN: historical contributor not disclosed');
-        }
-        disclosedOriginals.push(object(extra.header) as unknown as Readonly<NativeHeader>);
-      }
-      const rawRefs = Object.hasOwn(data, 'contributor_references')
-        ? data.contributor_references
-        : Object.hasOwn(primary, 'contributor_references')
-          ? primary.contributor_references
-          : undefined;
-      if (rawRefs !== undefined && (!Array.isArray(rawRefs) || rawRefs.some(r => typeof r !== 'string' || !r))) {
-        throw new Error('Native disclosure contributor references invalid');
+      const extractedInput = typeof bound.message.payload?.content === 'string' ? bound.message.payload.content : '';
+      if (!extractedInput) {
+        throw new Error('Native delivered frame content unavailable');
       }
       return {
         input: extractedInput,
-        originals: disclosedOriginals,
-        ...(rawRefs && rawRefs.length > 0 ? { contributorReferences: rawRefs as readonly string[] } : {}),
+        originals: [binding.header],
       };
     },
 
@@ -418,7 +597,8 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
       if (typeof outputText !== 'string' || !outputText.trim()) {
         throw new Error('Publication text unavailable');
       }
-      const deliveryReference = deliveryRefByHeaderRef.get(binding.header.header_reference);
+      const bound = boundDeliveryByHeaderRef.get(binding.header.header_reference);
+      const deliveryReference = bound?.deliveryReference;
       if (!deliveryReference || !/^s1-[A-Za-z0-9_-]{1,509}$/.test(deliveryReference)) {
         throw new Error('Native reply delivery reference unavailable');
       }
@@ -436,18 +616,20 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
         },
         checkSignal,
       );
-      if (check.schema_version !== 1 || check.profile_version !== 1 || check.request_id !== requestId) {
-        throw new Error('Native reply resolve response mismatch');
-      }
-      verifyNativeAuthorities(check.authorities);
-      if (!Array.isArray(check.results) || check.results.length !== 1) {
+      const { reply, authoritiesByNonce } = verifyNativeEnvelope(check, expectedKey, requestId, 'results');
+      if (!Array.isArray(reply.results) || reply.results.length !== 1) {
         throw new Error('Native reply resolve results invalid');
       }
-      const resolved = object(check.results[0]);
-      if (resolved.delivery_reference !== deliveryReference || resolved.status !== 'resolved') {
+      const resolved = object(reply.results[0]);
+      const resolvedRef = typeof resolved.reference === 'string' ? resolved.reference : resolved.delivery_reference;
+      if (resolvedRef !== deliveryReference || resolved.status !== 'resolved') {
         throw new Error('Native reply route denied');
       }
+      verifyAuthorityRefs(resolved.authority_refs, authoritiesByNonce);
       sameHeaderIdentity(object(resolved.header), binding.header, expectedKey);
+      if (!verifyResolvedPredicates(resolved.predicates, 'reply', binding.header.source.kind)) {
+        throw new Error('Native reply route denied: required reply predicate false');
+      }
       signal.throwIfAborted();
       // Single-attempt original-route publication (NoRetry). Any error after
       // request initiation propagates as unknown-effect failure.
@@ -483,12 +665,14 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
         },
         boundedSignal,
       );
-      if (check.schema_version !== 1 || check.profile_version !== 1 || check.request_id !== requestId) return;
-      verifyNativeAuthorities(check.authorities);
-      if (!Array.isArray(check.results) || check.results.length !== 1) return;
-      const resolved = object(check.results[0]);
-      if (resolved.delivery_reference !== ingress.deliveryReference || resolved.status !== 'resolved') return;
+      const { reply, authoritiesByNonce } = verifyNativeEnvelope(check, expectedKey, requestId, 'results');
+      if (!Array.isArray(reply.results) || reply.results.length !== 1) return;
+      const resolved = object(reply.results[0]);
+      const resolvedRef = typeof resolved.reference === 'string' ? resolved.reference : resolved.delivery_reference;
+      if (resolvedRef !== ingress.deliveryReference || resolved.status !== 'resolved') return;
+      verifyAuthorityRefs(resolved.authority_refs, authoritiesByNonce);
       sameHeaderIdentity(object(resolved.header), ingress.header, expectedKey);
+      if (!verifyResolvedPredicates(resolved.predicates, 'reply', ingress.header.source.kind)) return;
       await sendMessage({
         apiUrl,
         botToken,
@@ -526,14 +710,14 @@ export function createContainedWorkerDriver(options: ContainedWorkerDriverOption
         ? Object.freeze({ ...launch, launcher: isolator.launcher })
         : launch;
       const turnExecutions: ManagedExecution[] = [];
+      let relayBridge: TurnRelayBridge | undefined;
       let sessionBound = Boolean(binding.verifiedResume?.workdir);
       let answer = '';
       try {
-        if (effectiveLaunch.relayUrl) {
-          await verifyHttpRelayTlsPin(effectiveLaunch, signal);
-        }
+        relayBridge = await startTurnRelayBridge(effectiveLaunch, { signal });
+        const bridgedLaunch = relayBridge.launch;
         for await (const event of runQuery(input, options.config, undefined, undefined, {
-          privateWorker: effectiveLaunch,
+          privateWorker: bridgedLaunch,
           signal,
           resume: binding.verifiedResume?.sessionId,
           onManagedExecution: execution => {
@@ -542,8 +726,8 @@ export function createContainedWorkerDriver(options: ContainedWorkerDriverOption
           },
           onSessionId: sessionId => {
             binding.bindSession?.(sessionId, {
-              workdir: effectiveLaunch.workdir,
-              codexHome: effectiveLaunch.codexHome,
+              workdir: bridgedLaunch.workdir,
+              codexHome: bridgedLaunch.codexHome,
             });
             sessionBound = true;
           },
@@ -556,8 +740,12 @@ export function createContainedWorkerDriver(options: ContainedWorkerDriverOption
           const exited = await execution.waitForStopped(3000);
           execution.dispose();
           activeExecutions.delete(execution);
-          if (!exited) throw new Error('Contained worker execution did not stop within grace period');
+          if (!exited) {
+            await relayBridge?.close();
+            throw new Error('Contained worker execution did not stop within grace period');
+          }
         }
+        await relayBridge?.close();
         if (!sessionBound && !binding.verifiedResume?.workdir) {
           try {
             const genDir = dirname(effectiveLaunch.workdir);
@@ -900,7 +1088,7 @@ export function checkedTurnRelay(
 
 /** Per-bot opt-in. Presence selects managed mode before any legacy data loads;
  * unreadable/invalid/stale descriptors fail startup, never downgrade. */
-export function managedPermissionFactory(config: Config, dependencies?: Dependencies): ManagedPermissionFactory | undefined {
+export function managedPermissionFactory(config: Config, dependencies?: Partial<Dependencies>): ManagedPermissionFactory | undefined {
   // Older library callers can omit the global per-bot config root. Production
   // loadConfig/resolveBotConfigs always supplies it; no descriptor is inferred
   // from a working directory or another bot's data path.
@@ -920,13 +1108,13 @@ export function managedPermissionFactory(config: Config, dependencies?: Dependen
       ...(current.dataDir ? [current.dataDir] : []),
       ...descriptor.tlsPaths,
     ];
-    const activeDependencies: Dependencies = dependencies ?? {
-      native: createNativeEndpointDriver({
+    const activeDependencies: Dependencies = {
+      native: dependencies?.native ?? createNativeEndpointDriver({
         config: current,
         key: descriptor.key,
         botId,
       }),
-      worker: createContainedWorkerDriver({
+      worker: dependencies?.worker ?? createContainedWorkerDriver({
         config: current,
         isolate: {
           root: descriptor.worker.root,

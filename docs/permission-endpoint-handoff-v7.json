@@ -4,19 +4,22 @@
   "status": "BLOCKED_SERVER_ORIGINAL_VISIBILITY_ORDINARY_SQL_RESTORE_SERVED_CATALOGS_AND_OWNER_DECISIONS",
   "base_sha": "5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34",
   "live_upstream_main": "2f4d0521bcae9e15c008c29e290427de5813e8d2",
-  "previous_endpoint_head": "afd3241073c880319703a8a27daf66ff7507682e",
+  "previous_endpoint_head": "131dc9c38bfe6813a0a0e9f207398fa06112cb9e",
   "supported_catalog_digest": null,
   "task_registry": {
     "charter_xin_2323": "17e81670-5b49-461d-9509-7c22ca127939",
     "server_xin_2793": "6a92a547-cb82-4c3d-ac6c-8f5529028ba4",
     "cli_xin_2794": "229ad215-8526-4a04-8f5b-36f073f81a16",
     "endpoint_xin_2795": "2f4a34e9-2be3-48ac-99f0-38a30f077acd",
-    "analysis_xin_2830": "2fd1cf39-ab4d-4da5-aaa0-75161eb9ae52"
+    "analysis_xin_2830": "2fd1cf39-ab4d-4da5-aaa0-75161eb9ae52",
+    "review_xin_2834": "46d23689-0cb4-4d33-b488-8d430ae854c3"
   },
   "approved_amendment": {
-    "baseline": "XIN-2323/ACTIVE-v50",
-    "authority_comment": "e98ac4b3-105a-420f-81f0-a20177c61f57",
-    "trigger_comment": "e98ac4b3-105a-420f-81f0-a20177c61f57",
+    "baseline": "XIN-2323/ACTIVE-v52",
+    "charter_comment": "32e49395-62f6-4aea-bd5b-4b583797d2a3",
+    "review_verdict": "9a49c03b-542a-4223-9ac3-3513fb717752",
+    "authority_comment": "f3b841df-c529-43d9-96b7-4f02551a3613",
+    "trigger_comment": "f3b841df-c529-43d9-96b7-4f02551a3613",
     "xin_2830_memo": "4831fa26-b5de-4dc0-a3dc-79477c891f91",
     "xin_2830_report": {
       "comment_id": "edd9ad84-f10b-4e1e-9161-19a598bbb153",
@@ -128,10 +131,16 @@
     }
   },
   "user_journeys": {
-    "1_allowed_call_and_read_reply": "Verified across http, stdio, and https_tls: register_ingress (delivery_0) + admit + resolve_contributors (253 refs in <=32 batches) + bind_context (218,289-byte 255-Header chunked core + contributor_references ['delivery_254']) + renew + open_relay (include_tls_trust=true) + positive execute/call_op message.send and within-budget binary docs.scene.export + owned reply publication",
+    "1_allowed_call_and_read_reply": "Verified across http, stdio, and https_tls: register_ingress (delivery_0) + admit + resolve_contributors (253 refs in <=32 batches) + bind_context (218,289-byte 255-Header chunked core + contributor_references ['delivery_254']) + renew + open_relay (include_tls_trust=true) + startTurnRelayBridge -> postHttpTurnRelay + positive execute/call_op message.send and within-budget binary docs.scene.export + owned reply publication",
     "2_admission_denied_before_model_work": "Verified across http, stdio, and https_tls: delivery_denied rejected at Stage 1 admit with invocation_denied before bind_context, open_relay, prepareInput, or worker execution; EndpointPermissionHost publishes fixed refusal when original reply route is proven",
-    "3_admitted_turn_denied_write_zero_refused_dispatch": "Verified across http, stdio, and https_tls: ungranted docs.scene.get rejected across execute and call_op with JSON-RPC error -32007 (capability_denied) and deniedDispatches === 0",
+    "3_admitted_turn_denied_write_zero_refused_dispatch": "Verified across http, stdio, and https_tls: ungranted read (docs.scene.get) and write (docs.scene.edit) rejected across execute and call_op with JSON-RPC error -32007 (capability_denied) and deniedDispatches === 0",
     "4_revoke_restart_replay": "Verified across http, stdio, and https_tls plus loopback/SQLite suites: bundle epoch rotation to context_epoch='1' resets prior_generation reuse; WKSocket.onRecv and ReplayJournal withhold RECVACK until handler completion and durable SQLite 'terminal' commit; uncertain/draining duplicates return unavailable without ACK or worker re-entry; ordinary restart converts reserved rows to uncertain"
+  },
+  "v52_blocking_repairs": {
+    "A_B1_worker_consuming_path": "createContainedWorkerDriver.execute starts a host-owned local TurnRelayBridge (startTurnRelayBridge -> postHttpTurnRelay) and rebinds mcp_servers.octo.url to the local bridge so every actual worker MCP HTTP call enforces custom CA (ca_sha256/ca_file), server_name SNI/SAN override, leaf certificate pin (cert_sha256/peer_sha256), and X-Octo-Acquisition-Budget-Bytes caps",
+    "A_B2_native_driver_server_v7_abi": "createNativeEndpointDriver validates octo-server v7 envelopes (schema_version=1, profile_version=1, key, request_id, read_id, observed_at, 2-element authorities array with authority_refs), requires message_seq > 0, parses boolean proven_predicates maps while keeping bot_original_visible === true and caller_original_visible === true mandatory in prepareInput, formats context_epoch as a decimal string, validates HistoryDisclosureResponse (status=resolved, permit=pmt1-..., payload_sha256) and fails closed on metadata-only permits for historical contributors, uses operation=resolve purpose=admit in revalidateOriginal with all-true predicate verification, and matches resolved.reference === deliveryReference with all-true reply predicates in publish/refuse while keeping recover fail-closed without calling unmounted /fence",
+    "A_B3_linux_bwrap_unshare_net_bridge": "createIsolatingWorkerLauncher preserves --unshare-net when allowNetwork is false and bind-mounts the private UDS directory + bwrap-netns-bridge.cjs inside the network namespace so loopback turn-relay traffic (HTTP MCP and stdio --turn-relay) traverses CODEX_OCTO_RELAY_UDS while stripping relay bridge env vars before execing the worker",
+    "shutdown_drain_order": "src/index.ts drains router.stopTurns() and gateway.stop(activeHandlers) before permissionEndpoint.stop()"
   },
   "residual_classification": {
     "code_defects": [],
