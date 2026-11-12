@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, X509Certificate } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { createServer as createHttpsServer } from 'node:https';
+import { once } from 'node:events';
 import { promisify } from 'node:util';
-import { createIsolatingWorkerLauncher, preparePrivateWorker } from '../permissions/worker-launch.js';
+import { createIsolatingWorkerLauncher, preparePrivateWorker, verifyHttpRelayTlsPin } from '../permissions/worker-launch.js';
 import { queryAgentEvents } from '../agent-bridge.js';
 import type { ManagedExecution } from '../execution-scope.js';
 import type { Config } from '../config.js';
@@ -238,6 +240,116 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
       }).rejects.toThrow();
     } finally {
       for (const execution of owned) { await execution.waitForStopped(5000); execution.dispose(); }
+    }
+  });
+
+  it('includes --unshare-net in linux-bwrap launcher when allowNetwork is false and omits it when allowNetwork is true', () => {
+    chmodSync(root, 0o700);
+    const fakeBwrap = join(root, 'fake-bwrap');
+    writeFileSync(fakeBwrap, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+    const noNet = createIsolatingWorkerLauncher({
+      root,
+      targetExecutable: launcher,
+      targetExecutableSha256: digest,
+      deniedPaths: [root],
+      allowNetwork: false,
+      platform: 'linux',
+      sandboxExecutable: fakeBwrap,
+    });
+    expect(noNet.backend).toBe('linux-bwrap');
+    const noNetWrapper = readFileSync(noNet.launcher, 'utf8');
+    expect(noNetWrapper).toContain('"--unshare-net"');
+
+    const withNet = createIsolatingWorkerLauncher({
+      root,
+      targetExecutable: launcher,
+      targetExecutableSha256: digest,
+      deniedPaths: [root],
+      allowNetwork: true,
+      platform: 'linux',
+      sandboxExecutable: fakeBwrap,
+    });
+    const withNetWrapper = readFileSync(withNet.launcher, 'utf8');
+    expect(withNetWrapper).not.toContain('"--unshare-net"');
+  });
+
+  it('verifies HTTP relay ca_sha256 and peer leaf certificate pin over TLS 1.3 and fails closed on mismatch', async () => {
+    chmodSync(root, 0o700);
+    const keyPath = join(root, 'relay-key.pem');
+    const certPath = join(root, 'relay-cert.pem');
+    execFileSync('openssl', [
+      'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+      '-keyout', keyPath, '-out', certPath, '-days', '1',
+      '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1',
+    ], { stdio: 'ignore' });
+    chmodSync(keyPath, 0o600);
+    chmodSync(certPath, 0o600);
+    const certPem = readFileSync(certPath);
+    const keyPem = readFileSync(keyPath);
+    const caSha256 = createHash('sha256').update(certPem).digest('hex');
+    const peerSha256 = createHash('sha256').update(new X509Certificate(certPem).raw).digest('hex');
+
+    // Wrong ca_sha256 is rejected during preparePrivateWorker before any launch
+    expect(() => preparePrivateWorker({
+      root,
+      launcher,
+      launcherSha256: digest,
+      relay: {
+        transport: 'http',
+        url: 'https://127.0.0.1:443/mcp',
+        handle: 'turn_pin_test',
+        caSha256: 'f'.repeat(64),
+        peerSha256,
+        tls: { ca_file: certPath, cert_sha256: peerSha256, server_name: 'localhost' },
+      },
+      instructions: 'PIN_TEST',
+    })).toThrow('CA digest mismatch');
+
+    const httpsServer = createHttpsServer({ key: keyPem, cert: certPem, minVersion: 'TLSv1.3' }, (_req, res) => {
+      res.writeHead(200);
+      res.end('ok');
+    });
+    httpsServer.listen(0, '127.0.0.1');
+    await once(httpsServer, 'listening');
+    const addr = httpsServer.address();
+    if (!addr || typeof addr === 'string') throw new Error('No address');
+    const relayUrl = `https://127.0.0.1:${addr.port}/mcp`;
+
+    try {
+      const validLaunch = preparePrivateWorker({
+        root,
+        launcher,
+        launcherSha256: digest,
+        relay: {
+          transport: 'http',
+          url: relayUrl,
+          handle: 'turn_pin_ok',
+          caSha256,
+          peerSha256,
+          tls: { ca_file: certPath, ca_sha256: caSha256, cert_sha256: peerSha256, server_name: 'localhost' },
+        },
+        instructions: 'PIN_OK',
+      });
+      await expect(verifyHttpRelayTlsPin(validLaunch)).resolves.toBeUndefined();
+
+      const wrongPeerLaunch = preparePrivateWorker({
+        root,
+        launcher,
+        launcherSha256: digest,
+        relay: {
+          transport: 'http',
+          url: relayUrl,
+          handle: 'turn_pin_wrong_peer',
+          caSha256,
+          peerSha256: 'e'.repeat(64),
+          tls: { ca_file: certPath, ca_sha256: caSha256, cert_sha256: 'e'.repeat(64), server_name: 'localhost' },
+        },
+        instructions: 'PIN_WRONG_PEER',
+      });
+      await expect(verifyHttpRelayTlsPin(wrongPeerLaunch)).rejects.toThrow('peer certificate digest mismatch');
+    } finally {
+      httpsServer.closeAllConnections();
+      await new Promise<void>(resolve => httpsServer.close(() => resolve()));
     }
   });
 });

@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
+import { connect as tlsConnect } from 'node:tls';
 
 export interface TurnRelayTrust {
   readonly ca_file?: string;
+  readonly ca_pem?: string;
+  readonly ca_sha256?: string;
+  readonly peer_sha256?: string;
   readonly cert_sha256?: string;
   readonly server_name?: string;
 }
@@ -16,6 +20,8 @@ export type TurnRelay =
       handle: string;
       tls?: Readonly<TurnRelayTrust>;
       caCert?: Uint8Array | string;
+      caSha256?: string;
+      peerSha256?: string;
     }
   | {
       transport: 'http';
@@ -49,6 +55,7 @@ export interface PrivateWorkerLaunch {
   readonly verifiedResume?: Readonly<VerifiedWorkerResume>;
   readonly relayCaPath?: string;
   readonly relayTls?: Readonly<TurnRelayTrust>;
+  readonly relayUrl?: string;
 }
 
 export interface IsolatingWorkerLauncherOptions {
@@ -58,6 +65,8 @@ export interface IsolatingWorkerLauncherOptions {
   readonly targetArgs?: readonly string[];
   readonly deniedPaths?: readonly string[];
   readonly allowNetwork?: boolean;
+  readonly platform?: 'darwin' | 'linux';
+  readonly sandboxExecutable?: string;
 }
 
 export interface PinnedIsolatingLauncher {
@@ -160,10 +169,11 @@ export function createIsolatingWorkerLauncher(options: IsolatingWorkerLauncherOp
   const launcherDir = mkdtempSync(join(options.root, 'isolated-launcher-'));
   chmodSync(launcherDir, 0o700);
   const targetRealpath = realpathSync(options.targetExecutable);
+  const targetPlatform = options.platform ?? process.platform;
 
-  if (process.platform === 'darwin') {
-    const sandboxExec = '/usr/bin/sandbox-exec';
-    if (!existsSync(sandboxExec)) throw new Error('OS sandbox launcher unavailable');
+  if (targetPlatform === 'darwin') {
+    const sandboxExec = options.sandboxExecutable ?? '/usr/bin/sandbox-exec';
+    if (!isAbsolute(sandboxExec) || !existsSync(sandboxExec)) throw new Error('OS sandbox launcher unavailable');
     const sbStat = lstatSync(sandboxExec);
     if (!sbStat.isFile() || sbStat.isSymbolicLink() || (sbStat.mode & 0o111) === 0) {
       throw new Error('OS sandbox launcher unavailable');
@@ -241,13 +251,22 @@ child.on('error', () => process.exit(78));
     });
   }
 
-  if (process.platform === 'linux') {
-    const bwrap = ['/usr/bin/bwrap', '/bin/bwrap'].find(candidate => {
-      if (!existsSync(candidate)) return false;
+  if (targetPlatform === 'linux') {
+    const candidates = options.sandboxExecutable ? [options.sandboxExecutable] : ['/usr/bin/bwrap', '/bin/bwrap'];
+    const bwrap = candidates.find(candidate => {
+      if (!isAbsolute(candidate) || !existsSync(candidate)) return false;
       const st = lstatSync(candidate);
       return st.isFile() && !st.isSymbolicLink() && (st.mode & 0o111) !== 0;
     });
     if (!bwrap) throw new Error('OS sandbox launcher unavailable');
+    const bwrapBaseArgs = [
+      '--ro-bind', '/', '/',
+      '--dev', '/dev',
+      '--proc', '/proc',
+      '--unshare-ipc',
+      ...(options.allowNetwork === false ? ['--unshare-net'] : []),
+      '--die-with-parent',
+    ];
     const launcherPath = join(launcherDir, 'isolated-worker');
     const wrapperSource = `#!${process.execPath}
 const { spawn } = require('node:child_process');
@@ -261,7 +280,7 @@ if (!isAbsolute(cwdLex) || !isAbsolute(codexHomeLex)) {
 }
 const cwdReal = realpathSync(cwdLex);
 const codexHomeReal = realpathSync(codexHomeLex);
-const bwrapArgs = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--unshare-ipc', '--die-with-parent'];
+const bwrapArgs = ${JSON.stringify(bwrapBaseArgs)};
 const sortedDenied = [...${JSON.stringify(deniedPaths)}].sort((a, b) => a.length - b.length);
 const deniedDirs = [];
 for (const denied of sortedDenied) {
@@ -337,22 +356,60 @@ function validateTurnRelayTrust(tls: TurnRelayTrust | undefined): {
   if (!tls || typeof tls !== 'object' || Array.isArray(tls)) {
     throw new Error('Turn relay trust unavailable');
   }
-  const allowed = new Set(['ca_file', 'cert_sha256', 'server_name']);
+  const allowed = new Set(['ca_file', 'ca_pem', 'ca_sha256', 'peer_sha256', 'cert_sha256', 'server_name']);
   for (const key of Object.keys(tls)) {
     if (!allowed.has(key)) throw new Error('Turn relay trust unavailable');
   }
   let caBytes: Buffer | undefined;
-  const out: { ca_file?: string; cert_sha256?: string; server_name?: string } = {};
+  const out: {
+    ca_file?: string;
+    ca_sha256?: string;
+    peer_sha256?: string;
+    cert_sha256?: string;
+    server_name?: string;
+  } = {};
   if (tls.ca_file !== undefined) {
     if (typeof tls.ca_file !== 'string' || !tls.ca_file) throw new Error('Turn relay CA file unavailable');
     caBytes = readRelayCaFile(tls.ca_file);
     out.ca_file = tls.ca_file;
+  }
+  if (tls.ca_pem !== undefined) {
+    if (typeof tls.ca_pem !== 'string' || !tls.ca_pem) throw new Error('Turn relay CA bundle unavailable');
+    const pemBytes = Buffer.from(tls.ca_pem, 'utf8');
+    if (pemBytes.byteLength === 0 || pemBytes.byteLength > 256 * 1024 || !tls.ca_pem.includes('-----BEGIN CERTIFICATE-----')) {
+      throw new Error('Turn relay CA bundle unavailable');
+    }
+    if (caBytes && Buffer.compare(caBytes, pemBytes) !== 0) {
+      throw new Error('Turn relay CA bundle mismatch');
+    }
+    caBytes = pemBytes;
+  }
+  if (tls.ca_sha256 !== undefined) {
+    if (typeof tls.ca_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(tls.ca_sha256)) {
+      throw new Error('Turn relay CA digest unavailable');
+    }
+    if (caBytes && createHash('sha256').update(caBytes).digest('hex') !== tls.ca_sha256) {
+      throw new Error('Turn relay CA digest mismatch');
+    }
+    out.ca_sha256 = tls.ca_sha256;
+  }
+  if (tls.peer_sha256 !== undefined) {
+    if (typeof tls.peer_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(tls.peer_sha256)) {
+      throw new Error('Turn relay peer digest unavailable');
+    }
+    out.peer_sha256 = tls.peer_sha256;
   }
   if (tls.cert_sha256 !== undefined) {
     if (typeof tls.cert_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(tls.cert_sha256)) {
       throw new Error('Turn relay certificate digest unavailable');
     }
     out.cert_sha256 = tls.cert_sha256;
+  }
+  if (out.peer_sha256 !== undefined && out.cert_sha256 !== undefined && out.peer_sha256 !== out.cert_sha256) {
+    throw new Error('Turn relay peer digest mismatch');
+  }
+  if (out.peer_sha256 !== undefined && out.cert_sha256 === undefined) {
+    out.cert_sha256 = out.peer_sha256;
   }
   if (tls.server_name !== undefined) {
     if (!validRelayServerName(tls.server_name)) {
@@ -365,15 +422,19 @@ function validateTurnRelayTrust(tls: TurnRelayTrust | undefined): {
 
 function encodeGoRelayTicket(ticket: {
   ca_file?: string;
+  ca_sha256?: string;
   cert_sha256?: string;
   endpoint: string;
+  peer_sha256?: string;
   server_name?: string;
   token: string;
 }): string {
   const ordered: Record<string, string> = {};
   if (ticket.ca_file) ordered.ca_file = ticket.ca_file;
+  if (ticket.ca_sha256) ordered.ca_sha256 = ticket.ca_sha256;
   if (ticket.cert_sha256) ordered.cert_sha256 = ticket.cert_sha256;
   ordered.endpoint = ticket.endpoint;
+  if (ticket.peer_sha256) ordered.peer_sha256 = ticket.peer_sha256;
   if (ticket.server_name) ordered.server_name = ticket.server_name;
   ordered.token = ticket.token;
   const json = JSON.stringify(ordered)
@@ -412,6 +473,8 @@ export function preparePrivateWorker(options: {
     endpoint: string;
     token: string;
     ca_file?: string;
+    ca_sha256?: string;
+    peer_sha256?: string;
     cert_sha256?: string;
     server_name?: string;
   } | undefined;
@@ -424,7 +487,14 @@ export function preparePrivateWorker(options: {
       throw new Error('Turn relay CA bundle unavailable');
     }
   }
+  if (options.relay.caSha256 !== undefined && !/^[0-9a-f]{64}$/.test(options.relay.caSha256)) {
+    throw new Error('Turn relay CA digest unavailable');
+  }
+  if (options.relay.peerSha256 !== undefined && !/^[0-9a-f]{64}$/.test(options.relay.peerSha256)) {
+    throw new Error('Turn relay peer digest unavailable');
+  }
   let server: Record<string, unknown>;
+  let relayUrl: string | undefined;
   if (options.relay.transport === 'stdio') {
     pinnedExecutable(options.relay.executable, options.relay.executableSha256);
     try {
@@ -435,6 +505,8 @@ export function preparePrivateWorker(options: {
           && typeof decoded.endpoint === 'string' && typeof decoded.token === 'string') {
           const ticketTrust = validateTurnRelayTrust({
             ...(typeof decoded.ca_file === 'string' ? { ca_file: decoded.ca_file } : {}),
+            ...(typeof decoded.ca_sha256 === 'string' ? { ca_sha256: decoded.ca_sha256 } : {}),
+            ...(typeof decoded.peer_sha256 === 'string' ? { peer_sha256: decoded.peer_sha256 } : {}),
             ...(typeof decoded.cert_sha256 === 'string' ? { cert_sha256: decoded.cert_sha256 } : {}),
             ...(typeof decoded.server_name === 'string' ? { server_name: decoded.server_name } : {}),
           });
@@ -445,6 +517,8 @@ export function preparePrivateWorker(options: {
             endpoint: decoded.endpoint,
             token: decoded.token,
             ...(ticketTrust.trust?.ca_file ? { ca_file: ticketTrust.trust.ca_file } : {}),
+            ...(ticketTrust.trust?.ca_sha256 ? { ca_sha256: ticketTrust.trust.ca_sha256 } : {}),
+            ...(ticketTrust.trust?.peer_sha256 ? { peer_sha256: ticketTrust.trust.peer_sha256 } : {}),
             ...(ticketTrust.trust?.cert_sha256 ? { cert_sha256: ticketTrust.trust.cert_sha256 } : {}),
             ...(ticketTrust.trust?.server_name ? { server_name: ticketTrust.trust.server_name } : {}),
           };
@@ -457,13 +531,37 @@ export function preparePrivateWorker(options: {
   } else {
     const url = new URL(options.relay.url);
     if (url.protocol !== 'https:' || url.username || url.password || url.hash) throw new Error('Turn relay URL unavailable');
-    if (options.relay.caSha256 !== undefined && !/^[0-9a-f]{64}$/.test(options.relay.caSha256)) {
-      throw new Error('Turn relay CA digest unavailable');
-    }
-    if (options.relay.peerSha256 !== undefined && !/^[0-9a-f]{64}$/.test(options.relay.peerSha256)) {
-      throw new Error('Turn relay peer digest unavailable');
-    }
+    relayUrl = url.href;
     server = { url: url.href, http_headers: { Authorization: `Bearer ${options.relay.handle}` } };
+  }
+  const caSha256Candidates = [
+    options.relay.caSha256,
+    validatedTls.trust?.ca_sha256,
+    parsedStdioTicket?.ca_sha256,
+  ].filter((v): v is string => v !== undefined);
+  const caSha256 = caSha256Candidates[0];
+  if (caSha256Candidates.some(v => v !== caSha256)) {
+    throw new Error('Turn relay CA digest mismatch');
+  }
+  if (caSha256 !== undefined) {
+    if (!relayCaBytes) {
+      throw new Error('Turn relay CA bundle unavailable for pinned ca_sha256');
+    }
+    const actualCaSha256 = createHash('sha256').update(relayCaBytes).digest('hex');
+    if (actualCaSha256 !== caSha256) {
+      throw new Error('Turn relay CA digest mismatch');
+    }
+  }
+  const peerSha256Candidates = [
+    options.relay.peerSha256,
+    validatedTls.trust?.cert_sha256,
+    validatedTls.trust?.peer_sha256,
+    parsedStdioTicket?.cert_sha256,
+    parsedStdioTicket?.peer_sha256,
+  ].filter((v): v is string => v !== undefined);
+  const certSha256 = peerSha256Candidates[0];
+  if (peerSha256Candidates.some(v => v !== certSha256)) {
+    throw new Error('Turn relay peer digest mismatch');
   }
   let workdir: string;
   let codexHome: string;
@@ -490,11 +588,16 @@ export function preparePrivateWorker(options: {
       server = { ...server, env: { ...(server.env as Record<string, string>), SSL_CERT_FILE: relayCaPath, NODE_EXTRA_CA_CERTS: relayCaPath } };
     }
   }
-  const certSha256 = validatedTls.trust?.cert_sha256
-    ?? parsedStdioTicket?.cert_sha256
-    ?? (options.relay.transport === 'http' ? options.relay.peerSha256 : undefined);
   const serverName = validatedTls.trust?.server_name ?? parsedStdioTicket?.server_name;
-  if (options.relay.transport === 'stdio' && parsedStdioTicket && (relayCaPath || certSha256 || serverName)) {
+  if (options.relay.transport === 'stdio' && parsedStdioTicket && (relayCaPath || caSha256 || certSha256 || serverName)) {
+    const withStagedCaAndDigest = encodeGoRelayTicket({
+      ...(relayCaPath ? { ca_file: relayCaPath } : {}),
+      ...(caSha256 ? { ca_sha256: caSha256 } : {}),
+      ...(certSha256 ? { cert_sha256: certSha256 } : {}),
+      endpoint: parsedStdioTicket.endpoint,
+      ...(serverName ? { server_name: serverName } : {}),
+      token: parsedStdioTicket.token,
+    });
     const withStagedCa = encodeGoRelayTicket({
       ...(relayCaPath ? { ca_file: relayCaPath } : {}),
       ...(certSha256 ? { cert_sha256: certSha256 } : {}),
@@ -502,19 +605,25 @@ export function preparePrivateWorker(options: {
       ...(serverName ? { server_name: serverName } : {}),
       token: parsedStdioTicket.token,
     });
-    const effectiveHandle = withStagedCa.length <= 512
-      ? withStagedCa
-      : encodeGoRelayTicket({
-          ...(certSha256 ? { cert_sha256: certSha256 } : {}),
-          endpoint: parsedStdioTicket.endpoint,
-          ...(serverName ? { server_name: serverName } : {}),
-          token: parsedStdioTicket.token,
-        });
+    const effectiveHandle = withStagedCaAndDigest.length <= 512
+      ? withStagedCaAndDigest
+      : withStagedCa.length <= 512
+        ? withStagedCa
+        : encodeGoRelayTicket({
+            ...(caSha256 ? { ca_sha256: caSha256 } : {}),
+            ...(certSha256 ? { cert_sha256: certSha256 } : {}),
+            endpoint: parsedStdioTicket.endpoint,
+            ...(serverName ? { server_name: serverName } : {}),
+            token: parsedStdioTicket.token,
+          });
     server = { ...server, args: ['--turn-relay', effectiveHandle] };
   }
-  const relayTls: Readonly<TurnRelayTrust> | undefined = (relayCaPath || validatedTls.trust?.ca_file || certSha256 || serverName)
+  const explicitPeerField = validatedTls.trust?.peer_sha256 ?? parsedStdioTicket?.peer_sha256 ?? options.relay.peerSha256;
+  const relayTls: Readonly<TurnRelayTrust> | undefined = (relayCaPath || validatedTls.trust?.ca_file || caSha256 || certSha256 || serverName)
     ? Object.freeze({
         ...((relayCaPath ?? validatedTls.trust?.ca_file) ? { ca_file: relayCaPath ?? validatedTls.trust?.ca_file } : {}),
+        ...(caSha256 ? { ca_sha256: caSha256 } : {}),
+        ...(explicitPeerField && !validatedTls.trust?.cert_sha256 ? { peer_sha256: explicitPeerField } : {}),
         ...(certSha256 ? { cert_sha256: certSha256 } : {}),
         ...(serverName ? { server_name: serverName } : {}),
       })
@@ -534,7 +643,97 @@ export function preparePrivateWorker(options: {
     ...(verifiedResume ? { verifiedResume } : {}),
     ...(relayCaPath ? { relayCaPath } : {}),
     ...(relayTls ? { relayTls } : {}),
+    ...(relayUrl ? { relayUrl } : {}),
     env: Object.freeze(envRecord),
     configOverrides,
+  });
+}
+
+/**
+ * Cryptographically verify the HTTP turn relay TLS 1.3 handshake, custom CA
+ * bundle (`ca_sha256` / `ca_file`), `server_name`, and leaf certificate digest
+ * (`cert_sha256` / `peer_sha256`) before executing a worker against an HTTP relay.
+ */
+export async function verifyHttpRelayTlsPin(
+  launch: Readonly<PrivateWorkerLaunch>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!launch.relayUrl || !launch.relayTls) return;
+  const trust = launch.relayTls;
+  const expectedPeerSha256 = trust.cert_sha256 ?? trust.peer_sha256;
+  const expectedCaSha256 = trust.ca_sha256;
+  const caPath = launch.relayCaPath ?? trust.ca_file;
+  if (!expectedPeerSha256 && !expectedCaSha256 && !caPath && !trust.server_name) return;
+
+  signal?.throwIfAborted();
+  const parsed = new URL(launch.relayUrl);
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Turn relay URL unavailable');
+  }
+  let caBytes: Buffer | undefined;
+  if (caPath) {
+    caBytes = readRelayCaFile(caPath);
+  }
+  if (expectedCaSha256) {
+    if (!caBytes) throw new Error('Turn relay CA bundle unavailable');
+    const actualCaSha256 = createHash('sha256').update(caBytes).digest('hex');
+    if (actualCaSha256 !== expectedCaSha256) {
+      throw new Error('Turn relay CA digest mismatch');
+    }
+  }
+
+  const host = parsed.hostname.startsWith('[') && parsed.hostname.endsWith(']')
+    ? parsed.hostname.slice(1, -1)
+    : parsed.hostname;
+  const port = parsed.port ? Number(parsed.port) : 443;
+  const servername = trust.server_name ?? host;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      clearTimeout(timer);
+      socket.destroy();
+      if (err) reject(err);
+      else resolve();
+    };
+    const onAbort = () => finish(new Error('Turn relay TLS verification aborted'));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => finish(new Error('Turn relay TLS verification timed out')), 5000);
+    const socket = tlsConnect({
+      host,
+      port,
+      servername,
+      ...(caBytes ? { ca: caBytes } : {}),
+      minVersion: 'TLSv1.3',
+      maxVersion: 'TLSv1.3',
+      rejectUnauthorized: true,
+    });
+    socket.once('error', (err) => finish(new Error(`Turn relay TLS verification failed: ${err.message}`)));
+    socket.once('secureConnect', () => {
+      try {
+        if (socket.getProtocol() !== 'TLSv1.3') {
+          finish(new Error('Turn relay requires TLS 1.3'));
+          return;
+        }
+        const peer = socket.getPeerCertificate(false);
+        if (!peer || !peer.raw || peer.raw.byteLength === 0) {
+          finish(new Error('Turn relay peer certificate unavailable'));
+          return;
+        }
+        if (expectedPeerSha256) {
+          const actualPeerSha256 = createHash('sha256').update(peer.raw).digest('hex');
+          if (actualPeerSha256 !== expectedPeerSha256) {
+            finish(new Error('Turn relay peer certificate digest mismatch'));
+            return;
+          }
+        }
+        finish();
+      } catch (err) {
+        finish(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
   });
 }

@@ -7,8 +7,10 @@ export interface ReceivedDelivery {
   readonly payloadSha256: string;
 }
 
+export type ProcessingDisposition = 'terminal' | 'uncertain';
+
 export type IngressReservation =
-  | { disposition: 'reserved'; finish: (state: 'terminal' | 'uncertain') => void }
+  | { disposition: 'reserved'; finish: (state: ProcessingDisposition) => void }
   | { disposition: 'duplicate' }
   | { disposition: 'unavailable' };
 

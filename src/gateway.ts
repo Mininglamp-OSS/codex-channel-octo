@@ -8,7 +8,7 @@ import { isAllowedWsUrl } from './url-policy.js';
 import { isConversationMdEvent } from './conversation-md.js';
 import type { Config } from './config.js';
 import type { BotMessage } from './octo/types.js';
-import type { ReserveBeforeAck } from './permissions/ingress-reservation.js';
+import type { ProcessingDisposition, ReserveBeforeAck } from './permissions/ingress-reservation.js';
 import { existsSync, writeFileSync, unlinkSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { createRequire } from 'node:module';
@@ -18,7 +18,7 @@ import { randomUUID } from 'node:crypto';
 const _require = createRequire(import.meta.url);
 const PKG_VERSION: string = (_require('../package.json') as { version: string }).version;
 
-export type MessageHandler = (msg: BotMessage) => void | Promise<void>;
+export type MessageHandler = (msg: BotMessage) => void | ProcessingDisposition | Promise<void | ProcessingDisposition>;
 
 export class OctoGateway {
   private socket: WKSocket | null = null;
@@ -198,7 +198,7 @@ export class OctoGateway {
     this.stopHeartbeat();
     for (const socket of this.ownedSockets) {
       await socket.disconnectAndWait();
-      if (this.options.reserveBeforeAck) await socket.drainReceives();
+      if (this.options.reserveBeforeAck) await socket.drainReceives(drainTimeoutMs);
       this.ownedSockets.delete(socket);
     }
     this.socket = null;
@@ -313,7 +313,8 @@ export class OctoGateway {
           : this.options.reserveBeforeAck!(delivery)
         : undefined,
       onMessage: (msg) => {
-        if (!this._draining && this.socket === socket) return this.handleMessage(msg);
+        if (this._draining || this.socket !== socket) return 'uncertain';
+        return this.handleMessage(msg);
       },
       onConnected: () => {
         if (this._draining || this.socket !== socket) return;
@@ -340,13 +341,14 @@ export class OctoGateway {
   // --- Bot registration + WS connection ---
   // (register() + connect() above split the two phases; see start().)
 
-  private handleMessage(msg: BotMessage): void | Promise<void> {
-    if (this._draining) return; // Q6: reject new messages during shutdown
+  private handleMessage(msg: BotMessage): void | ProcessingDisposition | Promise<void | ProcessingDisposition> {
+    if (this._draining) return 'uncertain'; // Q6: reject new messages during shutdown
     // The server authors preference notifications as this bot. Let the router
     // invalidate its cache; ordinary self echoes must still be filtered.
     if (msg.from_uid === this.robotId && msg.payload.event?.type !== 'mention_pref_updated'
-      && !isConversationMdEvent(msg.payload.event?.type)) return;
-    return this.onMessage?.(msg);
+      && !isConversationMdEvent(msg.payload.event?.type)) return 'terminal';
+    if (!this.onMessage) return 'uncertain';
+    return this.onMessage(msg);
   }
 
   // --- Token refresh ---

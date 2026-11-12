@@ -71,8 +71,9 @@ export class ContextProvenance {
       this.reset(key);
     }
     const generation = this.generation;
+    let closed = false;
     const assertCurrent = () => {
-      if (this.owner !== owner || this.generation !== generation) throw new Error('Context invocation fenced');
+      if (closed || this.owner !== owner || this.generation !== generation) throw new Error('Context invocation fenced');
     };
     return Object.freeze({
       turnId: randomBytes(16).toString('hex'), generation, nativeSessionId: this.nativeSessionId,
@@ -114,7 +115,10 @@ export class ContextProvenance {
         if (!id || this.nativeSessionId && this.nativeSessionId !== id) throw new Error('Native context ownership conflict');
         this.nativeSessionId = id;
       },
-      close: () => { if (this.owner === owner) this.owner = undefined; },
+      close: () => {
+        closed = true;
+        if (this.owner === owner) this.owner = undefined;
+      },
     });
   }
 

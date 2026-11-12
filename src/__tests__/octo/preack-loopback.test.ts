@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ReplayJournal } from '../../permissions/replay-journal.js';
 import { createAdapter } from '../../db-adapter.js';
-import type { ReserveBeforeAck } from '../../permissions/ingress-reservation.js';
+import type { ProcessingDisposition, ReserveBeforeAck } from '../../permissions/ingress-reservation.js';
 
 // Actual encrypted WKSocket transport, restricted to synthetic loopback data.
 // These packets do not attest a native Header/stream incarnation/checkpoint.
@@ -36,7 +36,10 @@ afterEach(async () => {
   }
 });
 
-async function start(reserveBeforeAck: NonNullable<ConstructorParameters<typeof WKSocket>[0]['reserveBeforeAck']>, handler: () => void | Promise<void> = () => {}) {
+async function start(
+  reserveBeforeAck: NonNullable<ConstructorParameters<typeof WKSocket>[0]['reserveBeforeAck']>,
+  handler: () => void | ProcessingDisposition | Promise<void | ProcessingDisposition> = () => {},
+) {
   const acks: Uint8Array[] = [];
   const handled = vi.fn(handler);
   let resend = () => {};
@@ -116,7 +119,7 @@ describe('pre-ACK reservation on a real loopback socket', () => {
     expect(state.errors.join(' ')).not.toContain('PRIVATE_MARKER');
   });
 
-  it('commits real SQLite before ACK/handler and suppresses concurrent redelivery', async () => {
+  it('withholds RECVACK until handler and terminal SQLite commit complete, suppressing in-flight redelivery and ACKing post-terminal duplicates', async () => {
     const root = mkdtempSync(join(tmpdir(), 'preack-integration-'));
     const db = createAdapter(join(root, 'journal.db'));
     const journal = new ReplayJournal(db, Buffer.alloc(32, 9), '1', { provision: true });
@@ -135,12 +138,21 @@ describe('pre-ACK reservation on a real loopback socket', () => {
         await wait;
       });
       await vi.waitFor(() => expect(state.handled).toHaveBeenCalledOnce());
+      // No RECVACK may be sent while handler is still in flight.
+      expect(state.acks).toHaveLength(0);
+      // Concurrent redelivery while reserved is suppressed without premature ACK.
+      state.resend();
+      await new Promise(resolve => setTimeout(resolve, 30));
+      expect(state.acks).toHaveLength(0);
+      expect(state.handled).toHaveBeenCalledOnce();
+      finishHandler();
+      await vi.waitFor(() => expect(state.acks).toHaveLength(1));
+      await client!.drainReceives();
+      expect(db.prepare('SELECT state FROM permission_replay').get()).toEqual({ state: 'terminal' });
+      // Redelivery after terminal commit is ACKed as a duplicate without re-running handler.
       state.resend();
       await vi.waitFor(() => expect(state.acks).toHaveLength(2));
       expect(state.handled).toHaveBeenCalledOnce();
-      finishHandler();
-      await client!.drainReceives();
-      expect(db.prepare('SELECT state FROM permission_replay').get()).toEqual({ state: 'terminal' });
     } finally {
       finishHandler();
       await client?.disconnectAndWait(); await client?.drainReceives();
@@ -164,11 +176,21 @@ describe('pre-ACK reservation on a real loopback socket', () => {
     expect(finish).toHaveBeenCalledWith('uncertain');
   });
 
-  it('collects handler failures as uncertain without replaying the handler', async () => {
+  it('collects handler failures and uncertain outcomes without sending RECVACK or replaying the handler', async () => {
     const finish = vi.fn();
     const state = await start(() => ({ disposition: 'reserved', finish }), async () => { throw new Error('PRIVATE_HANDLER'); });
     await vi.waitFor(() => expect(finish).toHaveBeenCalledWith('uncertain'));
     expect(state.handled).toHaveBeenCalledOnce();
+    expect(state.acks).toHaveLength(0);
     expect(state.errors).toEqual(['Managed ingress reservation or handler unavailable']);
+  });
+
+  it('does not send RECVACK when handler returns uncertain disposition (e.g. draining/aborted)', async () => {
+    const finish = vi.fn();
+    const state = await start(() => ({ disposition: 'reserved', finish }), async () => 'uncertain' as const);
+    await vi.waitFor(() => expect(finish).toHaveBeenCalledWith('uncertain'));
+    await client!.drainReceives();
+    expect(state.handled).toHaveBeenCalledOnce();
+    expect(state.acks).toHaveLength(0);
   });
 });

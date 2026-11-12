@@ -17,6 +17,7 @@ import { watchConfig } from './config-watcher.js';
 import { createAdapter } from './db-adapter.js';
 import { SessionStore } from './session-store.js';
 import { OctoGateway } from './gateway.js';
+import type { ProcessingDisposition } from './permissions/ingress-reservation.js';
 import type { PermissionEndpoint } from './permissions/endpoint-host.js';
 import { managedPermissionFactory } from './permissions/endpoint-factory.js';
 import type { DbAdapter } from './db-adapter.js';
@@ -286,22 +287,25 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // opened later via connect(), after main() has cross-registered sibling bot
     // ids — so there is no window where a message is ACK'd and dropped, nor one
     // where a sibling bot's message slips through unrecognized.
-    const onInbound = (msg: BotMessage): void | Promise<void> => {
-      if (gateway.draining) return;
+    const onInbound = (msg: BotMessage): ProcessingDisposition | Promise<void | ProcessingDisposition> => {
+      if (gateway.draining) return 'uncertain';
       // Match the gateway's self-echo guard: server preference notifications
       // authored as this bot must reach the router to invalidate its cache.
       if (msg.from_uid === gateway.botId && msg.payload.event?.type !== 'mention_pref_updated'
-        && !isConversationMdEvent(msg.payload.event?.type)) return;
+        && !isConversationMdEvent(msg.payload.event?.type)) return 'terminal';
+      let tracked!: Promise<void>;
       const p = (permissionEndpoint ? permissionEndpoint.handle(msg)
         : handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId, () => gateway.ownerUid))
-        .catch((err) => {
+        .catch((err): ProcessingDisposition => {
           console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, summarizeAgentError(err));
           if (permissionEndpoint) throw err; // WKSocket records an uncertain managed outcome.
+          return 'uncertain';
         })
         .finally(() => {
-          activeHandlers.delete(p);
+          activeHandlers.delete(tracked);
         });
-      activeHandlers.add(p);
+      tracked = p.then(() => undefined, () => undefined);
+      activeHandlers.add(tracked);
       return p;
     };
     gateway.setMessageHandler(onInbound);

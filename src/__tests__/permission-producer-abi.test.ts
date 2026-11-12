@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash, X509Certificate } from 'node:crypto';
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { once } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -208,13 +209,38 @@ describe('private bootstrap and relay selection', () => {
       transport: 'http',
       url: 'https://synthetic.invalid/mcp',
       handle: 'b'.repeat(64),
-      tls: { ca_file: caFile, cert_sha256: certSha256, server_name: 'localhost' },
+      ca_sha256: createHash('sha256').update(readFileSync(caFile)).digest('hex'),
+      peer_sha256: certSha256,
+      tls: { ca_file: caFile, ca_sha256: createHash('sha256').update(readFileSync(caFile)).digest('hex'), peer_sha256: certSha256, cert_sha256: certSha256, server_name: 'localhost' },
     };
-    expect(checkedTurnRelay(httpWithTrust, trustBoot, 'http')).toEqual(httpWithTrust);
+    expect(checkedTurnRelay(httpWithTrust, trustBoot, 'http')).toMatchObject({
+      transport: 'http',
+      url: 'https://synthetic.invalid/mcp',
+      handle: 'b'.repeat(64),
+      caSha256: createHash('sha256').update(readFileSync(caFile)).digest('hex'),
+      peerSha256: certSha256,
+    });
+    expect(() => checkedTurnRelay({
+      ...httpWithTrust,
+      ca_sha256: '0'.repeat(64),
+    }, trustBoot, 'http')).toThrow('CA digest');
     expect(() => checkedTurnRelay({
       ...httpWithTrust,
       tls: { ca_file: '/wrong/ca.pem', cert_sha256: certSha256, server_name: 'localhost' },
     }, trustBoot, 'http')).toThrow();
+
+    const cli29d8Ticket = JSON.stringify({
+      ca_sha256: createHash('sha256').update(readFileSync(caFile)).digest('hex'),
+      endpoint: 'https://synthetic.invalid/mcp',
+      peer_sha256: certSha256,
+      token: 'b'.repeat(64),
+    });
+    expect(checkedTurnRelay({
+      transport: 'stdio',
+      executable: boot.executable,
+      executableSha256: boot.executableSha256,
+      handle: Buffer.from(cli29d8Ticket).toString('base64url'),
+    }, trustBoot, 'stdio').transport).toBe('stdio');
 
     expect(() => checkedTurnRelay({ ...relay, handle: handle(undefined, 'bf_synthetic') }, boot, 'stdio')).toThrow();
     expect(() => checkedTurnRelay({ ...relay, handle: handle('https://different.invalid') }, boot, 'stdio')).toThrow();
@@ -279,18 +305,54 @@ describe('private bootstrap and relay selection', () => {
     expect(native.stop).toHaveBeenCalledTimes(1); expect(worker.stop).toHaveBeenCalledTimes(1);
   });
 
-  it('composes default NativeEndpointDriver and ContainedWorkerDriver with OS-sandboxed launcher when native recovery and facts endpoints are served', async () => {
+  it('composes default NativeEndpointDriver and ContainedWorkerDriver with OS-sandboxed launcher against server v7 native routes and real TLS 1.3 HTTP relay', async () => {
     const boot = bootFixture();
     const sentMessages: Array<Record<string, unknown>> = [];
     const factsOps: string[] = [];
+    let includeRecoveryFence = false;
+    let proveOriginalVisibility = false;
+    const msgUnknownVis: BotMessage = {
+      message_id: '776', message_seq: 10, from_uid: 'alice', channel_id: 'alice@bot',
+      channel_type: ChannelType.DM, timestamp: 1, payload: { type: 1, content: 'UNKNOWN_ORIGINAL_VISIBILITY' },
+    };
+    const payloadShaUnknown = createHash('sha256').update(JSON.stringify(msgUnknownVis.payload)).digest('hex');
     const msg: BotMessage = {
       message_id: '777', message_seq: 11, from_uid: 'alice', channel_id: 'alice@bot',
       channel_type: ChannelType.DM, timestamp: 1, payload: { type: 1, content: 'HELLO_CONTAINED_DEFAULT' },
     };
-    const payloadSha256 = createHash('sha256').update(JSON.stringify(msg.payload)).digest('hex');
+    const rawPayloadJson = JSON.stringify(msg.payload);
+    const payloadSha256 = createHash('sha256').update(rawPayloadJson).digest('hex');
+    const authorities = {
+      sql: {
+        authority_id: 'octo-server-message-store',
+        incarnation: 'a'.repeat(32),
+        commit_epoch: '11',
+        ack_before_read_start: true,
+      },
+      im: {
+        authority_id: 'octo-server-im-channel-seq',
+        incarnation: 'b'.repeat(32),
+        commit_epoch: '11',
+        ack_before_read_start: true,
+      },
+    };
+    const header776 = {
+      header_version: 1 as const,
+      header_reference: 'h1-native_hdr_776',
+      message_id: '776',
+      source: { kind: 'dm' as const, id: 'alice@bot' },
+      parent_group: null,
+      space_id: 'space',
+      author_uid: 'alice',
+      author_kind: 'human' as const,
+      recipient_bot_uid: 'bot',
+      native_message_version: `x1_${payloadShaUnknown.slice(0, 16)}`,
+      payload_sha256: payloadShaUnknown,
+      delivery: { stream_id: 'dm:1:alice@bot', stream_incarnation: 'b'.repeat(32), sequence: '10' },
+    };
     const header = {
       header_version: 1 as const,
-      header_reference: 'native_hdr_777',
+      header_reference: 'h1-native_hdr_777',
       message_id: '777',
       source: { kind: 'dm' as const, id: 'alice@bot' },
       parent_group: null,
@@ -298,41 +360,124 @@ describe('private bootstrap and relay selection', () => {
       author_uid: 'alice',
       author_kind: 'human' as const,
       recipient_bot_uid: 'bot',
-      native_message_version: 'v1',
+      native_message_version: `x1_${payloadSha256.slice(0, 16)}`,
       payload_sha256: payloadSha256,
-      delivery: { stream_id: 'stream-1', stream_incarnation: 'a'.repeat(32), sequence: '11' },
+      delivery: { stream_id: 'dm:1:alice@bot', stream_incarnation: 'b'.repeat(32), sequence: '11' },
     };
+
+    const relayHttpsServer = createHttpsServer({
+      key: readFileSync(join(root, 'key.pem')),
+      cert: readFileSync(join(root, 'cert.pem')),
+      minVersion: 'TLSv1.3',
+    }, (_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    relayHttpsServer.listen(0, '127.0.0.1');
+    await once(relayHttpsServer, 'listening');
+    const relayAddr = relayHttpsServer.address();
+    if (!relayAddr || typeof relayAddr === 'string') throw new Error('No relay address');
+    const relayHttpsUrl = `https://localhost:${relayAddr.port}/mcp`;
 
     const nativeServer = createServer(async (req, res) => {
       let body = '';
       for await (const chunk of req) body += String(chunk);
       const parsed = body ? JSON.parse(body) as Record<string, unknown> : {};
-      if (req.url === '/v1/bot/permission-facts/v1') {
-        const op = String(parsed.op);
-        factsOps.push(op);
+      if (req.url === '/v1/bot/permission-facts/v1/fence?space_id=space') {
+        factsOps.push('fence');
         res.setHeader('Content-Type', 'application/json');
-        if (op === 'recover_fence') {
+        res.end(JSON.stringify({
+          fence_version: 1,
+          space_id: 'space',
+          read_id: parsed.read_id,
+          read_nonce: parsed.read_nonce,
+          authority_id: 'octo-server-message-store',
+          commit_marker: 'ms:777:11:1',
+          ...(includeRecoveryFence ? {
+            recovery_fence_v1: {
+              sql_incarnation: 'a'.repeat(32),
+              im_incarnation: 'b'.repeat(32),
+              ack_before_read_start: true,
+            },
+          } : {}),
+        }));
+        return;
+      }
+      if (req.url === '/v1/bot/permission-facts/v1/bind-delivery?space_id=space') {
+        expect(parsed.operation).toBe('bind_delivery');
+        factsOps.push('bind_delivery');
+        const is776 = parsed.message_id === '776';
+        const targetHeader = is776 ? header776 : header;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({
+          schema_version: 1,
+          request_id: parsed.request_id,
+          authorities,
+          binding: {
+            status: 'bound',
+            current: true,
+            delivery_reference: is776 ? 's1-deliv_776' : 's1-deliv_777',
+            header_reference: targetHeader.header_reference,
+            native_message_version: targetHeader.native_message_version,
+            observed_payload_sha256: targetHeader.payload_sha256,
+            header: targetHeader,
+            proven_predicates: [
+              'bot_current_visible',
+              'caller_current_visible',
+              'delivery_current_exact',
+              'message_space_exact',
+              'sender_identity_exact',
+              ...(proveOriginalVisibility ? ['bot_original_visible', 'caller_original_visible'] : []),
+            ],
+            unknown_predicates: proveOriginalVisibility ? [] : ['bot_original_visible', 'caller_original_visible'],
+            resolvable_purposes: proveOriginalVisibility ? ['admit', 'contributor', 'reply'] : ['reply'],
+          },
+        }));
+        return;
+      }
+      if (req.url === '/v1/bot/permission-facts/v1?space_id=space') {
+        const operation = String(parsed.operation);
+        factsOps.push(operation);
+        res.setHeader('Content-Type', 'application/json');
+        if (operation === 'history_disclosure') {
           res.end(JSON.stringify({
-            ok: true,
-            key: { origin: apiUrl, bot_uid: 'bot', space_id: 'space' },
-            fence_through_v1: { stream_id: 'stream-1', stream_incarnation: 'a'.repeat(32), sequence: '10' },
+            schema_version: 1,
+            profile_version: 1,
+            request_id: parsed.request_id,
+            authorities,
+            results: [
+              proveOriginalVisibility
+                ? {
+                    header_reference: header.header_reference,
+                    status: 'disclosed',
+                    header,
+                    content: rawPayloadJson,
+                  }
+                : {
+                    header_reference: header776.header_reference,
+                    status: 'unknown',
+                    reason: 'caller_original_visibility_unknown',
+                  },
+            ],
           }));
           return;
         }
-        if (op === 'inspect_delivery') {
-          res.end(JSON.stringify({ deliveryReference: 'deliv_777', header }));
-          return;
-        }
-        if (op === 'prepare_disclosure') {
-          res.end(JSON.stringify({ input: 'DISCLOSED_PROMPT_777', originals: [header] }));
-          return;
-        }
-        if (op === 'revalidate_original') {
-          res.end(JSON.stringify({ verdict: 'allow' }));
-          return;
-        }
-        if (op === 'check_reply_route' || op === 'check_refusal_route') {
-          res.end(JSON.stringify({ allow: true }));
+        if (operation === 'resolve') {
+          const refs = parsed.references as Array<{ delivery_reference: string }>;
+          const ref = refs[0].delivery_reference;
+          res.end(JSON.stringify({
+            schema_version: 1,
+            profile_version: 1,
+            request_id: parsed.request_id,
+            authorities,
+            results: [
+              {
+                delivery_reference: ref,
+                status: 'resolved',
+                header: ref === 's1-deliv_776' ? header776 : header,
+              },
+            ],
+          }));
           return;
         }
       }
@@ -350,6 +495,7 @@ describe('private bootstrap and relay selection', () => {
     const addr = nativeServer.address();
     if (!addr || typeof addr === 'string') throw new Error('No address');
     const apiUrl = `http://127.0.0.1:${addr.port}`;
+    const caSha256 = createHash('sha256').update(readFileSync(join(root, 'cert.pem'))).digest('hex');
 
     // Coordinator script that handles register_ingress, admit, bind_context, renew, open_relay, close
     const coordExec = join(root, 'full-coordinator');
@@ -383,11 +529,15 @@ const server = tls.createServer({
       else if (f.method === 'renew') payload = { lease_expires_at: new Date(Date.now() + 60000).toISOString() };
       else if (f.method === 'open_relay') payload = {
         transport: 'http',
-        url: 'https://localhost/mcp',
+        url: ${JSON.stringify(relayHttpsUrl)},
         handle: 'b'.repeat(64),
+        ca_sha256: ${JSON.stringify(caSha256)},
+        peer_sha256: ${JSON.stringify(boot.tls.peerCertificateSha256)},
         ...(f.payload?.include_tls_trust ? {
           tls: {
             ca_file: ${JSON.stringify(join(root, 'cert.pem'))},
+            ca_sha256: ${JSON.stringify(caSha256)},
+            peer_sha256: ${JSON.stringify(boot.tls.peerCertificateSha256)},
             cert_sha256: ${JSON.stringify(boot.tls.peerCertificateSha256)},
             server_name: 'localhost',
           },
@@ -430,7 +580,7 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
     mkdirSync(botDir, { mode: 0o700 });
     const workerRoot = join(root, 'worker-root');
     mkdirSync(workerRoot, { mode: 0o700 });
-    const hostConfig = { ...boot.hostConfig, origin: apiUrl, relay_url: 'https://localhost/mcp' };
+    const hostConfig = { ...boot.hostConfig, origin: apiUrl, relay_url: relayHttpsUrl };
     const hostPath = join(root, 'source-host-full.json');
     writeFileSync(hostPath, canonicalControl(hostConfig), { mode: 0o600 });
     const journalKey = join(root, 'journal.key');
@@ -468,17 +618,38 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
     const db = createAdapter(join(root, 'journal-full.db'));
     let endpoint: PermissionEndpoint | undefined;
     try {
-      // Omit dependencies to exercise the real default NativeEndpointDriver + ContainedWorkerDriver composition!
+      // Default server v7 fence returns only octo-server-message-store read-time marker -> fails closed!
+      await expect(managedPermissionFactory(config)!({ config, adapter: db, botId: 'bot' })).rejects.toThrow('PERMISSION_NATIVE_RECOVERY_FENCE_UNAVAILABLE');
+
+      // Opt-in synthetic recovery_fence_v1 allows component test to proceed past startup recovery gate
+      includeRecoveryFence = true;
       endpoint = await managedPermissionFactory(config)!({ config, adapter: db, botId: 'bot' });
+
+      // 1. When bind_delivery reports bot_original_visible / caller_original_visible in unknown_predicates,
+      // prepareInput fails closed and sends refusal via operation="resolve", purpose="reply" without starting worker.
+      const resUnknown = await endpoint.reserveBeforeAck({ recipientUid: 'bot', message: msgUnknownVis, payloadSha256: payloadShaUnknown });
+      expect(resUnknown.disposition).toBe('reserved');
+      if (resUnknown.disposition === 'reserved') {
+        const disp = await endpoint.handle(msgUnknownVis);
+        expect(disp).toBe('terminal');
+        resUnknown.finish(disp);
+      }
+      expect(sentMessages).toHaveLength(1);
+      expect(String((sentMessages[0].payload as Record<string, unknown>).content)).toContain('Permissions could not be checked. Try again later.');
+
+      // 2. When original visibility is proven and history_disclosure returns status="disclosed",
+      // full pipeline executes worker (after verifying HTTP relay TLS 1.3 leaf pin) and publishes reply.
+      proveOriginalVisibility = true;
       const res = await endpoint.reserveBeforeAck({ recipientUid: 'bot', message: msg, payloadSha256 });
       expect(res.disposition).toBe('reserved');
       if (res.disposition === 'reserved') {
-        await endpoint.handle(msg);
-        res.finish('terminal');
+        const disp = await endpoint.handle(msg);
+        expect(disp).toBe('terminal');
+        res.finish(disp);
       }
-      expect(factsOps).toEqual(['recover_fence', 'inspect_delivery', 'prepare_disclosure', 'revalidate_original', 'check_reply_route']);
-      expect(sentMessages).toHaveLength(1);
-      expect(sentMessages[0]).toMatchObject({
+      expect(factsOps).toEqual(['fence', 'fence', 'bind_delivery', 'resolve', 'bind_delivery', 'history_disclosure', 'history_disclosure', 'resolve']);
+      expect(sentMessages).toHaveLength(2);
+      expect(sentMessages[1]).toMatchObject({
         channel_id: 'alice@bot',
         channel_type: ChannelType.DM,
         payload: {
@@ -490,6 +661,8 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
     } finally {
       await endpoint?.stop();
       db.close();
+      relayHttpsServer.closeAllConnections();
+      await new Promise<void>(resolve => relayHttpsServer.close(() => resolve()));
       nativeServer.closeAllConnections();
       await new Promise<void>(resolve => nativeServer.close(() => resolve()));
     }

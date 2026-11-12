@@ -100,8 +100,12 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
     const options = vi.mocked(WKSocket).mock.calls[0][0];
     const reservation = await options.reserveBeforeAck!({ recipientUid: 'bot', message, payloadSha256 });
     if (reservation.disposition === 'reserved') {
-      try { await options.onMessage(message); reservation.finish('terminal'); }
-      catch { reservation.finish('uncertain'); }
+      try {
+        const outcome = await options.onMessage(message);
+        reservation.finish(outcome === 'uncertain' ? 'uncertain' : 'terminal');
+      } catch {
+        reservation.finish('uncertain');
+      }
     }
     return reservation.disposition;
   }
@@ -252,6 +256,24 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
   it('retains ordinary worker failure as uncertain without inventing a permission refusal', async () => {
     ports.runWorker = vi.fn(async () => { throw new Error('SYNTHETIC_WORKER_FAILURE'); });
     await receive(); expect(ports.refuse).not.toHaveBeenCalled(); expect(ports.publish).not.toHaveBeenCalled();
+    expect(db.prepare('SELECT state FROM permission_replay').get()).toEqual({ state: 'uncertain' });
+  });
+
+  it('marks pre-worker shutdown/abort as uncertain rather than terminal', async () => {
+    let enteredPrepare!: () => void;
+    const waiting = new Promise<void>(resolve => { enteredPrepare = resolve; });
+    ports.prepareInput = vi.fn(async (_binding, signal) => {
+      enteredPrepare();
+      return new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    });
+    const pending = receive();
+    await waiting;
+    await host.stop();
+    await pending;
+    expect(ports.publish).not.toHaveBeenCalled();
+    expect(ports.refuse).not.toHaveBeenCalled();
     expect(db.prepare('SELECT state FROM permission_replay').get()).toEqual({ state: 'uncertain' });
   });
 

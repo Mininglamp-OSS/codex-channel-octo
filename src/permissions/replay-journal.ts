@@ -118,7 +118,9 @@ export class ReplayJournal {
         const existing = this.db.prepare('SELECT * FROM permission_replay WHERE delivery_key=?').get(deliveryKey) as Row | undefined;
         if (existing) {
           this.verify(existing);
-          return { disposition: 'duplicate' };
+          return existing.state === 'terminal'
+            ? { disposition: 'duplicate' }
+            : { disposition: 'unavailable' };
         }
         // Include current WAL, not just live rows. Reserve overhead before the
         // next transaction; saturation never evicts older replay fences.

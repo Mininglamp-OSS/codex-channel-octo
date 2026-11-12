@@ -78,12 +78,13 @@ func TestXIN2795CurrentEndpointChunkAndRelayABI(t *testing.T) {
         relayCaPem := string(relayCaPemBytes)
         relayCaPath := filepath.Join(t.TempDir(), "ca.pem")
         if err := os.WriteFile(relayCaPath, relayCaPemBytes, 0o600); err != nil { t.Fatal(err) }
+        relayCaSha256 := sha256Sum(relayCaPemBytes)
         leafSha256 := sha256Sum(serverCert.Certificate[0])
         rawRelay, err := net.Listen("tcp", "127.0.0.1:0")
         if err != nil { t.Fatal(err) }
         securedRelay := permission.PublicationTLSListener(rawRelay, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serverCert}})
         relayUrl := "https://127.0.0.1:" + strconv.Itoa(rawRelay.Addr().(*net.TCPAddr).Port)
-        cfg := PermissionHostConfig{Version:1, Origin:f.backend.URL, BotUID:"bot", RecipientID:"endpoint-1", EndpointIncarnation:strings.Repeat("5",32), PeerSHA256:peerHash, RelayURL:relayUrl, RelayExecutable:binary, RelayCA:relayCaPath, RelayCertSHA256:leafSha256, RelayServerName:"localhost"}
+        cfg := PermissionHostConfig{Version:1, Origin:f.backend.URL, BotUID:"bot", RecipientID:"endpoint-1", EndpointIncarnation:strings.Repeat("5",32), PeerSHA256:peerHash, RelayURL:relayUrl, RelayExecutable:binary, RelayCA:relayCaPath, RelayCASHA256:relayCaSha256, RelayPeerSHA256:leafSha256, RelayCertSHA256:leafSha256, RelayServerName:"localhost"}
         host, err := NewPermissionHost(cfg,f.coordinator,f.policies,f.reader,f.server); if err != nil { t.Fatal(err) }
         relayServer := &http.Server{Handler: host, ReadHeaderTimeout: 5 * time.Second}
         go func() { _ = relayServer.Serve(securedRelay) }()

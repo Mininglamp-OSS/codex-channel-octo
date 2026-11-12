@@ -45,7 +45,7 @@ describe('file-backed FULL-sync replay journal', () => {
     expect(db.prepare('PRAGMA synchronous').get()).toEqual({ synchronous: 2 });
     const competitor = new ReplayJournal(other, key, '1');
     expect(other.prepare('PRAGMA synchronous').get()).toEqual({ synchronous: 2 });
-    expect(competitor.reserve(delivery).disposition).toBe('duplicate');
+    expect(competitor.reserve(delivery).disposition).toBe('unavailable');
     if (reservation.disposition !== 'reserved') throw new Error('Expected reservation');
     reservation.finish('terminal');
     expect(other.prepare('SELECT state FROM permission_replay').get()).toEqual({ state: 'terminal' });
@@ -54,7 +54,7 @@ describe('file-backed FULL-sync replay journal', () => {
     expect(JSON.stringify(other.prepare('SELECT * FROM permission_replay').all())).not.toContain('synthetic');
   });
 
-  it('retains a crash-window reservation; recovery marks uncertainty without replay', () => {
+  it('retains a crash-window reservation; recovery marks uncertainty without replay or duplicate ACK', () => {
     const db = open();
     const journal = new ReplayJournal(db, key, '1', { provision: true });
     expect(journal.reserve(delivery).disposition).toBe('reserved');
@@ -63,7 +63,7 @@ describe('file-backed FULL-sync replay journal', () => {
     const restarted = new ReplayJournal(next, key, '1');
     restarted.recoverInterrupted(); // Synthetic exclusive-recovery fixture only.
     expect(next.prepare('SELECT state FROM permission_replay').get()).toEqual({ state: 'uncertain' });
-    expect(restarted.reserve(delivery).disposition).toBe('duplicate');
+    expect(restarted.reserve(delivery).disposition).toBe('unavailable');
     expect(next.prepare('SELECT count(*) AS n FROM permission_replay').get()).toEqual({ n: 1 });
   });
 
@@ -85,7 +85,7 @@ describe('file-backed FULL-sync replay journal', () => {
     const db = open();
     const recovered = new ReplayJournal(db, key, '1');
     recovered.recoverInterrupted();
-    expect(recovered.reserve(delivery).disposition).toBe('duplicate');
+    expect(recovered.reserve(delivery).disposition).toBe('unavailable');
     expect(db.prepare('SELECT state FROM permission_replay').get()).toEqual({ state: 'uncertain' });
   });
 
@@ -112,7 +112,7 @@ describe('file-backed FULL-sync replay journal', () => {
     if (first.disposition !== 'reserved') throw new Error('Expected reservation');
     first.finish('uncertain');
     expect(journal.reserve({ ...delivery, sequence: '1' }).disposition).toBe('unavailable');
-    expect(journal.reserve(delivery).disposition).toBe('duplicate');
+    expect(journal.reserve(delivery).disposition).toBe('unavailable');
     expect(db.prepare('SELECT state FROM permission_replay').get()).toEqual({ state: 'uncertain' });
   });
 
@@ -166,7 +166,7 @@ describe('file-backed FULL-sync replay journal', () => {
     const db3 = open();
     const recovered = new ReplayJournal(db3, key, '1', { exclusive: true });
     recovered.recoverInterrupted();
-    expect(recovered.reserve(delivery).disposition).toBe('duplicate');
+    expect(recovered.reserve(delivery).disposition).toBe('unavailable');
     expect(db3.prepare('SELECT state FROM permission_replay').get()).toEqual({ state: 'uncertain' });
   });
 });

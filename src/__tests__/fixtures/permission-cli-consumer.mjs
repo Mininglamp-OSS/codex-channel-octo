@@ -13,7 +13,7 @@ const { PermissionControlClient, canonicalControl } = await import(pathToFileURL
 const { bindContextManifest } = await import(pathToFileURL(join(dist, 'permissions/context-manifest.js')));
 const { catalogBootPin, verifyCatalogBoot } = await import(pathToFileURL(join(dist, 'permissions/catalog-boot.js')));
 const { checkedTurnRelay } = await import(pathToFileURL(join(dist, 'permissions/endpoint-factory.js')));
-const { preparePrivateWorker } = await import(pathToFileURL(join(dist, 'permissions/worker-launch.js')));
+const { preparePrivateWorker, verifyHttpRelayTlsPin } = await import(pathToFileURL(join(dist, 'permissions/worker-launch.js')));
 if (fixture.catalogManifestPath) {
   const manifestBytes = readFileSync(fixture.catalogManifestPath);
   const manifestSha256 = createHash('sha256').update(manifestBytes).digest('hex');
@@ -79,11 +79,16 @@ try {
     relay_nonce: randomBytes(16).toString('hex'),
     include_tls_trust: true,
   });
-  assert.deepEqual(relay.tls, {
-    ca_file: fixture.relayCaPath,
-    cert_sha256: fixture.relayCertSha256,
-    server_name: fixture.relayServerName,
-  });
+  const relayCaSha256 = createHash('sha256').update(readFileSync(fixture.relayCaPath)).digest('hex');
+  assert.equal(relay.tls.ca_file, fixture.relayCaPath);
+  assert.equal(relay.tls.cert_sha256, fixture.relayCertSha256);
+  assert.equal(relay.tls.server_name, fixture.relayServerName);
+  if (relay.tls.ca_sha256 !== undefined) {
+    assert.equal(relay.tls.ca_sha256, relayCaSha256);
+  }
+  if (relay.tls.peer_sha256 !== undefined) {
+    assert.equal(relay.tls.peer_sha256, fixture.relayCertSha256);
+  }
   const checked = checkedTurnRelay(
     relay,
     {
@@ -92,6 +97,8 @@ try {
       hostConfig: {
         relay_url: fixture.transport === 'http' ? relay.url : JSON.parse(Buffer.from(relay.handle, 'base64url').toString('utf8')).endpoint,
         relay_ca: fixture.relayCaPath,
+        relay_ca_sha256: relayCaSha256,
+        relay_peer_sha256: fixture.relayCertSha256,
         relay_cert_sha256: fixture.relayCertSha256,
         relay_server_name: fixture.relayServerName,
       },
@@ -108,11 +115,12 @@ try {
   assert(worker.relayCaPath);
   assert.equal(worker.env.SSL_CERT_FILE, worker.relayCaPath);
   assert.equal(worker.env.NODE_EXTRA_CA_CERTS, worker.relayCaPath);
-  assert.deepEqual(worker.relayTls, {
-    ca_file: worker.relayCaPath,
-    cert_sha256: fixture.relayCertSha256,
-    server_name: fixture.relayServerName,
-  });
+  assert.equal(worker.relayTls.ca_file, worker.relayCaPath);
+  assert.equal(worker.relayTls.cert_sha256, fixture.relayCertSha256);
+  assert.equal(worker.relayTls.server_name, fixture.relayServerName);
+  if (worker.relayTls.ca_sha256 !== undefined) {
+    assert.equal(worker.relayTls.ca_sha256, relayCaSha256);
+  }
   const requests = [{ jsonrpc: '2.0', id: 1, method: 'initialize', params: { capabilities: {} } },
     ...['execute', 'call_op'].map((name, i) => ({ jsonrpc: '2.0', id: i + 2, method: 'tools/call',
       params: { name, arguments: { operation_id: 'message.send', arguments: {
@@ -137,6 +145,7 @@ try {
     assert.equal(results.length, 3);
     for (const result of results.slice(1)) { assert(!result.error); assert(JSON.stringify(result).includes('synthetic-result')); }
   } else {
+    await verifyHttpRelayTlsPin(worker);
     const https = await import('node:https');
     const ca = readFileSync(worker.relayCaPath);
     const url = new URL(relay.url);

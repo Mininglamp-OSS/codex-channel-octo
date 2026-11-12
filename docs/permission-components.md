@@ -6,19 +6,22 @@ This is the initial component foundation, continued in
 [issue #101](https://github.com/Mininglamp-OSS/codex-channel-octo/issues/101).
 Full Stage 1/2 permission enforcement is incomplete. `startBot` selects the
 private per-bot managed factory described in the current
-[v6 handoff](permission-endpoint-handoff-v6.json) and [v45 continuation](permission-v45-continuation.md). Boot, readiness, relay,
-manifest chunks, contributor resolution, same-generation context reuse, and TurnRelayTrust consume the delivered CLI ABI v2 (`d39072f8182a28ce2be5884151eb03f16cd205b2`). Endpoint-owned native/containment drivers and OS-level kernel worker isolation are wired (`createNativeEndpointDriver` resolves metadata through `octo-server` using existing `WKSocket` transport identifiers with zero `octo-im`/WukongIM modifications), while `octo-server` production route/catalog startup wiring and final A1 constants remain pending. Without
+[v7 handoff](permission-endpoint-handoff-v7.json) and [v49 continuation](permission-v49-continuation.md). Boot, readiness, relay,
+manifest chunks, contributor resolution, same-generation context reuse, and TurnRelayTrust consume the delivered CLI ABI v2 (`29d81e09dc544b9928d94a9123736330d5d0174f`). Endpoint-owned native/containment drivers and OS-level kernel worker isolation are wired (`createNativeEndpointDriver` resolves metadata through `octo-server` `e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d` v7 routes using existing `WKSocket` transport identifiers with zero `octo-im`/WukongIM modifications), while `octo-server` historical original-visibility/incarnation/restore-fence gaps, production catalog startup composition, and Owner sign-off on A1 constants + `supported_catalog_digest` remain pending. Without
 a descriptor, the existing two-argument library path retains legacy behavior.
 
 ## Implemented components
 
-`WKSocket.reserveBeforeAck` is a trusted host hook placed before RECVACK and
-before the message handler. It receives a frozen transport observation and the
+`WKSocket.reserveBeforeAck` is a trusted host hook placed before the message
+handler and before RECVACK. It receives a frozen transport observation and the
 SHA-256 of the exact decrypted payload bytes. These observations do not attest
 native message Space, recipient, version, visibility or stream incarnation.
 The host adapter must resolve and compare the real native identity before
-reserving it. A committed reservation proceeds to ACK and handler; a known
-duplicate only ACKs; unavailable, malformed or failed reservations do neither.
+reserving it. A committed reservation proceeds to the handler and sends RECVACK
+only after the handler returns a terminal disposition and `reservation.finish('terminal')`
+durably commits to SQLite; a durably terminal duplicate only ACKs; in-flight
+(`reserved`), `uncertain`, unavailable, malformed or failed reservations do
+neither.
 Managed poison-message handling cannot fall back to the legacy ACK-and-drop
 path. At most 64 reservation/handler jobs are retained per socket. A reservation
 finishing after disconnect becomes uncertain without starting a handler.

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { BotMessage } from '../octo/types.js';
-import type { ReceivedDelivery, IngressReservation, ReserveBeforeAck } from './ingress-reservation.js';
+import type { ReceivedDelivery, IngressReservation, ProcessingDisposition, ReserveBeforeAck } from './ingress-reservation.js';
 import { ReplayJournal, type ReplayIdentity } from './replay-journal.js';
 import { canonicalControl, object, PermissionRefusal, permissionRefusalText, type ControlMethod, type RefusalRecord } from './control-client.js';
 import { bindContextManifest } from './context-manifest.js';
@@ -82,8 +82,8 @@ export interface EndpointHostPorts {
 
 export interface PermissionEndpoint {
   readonly reserveBeforeAck: ReserveBeforeAck;
-  handle(message: BotMessage): Promise<void>;
-  stop(): Promise<void>;
+  handle(message: BotMessage): Promise<ProcessingDisposition>;
+  stop(timeoutMs?: number): Promise<void>;
 }
 
 function hex(value: unknown): string {
@@ -149,7 +149,7 @@ function nativeHeader(value: unknown): Readonly<NativeHeader> {
  */
 export class EndpointPermissionHost implements PermissionEndpoint {
   private readonly received = new WeakMap<BotMessage, Readonly<NativeIngress>>();
-  private readonly active = new Set<Promise<void>>();
+  private readonly active = new Set<Promise<ProcessingDisposition>>();
   private readonly receives = new Set<Promise<IngressReservation>>();
   private readonly controllers = new Set<AbortController>();
   private readonly sourceQueues = new Map<string, Promise<void>>();
@@ -223,10 +223,12 @@ export class EndpointPermissionHost implements PermissionEndpoint {
     } catch { return { disposition: 'unavailable' }; }
   }
 
-  handle(message: BotMessage): Promise<void> {
+  handle(message: BotMessage): Promise<ProcessingDisposition> {
     const ingress = this.received.get(message);
     this.received.delete(message); // A second callback cannot open a second turn.
-    if (this.stopping || !ingress) return Promise.resolve();
+    if (this.stopping || !ingress || this.ports.authoritySignal?.aborted) {
+      return Promise.resolve('uncertain');
+    }
     const sourceKey = `${ingress.header.source.kind}:${ingress.header.source.id}`;
     const task = this.withSourceLock(sourceKey, () => this.process(message, ingress, sourceKey));
     this.active.add(task);
@@ -234,21 +236,35 @@ export class EndpointPermissionHost implements PermissionEndpoint {
     return task;
   }
 
-  async stop(): Promise<void> {
+  async stop(timeoutMs = 10_000): Promise<void> {
     this.stopping = true;
     for (const controller of this.controllers) controller.abort();
-    await Promise.allSettled([...this.active]);
-    await Promise.allSettled([...this.receives]);
+    const waitBounded = async (tasks: Iterable<Promise<unknown>>) => {
+      const list = [...tasks];
+      if (list.length === 0) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.allSettled(list),
+          new Promise<void>(resolve => { timer = setTimeout(resolve, timeoutMs); }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+    await waitBounded(this.active);
+    await waitBounded(this.receives);
     for (const lineage of this.lineages.values()) resetLineage(lineage);
     this.lineages.clear();
     await this.ports.stop();
   }
 
-  private async process(message: BotMessage, ingress: Readonly<NativeIngress>, sourceKey: string): Promise<void> {
+  private async process(message: BotMessage, ingress: Readonly<NativeIngress>, sourceKey: string): Promise<ProcessingDisposition> {
+    if (this.stopping || this.ports.authoritySignal?.aborted) return 'uncertain';
     const controller = new AbortController();
     const lost = () => controller.abort();
     this.ports.authoritySignal?.addEventListener('abort', lost, { once: true });
-    if (this.ports.authoritySignal?.aborted) lost();
+    if (this.ports.authoritySignal?.aborted || this.stopping) lost();
     this.controllers.add(controller);
     const timer = setTimeout(() => controller.abort(), 30 * 60 * 1000);
     let binding: Readonly<EndpointBinding> | undefined;
@@ -259,25 +275,35 @@ export class EndpointPermissionHost implements PermissionEndpoint {
     let workerStarted = false;
     let workerFailed = false;
     let turnCompleted = false;
+    let candidateSkipped = false;
     const relayTransport = this.ports.relayTransport;
     try {
       if (relayTransport !== 'http' && relayTransport !== 'stdio') throw new Error('Relay transport unavailable');
       controller.signal.throwIfAborted();
       // Trigger/config discovery may run here; it supplies no invocation grant.
-      if (!await this.ports.candidate(message)) return;
+      if (!await this.ports.candidate(message)) {
+        if (this.stopping || controller.signal.aborted) return 'uncertain';
+        candidateSkipped = true;
+        return 'terminal';
+      }
       controller.signal.throwIfAborted();
       const registered = object(await this.ports.control.call('register_ingress', {
         key: this.key, delivery_reference: ingress.deliveryReference,
         stream: ingress.header.delivery, payload_sha256: ingress.header.payload_sha256,
       }), ['ingress_id']);
       if (this.ports.revalidateOriginal && lineage.headersByOriginalKey.size > 0) {
-        for (const [origKey, storedHeader] of lineage.headersByOriginalKey.entries()) {
-          const orig = JSON.parse(origKey) as OriginalIdentity;
-          const verdict = await this.ports.revalidateOriginal(orig, storedHeader, controller.signal);
-          if (verdict !== 'allow') {
-            resetLineage(lineage);
-            break;
+        try {
+          for (const [origKey, storedHeader] of lineage.headersByOriginalKey.entries()) {
+            const orig = JSON.parse(origKey) as OriginalIdentity;
+            const verdict = await this.ports.revalidateOriginal(orig, storedHeader, controller.signal);
+            if (verdict !== 'allow') {
+              resetLineage(lineage);
+              break;
+            }
           }
+        } catch (revalErr) {
+          if (controller.signal.aborted) throw revalErr;
+          resetLineage(lineage);
         }
       }
       const rawAdmitted = await this.ports.control.call('admit', {
@@ -463,6 +489,7 @@ export class EndpointPermissionHost implements PermissionEndpoint {
       await this.ports.publish(binding, text, controller.signal);
       lineage.coordinatorGeneration = binding.generation;
       turnCompleted = true;
+      return 'terminal';
     } catch (error) {
       resetLineage(lineage);
       // Renewal denial aborts the owned worker first. Preserve that authentic
@@ -476,11 +503,13 @@ export class EndpointPermissionHost implements PermissionEndpoint {
         const record: Readonly<RefusalRecord> = error instanceof PermissionRefusal ? error.record
           : Object.freeze({ version: 1, category: 'policy_unavailable', correlation: randomBytes(16).toString('hex') });
         try { await this.ports.refuse(ingress, record, permissionRefusalText(record), AbortSignal.timeout(2000)); } catch { /* suppression; no fallback/generic duplicate */ }
+        return 'terminal';
       }
+      return 'uncertain';
     } finally {
-      if (!turnCompleted) {
+      if (!turnCompleted && !candidateSkipped) {
         resetLineage(lineage);
-      } else {
+      } else if (turnCompleted) {
         invocation?.close();
       }
       await lease?.stop();

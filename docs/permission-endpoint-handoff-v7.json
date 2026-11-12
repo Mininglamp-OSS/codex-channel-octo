@@ -1,0 +1,138 @@
+{
+  "format": "endpoint-permission-host-handoff-v7",
+  "supersedes": "permission-endpoint-handoff-v6.json",
+  "status": "BLOCKED_SERVER_ORIGINAL_VISIBILITY_INC_FENCE_SERVED_CATALOGS_AND_OWNER_A1_CATALOG_SIGN_OFF",
+  "base_sha": "5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34",
+  "live_upstream_main": "2f4d0521bcae9e15c008c29e290427de5813e8d2",
+  "previous_endpoint_head": "d007962a7762ec42ae2279c673392121ad630e64",
+  "supported_catalog_digest": null,
+  "task_registry": {
+    "charter_xin_2323": "17e81670-5b49-461d-9509-7c22ca127939",
+    "server_xin_2793": "6a92a547-cb82-4c3d-ac6c-8f5529028ba4",
+    "cli_xin_2794": "229ad215-8526-4a04-8f5b-36f073f81a16",
+    "endpoint_xin_2795": "2f4a34e9-2be3-48ac-99f0-38a30f077acd",
+    "analysis_xin_2830": "2fd1cf39-ab4d-4da5-aaa0-75161eb9ae52"
+  },
+  "approved_amendment": {
+    "baseline": "XIN-2323/ACTIVE-v49",
+    "authority_comment": "9f0b21e9-e8c6-4138-b184-0abd75ea9631",
+    "trigger_comment": "9f0b21e9-e8c6-4138-b184-0abd75ea9631",
+    "xin_2830_report": {
+      "comment_id": "edd9ad84-f10b-4e1e-9161-19a598bbb153",
+      "attachment_id": "d21a8c3c-4dd9-46da-bc6d-e988deac14f6",
+      "bytes": 61292,
+      "sha256": "5382c7b511df84bfa5e6eb712cdb2234591e8f15816a50e3b9f1153dfbcf1fc5"
+    },
+    "xin_2830_overriding_addendum": {
+      "comment_id": "28585cc5-4cc3-47e0-b3a5-17f81ac55b75",
+      "attachment_id": "b7fb7212-c464-4800-8cb5-0df1b1223fc3",
+      "bytes": 16530,
+      "sha256": "3331998a30a2e851dfac7d015e01a8c1c0bda90450b07e258e40b397f9662f23"
+    },
+    "binding_alignment": {
+      "octo_im_wukongim_changes": "FORBIDDEN (zero wire/API/code/config/schema/service changes or tasks; resolve metadata through octo-server using existing WKSocket transport identifiers)",
+      "external_recovery_election_fence_platform": "FORBIDDEN_AS_PREREQUISITE (use existing octo-server + endpoint local durability)",
+      "supported_catalog_digest_pin": "NULL_UNTIL_OWNER_SIGN_OFF (candidate 15c7ca2bf6df703979df529afbca6828f116b2463b1a818456edfad80bcad799 verified only)",
+      "a1_status": "DIRECTION_ACCEPTED_CONSTANTS_AND_EVIDENCE_AWAIT_OWNER_SIGN_OFF",
+      "unapproved_proposals": ["A2", "A3"],
+      "architect_7b11211f_visibility_recovery_proposals": "SEPARATE_UNAPPROVED_RECOMMENDATIONS (nativeACL, noOBO, Prepare-CAS-GET, and B preserved)"
+    }
+  },
+  "consumed": {
+    "cli_head": "29d81e09dc544b9928d94a9123736330d5d0174f",
+    "cli_source_outcome": "c4db4480-4c9a-41b3-b2b0-9f5656b92241",
+    "cli_leader_outcome": "a5e830ec-957c-4147-8387-1d7610574d12",
+    "cli_endpoint_abi_v1": {
+      "path": "docs/permission/endpoint-abi-v1.json",
+      "bytes": 3923,
+      "sha256": "d0b055d6070545c749a08dfb49cabbd7d6fa15758328c111c20d1d881d20c835"
+    },
+    "cli_endpoint_abi_v2": {
+      "path": "docs/permission/endpoint-abi-v2.json",
+      "bytes": 9647,
+      "sha256": "219f927f2522ac5090ef257d50ca5bf5768055607df028ca6c7ad04de1223cdf"
+    },
+    "cli_component_contract_v6": {
+      "path": "docs/permission/cli-component-contract-v6.json",
+      "bytes": 10671,
+      "sha256": "16e924573297469c56c0346b8b6b023f06a68d5ed2f2e389de2ea1664326b4d5"
+    },
+    "cli_manifest_v6": {
+      "path": "docs/permission/contract-manifest-v6.json",
+      "bytes": 2872,
+      "sha256": "be8e31a1f19ab4314390fe7767c58a4fbbcf024cb5c76cb13e3fcac15120d83e"
+    },
+    "cli_response_budget_ledger_v6": {
+      "path": "docs/permission/response-budget-ledger-v6.json",
+      "bytes": 7728,
+      "sha256": "b7c646f4c73fe62d00450a5fec10d4a0f852f227b1040c8b3c31cf94475c9263"
+    },
+    "cli_permission_host": {
+      "path": "internal/mcp/permission_host.go",
+      "bytes": 39230,
+      "sha256": "48cbb855df1a90835f90115008eb408bf7af8d59683329c4e7f4d132e5142ba1"
+    },
+    "cli_permission_relay": {
+      "path": "internal/mcp/permission_relay.go",
+      "bytes": 10772,
+      "sha256": "7200b0f8e2d0ef6e158e71bfdd361707cfc97b30f4d80403ee8074520204ec5c"
+    },
+    "cli_catalog_package_v2": {
+      "path": "docs/permission/catalog-package-v2/manifest.json",
+      "catalog_version": "octo-capabilities-v1-xin2748-v4",
+      "supported_catalog_digest": null,
+      "files": 30,
+      "stored_bytes": 7823327,
+      "manifest_bytes": 4934,
+      "manifest_sha256": "ecc56c2ab0a2c520ab7e5203d2abab06671daf90c28d69f88fe1de8d154109fc",
+      "semantic_digest": "15c7ca2bf6df703979df529afbca6828f116b2463b1a818456edfad80bcad799"
+    },
+    "cli_slot_witness_v5": {
+      "path": "docs/permission/source-slot-witness-v5.json.gz",
+      "bytes": 12562,
+      "sha256": "0c5da173bd0f53c64562a70a5c5feebc955ad111bbe84ed11f5588c08b4b9c0b",
+      "decoded_bytes": 843132,
+      "decoded_sha256": "0dac894681aa7f4f8810f5fa5574d68ce071f2a401df4a99da4a92e7a43e7c5b"
+    },
+    "server_head": "e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d",
+    "server_source_outcome": "9aad196b-2da3-451d-b0a8-a89260a955f9",
+    "server_manifest_v7": {
+      "path": "pkg/permissionbundle/contracts/contract-manifest-v7.json",
+      "bytes": 2127,
+      "sha256": "8ae92962d775c09cac86bf617399a950ef6416e80de23f18de33e29df27948f2"
+    },
+    "server_handoff_v7": {
+      "path": "pkg/permissionbundle/contracts/handoff-v7.json",
+      "bytes": 15815,
+      "sha256": "0bb6754dbd6de0f66c25bfa02ff5973ff477c64443a84aad7f5bde1b454fc454"
+    },
+    "server_remaining_producers_v5": {
+      "path": "pkg/permissionbundle/contracts/remaining-producers-v5.json",
+      "bytes": 4044,
+      "sha256": "31f28c62f96451dc4f8eeed0c61e6c1b952cbaff073e2fd982a26c3047d19bbb"
+    }
+  },
+  "resolved_review_blockers_on_d007962a": [
+    "R102-ACK-001 / 5875777773 P1 / 5873227030: WKSocket.onRecv never sends RECVACK before handler completion and durable reservation.finish('terminal') SQLite commit; ReplayJournal.reserve returns disposition='duplicate' only when existing.state === 'terminal'; OctoGateway and EndpointPermissionHost propagate ProcessingDisposition ('terminal' | 'uncertain') so draining/shutdown/abort marks reservations 'uncertain' without RECVACK",
+    "5875777773 P1 / 5874446045 P1 / 5873693114 P1: worker-launch.ts adds '--unshare-net' to Linux bwrap arguments when allowNetwork === false alongside --unshare-all, --die-with-parent, --new-session, and read-only mounts",
+    "5875777773 P1: checkedTurnRelay and preparePrivateWorker cryptographically verify ca_sha256 against the SHA-256 of the actual CA PEM bytes before writing <codexHome>/relay-ca.pem (0600), and verifyHttpRelayTlsPin enforces TLS 1.3 custom CA, server_name, and leaf cert_sha256/peer_sha256 pin at connection time before HTTP relay worker execution",
+    "Server v7 native wire parity: createNativeEndpointDriver replaces custom op payloads with octo-server e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d routes (POST /v1/bot/permission-facts/v1/bind-delivery?space_id=..., POST /v1/bot/permission-facts/v1?space_id=... with operation resolve/history_headers/history_disclosure, and POST /v1/bot/permission-facts/v1/fence?space_id=...)",
+    "Resource & handle hardening: ContextInvocation.close() fences closed handles in assertCurrent(), drainReceives/stop are bounded by timeouts, pre-admit revalidateOriginal failures fail closed without uncaught rejections, and unreferenced worker generation directories are removed if worker execution fails before producing a sessionId"
+  ],
+  "residual_external_producer_requirements": {
+    "octo_server_original_visibility_and_legacy_dm_space": "octo-server (XIN-2793 = 6a92a547-cb82-4c3d-ac6c-8f5529028ba4, remaining-producers-v5.json) returns 'unknown' for bot_original_visible / caller_original_visible on historical group/thread messages and legacy untagged DMs without a persisted per-message membership watermark or DM space_id tag.",
+    "octo_server_durable_authority_incarnation_and_restore_fence": "octo-server (XIN-2793 = 6a92a547-cb82-4c3d-ac6c-8f5529028ba4) requires a shared SQL+IM durable authority incarnation and restore-epoch fence across backup/restore boundaries.",
+    "octo_server_production_served_catalogs_composition": "octo-server (XIN-2793 = 6a92a547-cb82-4c3d-ac6c-8f5529028ba4) e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d provides RegisterBotPermissionRoutesFromEnv and LoadVerifiedCatalogRegistryFromEnv, which stay fail-closed (503) in production until an approved supported_catalog_digest is pinned and configured.",
+    "owner_a1_response_budgets_and_supported_catalog_digest_signoff": "Owner sign-off under XIN-2323 (17e81670-5b49-461d-9509-7c22ca127939) / XIN-2794 (229ad215-8526-4a04-8f5b-36f073f81a16) remains open for A1 ResponseBudgets numeric constants (response-budget-ledger-v6.json) and pinning candidate semantic digest 15c7ca2bf6df703979df529afbca6828f116b2463b1a818456edfad80bcad799 into supported_catalog_digest."
+  },
+  "verification": {
+    "regression": "136 files / 5440 tests passed; 8 focused permission/preack test files (88 tests)",
+    "checks": "build, lint, production/permission/mention/recovery/continuity types and locked 0.163.0 runtime pass; clean merge-tree against upstream/main 2f4d0521bcae9e15c008c29e290427de5813e8d2",
+    "actual_cli": "29d81e09dc544b9928d94a9123736330d5d0174f actual Go host + HTTP, stdio (rebound <codexHome>/relay-ca.pem ticket), and HTTPS TLS (PublicationTLSListener + TurnRelayTrust ca_sha256/cert_sha256/server_name) execute/call_op: 218,289-byte 255-Header Turn 1 core (1 register_ingress + 253 resolve_contributors in <=32 batches + 1 bind_context contributor_references), Turn 2 same-generation reuse via prior_generation (256-Header union), real catalog-package-v2 manifest preflight (4934 B, ecc56c2a...), renewal, two synthetic business writes per mode and closed-capsule rejection",
+    "cross_repo_server_cli": "octo-server e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d pkg/permissionbundle test suite and octo-cli 29d81e09dc544b9928d94a9123736330d5d0174f TestXIN2795CurrentEndpointChunkAndRelayABI pass on unmodified archives with converged candidate semantic digest 15c7ca2bf6df703979df529afbca6828f116b2463b1a818456edfad80bcad799",
+    "browser": "fresh Chrome: 88 focused permission/preack tests plus all 3 actual CLI 29d81e09 transport/TLS modes and server e708d023 v7 contract verification; screenshot visually inspected",
+    "evidence": ["docs/evidence/xin-2795-v49-smoke.png", "docs/evidence/xin-2795-v49-browser.json", "docs/evidence/xin-2795-v49-cli.log"]
+  },
+  "production_activation": "FAIL_CLOSED_UNTIL_SERVER_PRODUCER_GAPS_AND_OWNER_CATALOG_SIGN_OFF",
+  "review_gate": "Draft only; independent review/deploy/test/ready/merge/Owner acceptance not released"
+}
