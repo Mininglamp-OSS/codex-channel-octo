@@ -90,7 +90,7 @@ import {
   type ToolHost,
 } from "./tool-host.js";
 import { cardSubsystemPaths, ledgerRecovered } from "./recovery.js";
-import type { CardObservableEvent, ToolOpcode, TurnSignal } from "./contracts.js";
+import type { CardObservableEvent, SafeItemFacts, ToolOpcode, TurnSignal } from "./contracts.js";
 
 type ReadySubsystem = Extract<CardSubsystem, { state: "ready" }>;
 type WriteTelemetry = NonNullable<Parameters<CardQueueFactory>[0]["telemetry"]>;
@@ -595,7 +595,7 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
         };
 
         const turn = createTurnCoordinator({
-          ctx: turnCtx, binding, cardId: newId(), clientMsgNo: newId(), queue, policy, closure: grants, refresh, clock, track,
+          ctx: turnCtx, binding, cardId: newId(), clientMsgNo: newId(), queue, policy, closure: grants, refresh, clock, timers, track,
           onFinished: () => {
             closeExplicit();
             if (byDispatch.get(dispatchId) === turn) byDispatch.delete(dispatchId);
@@ -623,8 +623,9 @@ function assembleRuntime(subsystem: ReadySubsystem, options: CardRuntimeOptions,
             else if (continuation && (sig.t === 'dispatch_timeout' || sig.t === 'shutdown')) continuation.settle('ambiguous');
           },
           settle: () => { closeExplicit(); turn.settle(); if (continuation) settleContinuation(continuation, turn); },
-          claimsNotices: () => turn.claimsNotices(),
+          claimsNotices: (facts?: SafeItemFacts) => turn.claimsNotices(facts),
           supersede: () => { closeExplicit(); turn.supersede(); },
+          drain: (maxWaitMs?: number) => turn.drain !== undefined ? turn.drain(maxWaitMs) : Promise.resolve(true),
           inspect: () => turn.inspect(),
         });
         return Object.freeze({ coordinator, ...(explicit ? { injection: explicit.launch } : {}) });

@@ -112,6 +112,20 @@ export interface CardSpec {
  */
 export type CardOutcome = WriteOutcome | "skipped" | "suspended" | "cancelled" | "store_failed" | "unresolved";
 
+export type ReservationState = "unattempted" | "reserved" | "duplicate" | "store_failed";
+export type ReservationReason =
+  | "none"
+  | "settled_before_send"
+  | "cancelled_before_send"
+  | "closing_before_send"
+  | "policy_denied"
+  | "suspended"
+  | "contract_rejected"
+  | "duplicate"
+  | "store_failed";
+export type InitialSendOutcome = "unattempted" | "inflight" | CardOutcome;
+export type TerminalEditOutcome = "unattempted" | "pending" | CardOutcome;
+
 export interface TerminalResult {
   readonly outcome: CardOutcome;
   /** Sequence of the terminal edit when one was reserved. */
@@ -133,6 +147,11 @@ export interface CardStatus {
   readonly inflight: boolean;
   readonly terminalPending: boolean;
   readonly outcome?: CardOutcome;
+  readonly reservationState?: ReservationState;
+  readonly reservationAtMono?: number | null;
+  readonly reservationReason?: ReservationReason;
+  readonly initialOutcome?: InitialSendOutcome;
+  readonly terminalOutcome?: TerminalEditOutcome;
 }
 
 type QueueStore = Pick<CardStore, "reserveMessage" | "ackMessage" | "markSendAmbiguous" | "markSendFailed"
@@ -223,6 +242,11 @@ interface CardState {
   worker?: Promise<void>;
   wake?: () => void;
   outcome?: CardOutcome;
+  reservationState: ReservationState;
+  reservationAtMono: number | null;
+  reservationReason: ReservationReason;
+  initialOutcome: InitialSendOutcome;
+  terminalOutcome: TerminalEditOutcome;
 }
 
 type EditResult =
@@ -335,8 +359,17 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
 
   function close(card: CardState, outcome: CardOutcome, seq?: number): void {
     if (card.phase === "closed") return;
+    const wasPending = card.phase === "pending";
     card.phase = "closed";
     card.outcome = outcome;
+    if (wasPending) {
+      card.initialOutcome = outcome;
+      if (card.terminalOutcome === "unattempted" && outcome === "skipped") {
+        card.terminalOutcome = "skipped";
+      }
+    } else if (card.terminal !== undefined || card.fencedTerminal !== undefined) {
+      card.terminalOutcome = outcome;
+    }
     card.dirty = undefined;
     const result: TerminalResult = Object.freeze(seq === undefined ? { outcome } : { outcome, seq });
     card.terminalResult?.resolve(result);
@@ -479,13 +512,23 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
   // ── initial send ──
 
   async function sendInitial(card: CardState, frame: CardFrame): Promise<void> {
-    if (suspended.has(card.spec.capability)) { close(card, "suspended"); return; }
+    if (suspended.has(card.spec.capability)) {
+      if (card.reservationReason === "none") card.reservationReason = "suspended";
+      close(card, "suspended");
+      return;
+    }
     const auth = authorize(card);
-    if (auth === undefined) { emitOutcome(card, "card_send_total", "policy"); close(card, "policy"); return; }
+    if (auth === undefined) {
+      if (card.reservationReason === "none") card.reservationReason = "policy_denied";
+      emitOutcome(card, "card_send_total", "policy");
+      close(card, "policy");
+      return;
+    }
     const request = sendRequest(card, frame, auth.capBytes);
     let frozen: FrozenRequest;
     try { frozen = freezeSend(request); } catch {
       // Oversized or invalid envelope: rejected before reservation and transport.
+      if (card.reservationReason === "none") card.reservationReason = "contract_rejected";
       emitOutcome(card, "card_send_total", "contract");
       close(card, "contract");
       return;
@@ -494,13 +537,25 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
     try {
       reserved = store.reserveMessage({ kind: card.spec.kind, binding: card.spec.binding, bodyDigest: digest(frozen.body),
         clientMsgNo: card.spec.clientMsgNo, ...card.spec.presentation });
-    } catch { close(card, "store_failed"); return; }
+    } catch {
+      card.reservationState = "store_failed";
+      card.reservationAtMono = now();
+      card.reservationReason = "store_failed";
+      close(card, "store_failed");
+      return;
+    }
     if (reserved.kind !== "reserved") {
       // The client id already has a durable reservation: a prior send may exist, never send again.
+      card.reservationState = "duplicate";
+      card.reservationAtMono = now();
+      card.reservationReason = "duplicate";
       emitOutcome(card, "card_send_total", "ambiguous");
       close(card, "ambiguous");
       return;
     }
+    card.reservationState = "reserved";
+    card.reservationAtMono = now();
+    card.reservationReason = "none";
     card.storeCardId = reserved.cardId;
     const opts = callOptions();
     if (opts === FENCED) { close(card, "cancelled"); return; }
@@ -548,6 +603,7 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
     }
     card.messageId = messageId;
     card.phase = "active";
+    card.initialOutcome = "acked";
     emitOutcome(card, "card_send_total", "acked");
   }
 
@@ -654,12 +710,26 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       if (card.phase === "closed") return;
       if (card.phase === "pending") {
         // Settle, cancellation or shutdown before the first send starts: skip the first frame.
-        if (card.terminal !== undefined || card.cancelled || closing()) { close(card, "skipped"); return; }
+        if (card.terminal !== undefined || card.cancelled || closing()) {
+          if (card.reservationReason === "none") {
+            card.reservationReason = card.terminal !== undefined
+              ? "settled_before_send"
+              : card.cancelled
+                ? "cancelled_before_send"
+                : "closing_before_send";
+          }
+          close(card, "skipped");
+          return;
+        }
         if (card.dirty === undefined) return;
         const ok = await waitEligible(card, card.dirtySince + DEBOUNCE_MS,
           () => card.terminal !== undefined || card.cancelled || closing());
         if (!ok) {
-          if (fencedOut) { close(card, "skipped"); return; }
+          if (fencedOut) {
+            if (card.reservationReason === "none") card.reservationReason = "closing_before_send";
+            close(card, "skipped");
+            return;
+          }
           continue;
         }
         // A close or cancel between the wake and this continuation clears the frame: re-evaluate.
@@ -745,6 +815,8 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       phase: "active", storeCardId, messageId: row.messageId as string,
       seqReserved: row.seqReserved, seqAcked: row.seqAcked, dirtySince: 0, cancelled: false, inflight: false,
       running: false, adopted: Object.freeze({ templateId: row.templateId, templateVersion: row.templateVersion }),
+      reservationState: "reserved", reservationAtMono: null, reservationReason: "none",
+      initialOutcome: "acked", terminalOutcome: "unattempted",
     });
     return "opened";
   }
@@ -771,6 +843,8 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
         route: Object.freeze({ channelId: spec.binding.channelId, channelType: spec.binding.channelType }),
         phase: "pending", seqReserved: 0, seqAcked: 0, dirtySince: 0, cancelled: false, inflight: false,
         running: false,
+        reservationState: "unattempted", reservationAtMono: null, reservationReason: "none",
+        initialOutcome: "unattempted", terminalOutcome: "unattempted",
       });
       return "opened";
     },
@@ -810,16 +884,24 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
         // It never reserves a sequence or starts a transport; owned in-flight work is left to drain.
         if (card.phase === "pending" && !card.inflight) {
           // Never sent: the closing worker settles it as skipped.
+          if (card.reservationReason === "none") card.reservationReason = "closing_before_send";
           if (!card.running) close(card, "skipped");
           return card.terminalResult.promise;
         }
         card.fencedTerminal = snapshot;
-        if (card.running) card.terminalResult.resolve(Object.freeze({ outcome: "cancelled" as const }));
-        else close(card, "cancelled");
+        if (card.running) {
+          card.terminalOutcome = "cancelled";
+          card.terminalResult.resolve(Object.freeze({ outcome: "cancelled" as const }));
+        } else {
+          close(card, "cancelled");
+        }
         return card.terminalResult.promise;
       }
       card.terminal = snapshot;
       if (typeof reason === "string") card.terminalReason = reason;
+      if (card.phase === "pending" && !card.inflight && card.reservationReason === "none") {
+        card.reservationReason = "settled_before_send";
+      }
       card.dirty = undefined;
       kick(card);
       return card.terminalResult.promise;
@@ -830,6 +912,9 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
       for (const card of cards.values()) {
         if (card.spec.binding.generation !== generation || card.phase === "closed" || card.cancelled) continue;
         card.cancelled = true;
+        if (card.phase === "pending" && card.reservationReason === "none") {
+          card.reservationReason = "cancelled_before_send";
+        }
         card.dirty = undefined;
         count++;
         if (card.phase === "pending") kick(card);
@@ -852,6 +937,17 @@ export function createWriteQueue(options: WriteQueueOptions): CardWriteQueue {
         terminalPending: card.fencedTerminal !== undefined
           || (card.terminal !== undefined && (card.phase !== "closed" || card.outcome === "cancelled" || card.outcome === "unresolved")),
         ...(card.outcome !== undefined ? { outcome: card.outcome } : {}),
+        reservationState: card.reservationState,
+        reservationAtMono: card.reservationAtMono,
+        reservationReason: card.reservationReason,
+        initialOutcome: card.initialOutcome === "unattempted" && card.phase === "pending" && card.inflight
+          ? "inflight"
+          : card.initialOutcome,
+        terminalOutcome: card.terminalOutcome === "unattempted"
+          && card.phase === "active"
+          && card.terminal !== undefined
+          ? "pending"
+          : card.terminalOutcome,
       });
     },
 

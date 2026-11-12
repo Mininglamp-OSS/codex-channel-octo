@@ -134,8 +134,13 @@ export function createPolicy(options: PolicyOptions): CardPolicy {
     },
     authorize(op, ctx, pinned): Authorization {
       const at = now();
-      if (!sameBot(ctx.botRef, botRef) || at === undefined || !cached || !fresh(cached, at)
-        || cached[op].state !== "enabled" || (pinned && (!owned(pinned, op) || pinned[op].state !== "enabled"))) {
+      if (!sameBot(ctx.botRef, botRef) || at === undefined) {
+        return Object.freeze({ allowed: false, reason: "policy_revoked" });
+      }
+      if (!cached || !fresh(cached, at)) {
+        return Object.freeze({ allowed: false, reason: "profile_unavailable" });
+      }
+      if (cached[op].state !== "enabled" || (pinned && (!owned(pinned, op) || pinned[op].state !== "enabled"))) {
         return Object.freeze({ allowed: false, reason: "policy_revoked" });
       }
       if (op === "automatic" && pinned && (cached.automatic.template?.id !== pinned.automatic.template?.id

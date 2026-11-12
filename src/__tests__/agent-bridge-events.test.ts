@@ -538,6 +538,9 @@ describe('T25: one canonical options contract', () => {
       interruptedTurn?: import('../turn-context.js').InterruptedTurn;
       itemStates?: boolean;
       onNativeCommand?: (source: 'sdk' | 'projected_app_server', phase: 'started' | 'completed') => void;
+      onRuntime?: (mode: import('../agent-bridge.js').ObservedRuntimeMode) => void;
+      onPreProjectionItem?: (category: import('../agent-bridge.js').ObservedItemCategory, id?: string) => void;
+      onProjectedItem?: (category: import('../agent-bridge.js').ObservedItemCategory, id?: string) => void;
       cardInjection?: import('../cards/tool-host.js').CardInjectionLaunch;
     }>();
   });

@@ -264,4 +264,33 @@ describe('WP-05 / PN-01–09 notice sink', () => {
     }
     expect(all.at(-1)?.content).toBe('final exact text');
   });
+  it('passes SafeItemFacts to cardTurn.claimsNotices(facts) so activity items before card open still emit notices', async () => {
+    const seenCategories: Array<string | undefined> = [];
+    let cardOpened = false;
+    const coordinator = {
+      observe: vi.fn(),
+      signal: vi.fn(),
+      settle: vi.fn(),
+      drain: vi.fn().mockResolvedValue(true),
+      claimsNotices: vi.fn((facts?: { category?: string }) => {
+        seenCategories.push(facts?.category);
+        if (!cardOpened && facts?.category === 'activity') return false;
+        cardOpened = true;
+        return true;
+      }),
+      inspect: () => ({ mode: cardOpened ? 'card' : 'undecided', opened: cardOpened, settled: true }),
+    };
+    const cardRuntime = { beginTurn: vi.fn(() => ({ coordinator })) };
+    drive([
+      { type: 'reasoning', text: 'private' },
+      { type: 'command_execution', command: 'git status' },
+      { type: 'reasoning', text: 'after card open' },
+    ]);
+    await handleMessage(makeDmMsg('work'), config, store, router, group, relay, BOT_ID, undefined, cardRuntime as never);
+    const all = vi.mocked(sendMessage).mock.calls.map(c => c[0]);
+    const notices = all.filter(c => c.content.startsWith('🔧 ')).map(c => c.content);
+    expect(seenCategories).toEqual(['activity', 'command', 'activity']);
+    expect(notices).toEqual(['🔧 Thinking…']);
+    expect(all.at(-1)?.content).toBe('final exact text');
+  });
 });

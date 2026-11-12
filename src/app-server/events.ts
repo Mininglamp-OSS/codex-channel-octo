@@ -21,6 +21,21 @@ export type Projection =
   | { readonly kind: 'terminal'; readonly event: ThreadEvent }
   | { readonly kind: 'retry_notice' };
 
+export type PreProjectionItemCategory =
+  | 'command'
+  | 'file'
+  | 'tool'
+  | 'search'
+  | 'reasoning'
+  | 'plan'
+  | 'message'
+  | 'unknown';
+
+export interface PreProjectionItemObservation {
+  readonly category: PreProjectionItemCategory;
+  readonly id?: string;
+}
+
 type Raw = Record<string, unknown>;
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -77,6 +92,40 @@ function usage(tokens: unknown): Usage {
     cache_write_input_tokens: n(last.cacheWriteInputTokens), output_tokens: n(last.outputTokens),
     reasoning_output_tokens: n(last.reasoningOutputTokens),
   };
+}
+
+/** Content-free classification of a bound-turn native v2 notification before projection. */
+export function classifyNativeNotificationItem(
+  method: string,
+  params: unknown,
+  turnId: string,
+): PreProjectionItemObservation | null {
+  const p = obj(params);
+  if (method === 'item/started' || method === 'item/completed') {
+    const item = obj(p.item);
+    const id = str(item.id);
+    switch (item.type) {
+      case 'commandExecution':
+        return { category: 'command', ...(id ? { id } : {}) };
+      case 'fileChange':
+        return { category: 'file', ...(id ? { id } : {}) };
+      case 'mcpToolCall':
+      case 'dynamicToolCall':
+        return { category: 'tool', ...(id ? { id } : {}) };
+      case 'webSearch':
+        return { category: 'search', ...(id ? { id } : {}) };
+      case 'reasoning':
+        return { category: 'reasoning', ...(id ? { id } : {}) };
+      case 'agentMessage':
+        return { category: 'message', ...(id ? { id } : {}) };
+      default:
+        return { category: 'unknown', ...(id ? { id } : {}) };
+    }
+  }
+  if (method === 'turn/plan/updated') {
+    return { category: 'plan', id: `plan-${turnId}` };
+  }
+  return null;
 }
 
 /** Stateful per-turn projector (plan → todo_list item, token usage → terminal usage). */

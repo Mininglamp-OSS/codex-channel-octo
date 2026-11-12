@@ -29,7 +29,7 @@ import type { ThreadEvent } from '@openai/codex-sdk';
 import { AgentFailure, type FailureCategory } from '../agent-failure.js';
 import { processGroupStopped, stopProcessGroup, type ManagedExecution } from '../execution-scope.js';
 import { AppServerClient, RpcError, toolRefusal, type CloseReason } from './client.js';
-import { TurnProjector } from './events.js';
+import { classifyNativeNotificationItem, TurnProjector, type PreProjectionItemObservation } from './events.js';
 import type { AppServerLaunch } from './spawn.js';
 import type { AppServerAttemptCards, AppServerReplyPort } from '../cards/tool-host.js';
 
@@ -75,6 +75,8 @@ export interface AppServerAttemptInput {
   readonly onExecution?: (execution: ManagedExecution) => void;
   /** A completed dynamic tool call (card activity, never text). */
   readonly onCardEffect?: () => void;
+  /** Content-free pre-projection native item hook on bound-turn v2 notifications. */
+  readonly onPreProjectionItem?: (item: PreProjectionItemObservation) => void;
   readonly spawnImpl?: SpawnImpl;
   readonly clientName?: string;
   /** Test seam for {@link APP_SERVER_READY_MS}. */
@@ -387,6 +389,12 @@ export async function* startAppServerAttempt(input: AppServerAttemptInput): Asyn
       } else {
         const noteTurn = typeof p.turnId === 'string' ? p.turnId : obj(p.turn).id;
         if (turnId === null || noteTurn !== turnId) continue; // unbound or foreign
+      }
+      if (input.onPreProjectionItem !== undefined) {
+        try {
+          const pre = classifyNativeNotificationItem(note.method, note.params, turnId!);
+          if (pre !== null) input.onPreProjectionItem(pre);
+        } catch { /* observation is content-free and never affects the attempt */ }
       }
       projector ??= new TurnProjector(turnId!);
       for (const out of projector.project(note.method, note.params)) {

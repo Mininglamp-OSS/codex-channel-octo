@@ -89,7 +89,7 @@ function rig(o: { warm?: boolean } = {}) {
     const binding: CardBinding = { sessionKey: ctx.sessionKey, channelId: "g1", channelType: 2, topicScope: null, generation: gen, resetEpoch: 0 };
     return createTurnCoordinator({
       ctx, binding, cardId: `card-${i}`, clientMsgNo: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
-      queue: over.queue ?? queue, policy, closure: grants, clock: time.clock,
+      queue: over.queue ?? queue, policy, closure: grants, clock: time.clock, timers: time.timers,
       refresh: () => policy.snapshot().catch(() => undefined),
       track: (p) => { tracked.push(p); },
     });
@@ -126,21 +126,29 @@ describe('turn boundary receipt controls', () => {
     await r.time.advance(headroom);
     if (phase === 'started') { obs.nativeCommand('sdk', 'completed'); t.observe(cmd('ARG_CANARY', 'completed')); }
     t.observe(end()); t.signal({ t: 'delivery_report', report: report(1, 1) });
-    obs.settling(); t.settle(); obs.finish(() => t.inspect());
+    obs.settling(); t.settle(); await t.drain(); obs.finish(() => t.inspect());
     await r.settleAll();
     expect(r.sends()).toHaveLength(sends);
     expect(r.edits()).toHaveLength(sends);
     expect(receipts).toHaveLength(1);
-    expect(receipts[0]).toMatchObject({ settlementMs: headroom, itemStates: true,
-      coordinator: { mode: 'card', opened: true, reason: 'snapshot' }, policy: 'unknown',
-      firstReservation: { state: 'unknown', atMs: null, reason: 'hook_unavailable' } });
+    expect(receipts[0]).toMatchObject({
+      settlementMs: headroom,
+      itemStates: true,
+      coordinator: { mode: 'card', opened: true, reason: 'snapshot' },
+      policy: 'allowed',
+      firstReservation: sends === 1
+        ? { state: 'reserved', atMs: 800, reason: 'none' }
+        : { state: 'unattempted', atMs: null, reason: 'settled_before_send' },
+      card: sends === 1
+        ? { initial: 'acked', terminal: 'acked' }
+        : { initial: 'skipped', terminal: 'skipped' },
+    });
     expect(receipts[0].command.firstArrivalMs).toBe(0);
     expect(JSON.stringify(receipts)).not.toContain('ARG_CANARY');
-    // Even known test-ledger state never becomes a production reservation assertion.
     expect(r.queue.status('card-1')?.storeCardId !== undefined).toBe(sends === 1);
   });
 
-  it.each(['no_work', 'policy_denied', 'policy_unknown', 'missing_item_states'] as const)('%s preserves unknowns and no send', async condition => {
+  it.each(['no_work', 'policy_denied', 'policy_unknown', 'missing_item_states'] as const)('%s records truthful policy/reservation outcomes and no send', async condition => {
     const r = rig({ warm: condition !== 'policy_unknown' }); await r.time.advance(0);
     if (condition === 'policy_unknown') {
       r.setProfile(() => { throw new TypeError('synthetic unavailable profile'); });
@@ -163,10 +171,33 @@ describe('turn boundary receipt controls', () => {
     }
     await r.time.advance(2000); t.observe(end());
     t.signal({ t: 'delivery_report', report: report(1, 1) });
-    obs.settling(); t.settle(); obs.finish(() => t.inspect()); await r.settleAll();
+    obs.settling(); t.settle(); await t.drain(); obs.finish(() => t.inspect()); await r.settleAll();
     expect(r.sends()).toHaveLength(0);
-    expect(receipts[0]).toMatchObject({ policy: 'unknown', coordinator: { opened: false },
-      command: { sdk: { started: 0, completed: condition === 'no_work' ? 0 : 1 } } });
+    const expectedPolicy = {
+      no_work: 'unattempted',
+      missing_item_states: 'unattempted',
+      policy_denied: 'denied',
+      policy_unknown: 'unavailable',
+    }[condition];
+    const expectedReason = {
+      no_work: 'no_displayable_row',
+      missing_item_states: 'no_displayable_row',
+      policy_denied: 'policy_not_allowed',
+      policy_unknown: 'policy_not_allowed',
+    }[condition];
+    const expectedCardInitial = {
+      no_work: 'unattempted',
+      missing_item_states: 'unattempted',
+      policy_denied: 'policy',
+      policy_unknown: 'policy',
+    }[condition];
+    expect(receipts[0]).toMatchObject({
+      policy: expectedPolicy,
+      coordinator: { opened: false },
+      firstReservation: { state: 'unattempted', atMs: null, reason: expectedReason },
+      card: { initial: expectedCardInitial, terminal: 'unattempted' },
+      command: { sdk: { started: 0, completed: condition === 'no_work' ? 0 : 1 } },
+    });
   });
 
   it('bounds one receipt, emits once, rejects open vocabularies, and isolates observation failures', () => {
@@ -843,5 +874,91 @@ describe("closure authority on terminal retry", () => {
     await r.policy.snapshot();
     expect(r.policy.authorize("automatic", ctx).allowed).toBe(true);
     expect(r.grants.authorize("automatic", ctx, pinned).allowed).toBe(false);
+  });
+});
+
+describe("Item 1: claimsNotices(facts) and lazy-open activity alignment", () => {
+  it("activity-only items do not lock mode or claim notices before card open, then claim notices once a displayable row opens the card", async () => {
+    const r = rig();
+    const t = r.turn();
+    await r.time.advance(0);
+    t.observe(start());
+    t.observe(reasoning());
+    expect(t.claimsNotices({ category: "activity" })).toBe(false);
+    expect(t.inspect()).toMatchObject({
+      mode: "undecided",
+      opened: false,
+      policy: "unattempted",
+      firstReservation: { state: "unattempted", atMs: null, reason: "no_displayable_row" },
+    });
+
+    t.observe(cmd("c1", "started"));
+    expect(t.claimsNotices({ category: "command" })).toBe(true);
+    expect(t.claimsNotices({ category: "activity" })).toBe(true);
+    expect(t.inspect()).toMatchObject({
+      mode: "card",
+      opened: true,
+      policy: "allowed",
+    });
+    await r.time.advance(800);
+    await finish(r, t, report(1, 1));
+    expect(r.sends()).toHaveLength(1);
+    expect(r.edits()).toHaveLength(1);
+  });
+
+  it("does not lock mode='notice' when reasoning arrives during cold policy warm-up before a displayable row", async () => {
+    const r = rig({ warm: false });
+    const t = r.turn();
+    t.observe(start());
+    t.observe(reasoning());
+    expect(t.claimsNotices({ category: "activity" })).toBe(false);
+    expect(t.inspect().mode).toBe("undecided");
+
+    await r.warm();
+    t.observe(cmd("c-after-warm", "started"));
+    expect(t.claimsNotices({ category: "command" })).toBe(true);
+    expect(t.inspect()).toMatchObject({ mode: "card", opened: true, policy: "allowed" });
+    await r.time.advance(800);
+    await finish(r, t, report(1, 1));
+    expect(r.sends()).toHaveLength(1);
+  });
+});
+
+describe("Item 2: bounded terminal drain(maxWaitMs)", () => {
+  it("resolves true once the terminal edit ACK closes the queue card, and resolves false when the bounded deadline expires first", async () => {
+    const r = rig();
+    const t = await activeTurn(r);
+    r.net.reply({ hold: true });
+    t.observe(end());
+    t.signal({ t: "delivery_report", report: report(1, 1) });
+    t.settle();
+    await r.time.advance(0);
+    expect(t.inspect().card).toEqual({ initial: "acked", terminal: "pending" });
+
+    const drainDone = t.drain(5_000);
+    let settled = false;
+    void drainDone.then(() => { settled = true; });
+    await r.time.advance(100);
+    expect(settled).toBe(false);
+
+    r.net.release();
+    await r.settleAll();
+    expect(await drainDone).toBe(true);
+    expect(t.inspect().card).toEqual({ initial: "acked", terminal: "acked" });
+
+    // Second turn: hold terminal edit past drain deadline.
+    const r2 = rig();
+    const t2 = await activeTurn(r2);
+    r2.net.reply({ hold: true });
+    t2.observe(end());
+    t2.signal({ t: "delivery_report", report: report(1, 1) });
+    t2.settle();
+    await r2.time.advance(0);
+    const timedOutDrain = t2.drain(500);
+    await r2.time.advance(500);
+    expect(await timedOutDrain).toBe(false);
+    expect(t2.inspect().card).toEqual({ initial: "acked", terminal: "pending" });
+    r2.net.release();
+    await r2.settleAll();
   });
 });

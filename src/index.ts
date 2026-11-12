@@ -437,14 +437,21 @@ export async function handleMessage(
       observation = createTurnObservation({ emit: receipt => {
         console.info('[codex-channel-octo] turn boundary', JSON.stringify(receipt));
       } });
+      observation.route(channelType === 1 ? 'dm' : channelType === 2 ? 'group' : channelType === 5 ? 'topic' : 'unknown');
     } catch { /* Observation cannot affect the handler, even at construction. */ }
     let turnSettled = false;
-    const settleTurn = (): void => {
+    const settleTurn = async (): Promise<void> => {
       if (turnSettled) return;
       turnSettled = true;
       observation?.settling();
       cardTurn?.settle();
       const coordinator = cardTurn;
+      if (coordinator?.drain !== undefined && !turn.signal.aborted) {
+        const remainingDeadlineMs = Number.isFinite(turn.deadline)
+          ? Math.max(0, Math.floor(turn.deadline - performance.now()))
+          : undefined;
+        try { await coordinator.drain(remainingDeadlineMs); } catch { /* bounded drain never throws */ }
+      }
       observation?.finish(coordinator ? () => coordinator.inspect() : undefined);
     };
 
@@ -836,7 +843,7 @@ export async function handleMessage(
         const MAX_TOOL_NOTICES = 10;
         onSafeItem = (facts: ReducedItemFacts): void => {
           turn.assertPublishable();
-          if (cardTurn?.claimsNotices()) return; // the automatic card replaces the notices
+          if (cardTurn?.claimsNotices(facts)) return; // the automatic card replaces the notices
           const label = safeNotice(facts);
           if (!label) return;
           if (label === lastNotice) return; // collapse exact repeats
@@ -874,7 +881,12 @@ export async function handleMessage(
         ...(resume ? { resume } : {}),
         ...(resume && config.sdk.runtime === 'app-server' ? { threadToolsetDigest: turnStore.getThreadToolsetDigest(sessionKey) } : {}),
         ...(cardTurn ? { itemStates: true } : {}),
-        ...(observation ? { onNativeCommand: observation.nativeCommand } : {}),
+        ...(observation ? {
+          onNativeCommand: observation.nativeCommand,
+          onRuntime: observation.runtime,
+          onPreProjectionItem: observation.preItem,
+          onProjectedItem: observation.projectedItem,
+        } : {}),
         ...(cardInjection ? { cardInjection } : {}),
         onSessionId: (id: string, prompt: string, toolsetDigest?: string | null) => {
           turn.assertPublishable();
@@ -1010,7 +1022,14 @@ export async function handleMessage(
         turn.assertPublishable();
         turnStore.commitTurnOutput(turn.turnId);
         // D-A (R1 C3): the normal-return report of this exact turn.
-        cardTurn?.signal({ t: 'delivery_report', report: readDeliveryReport(store, turn.turnId, { emptyNotice: false }) });
+        const okReport = readDeliveryReport(store, turn.turnId, { emptyNotice: false });
+        cardTurn?.signal({ t: 'delivery_report', report: okReport });
+        observation?.delivery({
+          attempted: okReport.expected,
+          acked: okReport.acked,
+          failed: okReport.failed,
+          outcome: okReport.expected > 0 && okReport.failed === 0 && okReport.acked === okReport.expected ? 'acked' : 'failed',
+        });
         turn.interruptionPresented = !!result.interruptedTurn;
         // G10: mark this message_seq as the last one we replied to. Next turn's
         // segmented history will treat messages with seq <= this as [answered].
@@ -1030,18 +1049,37 @@ export async function handleMessage(
           content: '[No response generated. Please try rephrasing your question.]',
         });
         // R1 C2: the only `emptyNotice: true`, after the notice resolved.
-        cardTurn?.signal({ t: 'delivery_report', report: readDeliveryReport(store, turn.turnId, { emptyNotice: true }) });
+        const emptyReport = readDeliveryReport(store, turn.turnId, { emptyNotice: true });
+        cardTurn?.signal({ t: 'delivery_report', report: emptyReport });
+        observation?.delivery({
+          attempted: emptyReport.expected,
+          acked: emptyReport.acked,
+          failed: emptyReport.failed,
+          outcome: 'empty_notice',
+        });
       }
 
     } catch (err) {
+      const errReport = readDeliveryReport(store, turn.turnId, { emptyNotice: false });
+      observation?.delivery({
+        attempted: errReport.expected,
+        acked: errReport.acked,
+        failed: errReport.failed,
+        outcome: errReport.expected === 0
+          ? 'unattempted'
+          : errReport.failed === 0 && errReport.acked === errReport.expected
+            ? 'acked'
+            : 'failed',
+      });
       if (cardTurn) {
         // Every catch path reports with `emptyNotice: false` and is Error; an aborted turn is a timeout or shutdown.
-        cardTurn.signal({ t: 'delivery_report', report: readDeliveryReport(store, turn.turnId, { emptyNotice: false }) });
+        cardTurn.signal({ t: 'delivery_report', report: errReport });
         cardTurn.signal(!turn.signal.aborted ? { t: 'handler_error', category: classifyCardError(err) }
           : turn.interruption === 'timed_out' || performance.now() >= turn.deadline ? { t: 'dispatch_timeout' } : { t: 'shutdown' });
+        cardTurn.settle();
       }
-      settleTurn();
-      if (turn.signal.aborted) return; // Router owns timeout/shutdown feedback.
+      observation?.settling();
+      if (turn.signal.aborted) return; // Router owns timeout/shutdown feedback; finally drains & emits receipt.
       turn.interruption = 'failed';
       turn.assertPublishable();
       const raw = errorDetails(err);
@@ -1070,11 +1108,13 @@ export async function handleMessage(
           channelType,
           content,
         });
+        observation?.delivery({ errorReply: 'acked' });
       } catch {
+        observation?.delivery({ errorReply: 'failed' });
         /* swallow — don't crash on reply failure */
       }
     } finally {
-      settleTurn();
+      await settleTurn();
     }
   });
 

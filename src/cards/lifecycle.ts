@@ -22,6 +22,7 @@
  * cancelled turn can neither fence nor be revived by it.
  */
 
+import { CARD_API_DEADLINE_MS } from "./api.js";
 import type {
   CardObservableEvent,
   DeliveryReport,
@@ -30,6 +31,7 @@ import type {
   PinnedTemplate,
   PolicySnapshot,
   RuntimeErrorCategory,
+  SafeItemFacts,
   TrustedTurnContext,
   TurnCoordinator,
   TurnSignal,
@@ -51,6 +53,21 @@ import type { CardBinding } from "./store.js";
 type CardWriteQueue = ReturnType<CardQueueFactory>;
 type CardSpec = Parameters<CardWriteQueue["open"]>[0];
 type OpenResult = ReturnType<CardWriteQueue["open"]>;
+type CardStatus = NonNullable<ReturnType<CardWriteQueue["status"]>>;
+type ReservationState = NonNullable<CardStatus["reservationState"]>;
+type ReservationReason = NonNullable<CardStatus["reservationReason"]>;
+type InitialSendOutcome = NonNullable<CardStatus["initialOutcome"]>;
+type TerminalEditOutcome = NonNullable<CardStatus["terminalOutcome"]>;
+
+export interface CoordinatorTimers {
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
+
+const defaultTimers: CoordinatorTimers = Object.freeze({
+  setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms),
+  clearTimeout: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+});
 
 /** The write-queue surface a coordinator uses. */
 export type LifecycleQueue = Pick<CardWriteQueue, "open" | "enqueue" | "finalize" | "cancelNonterminal" | "status" | "suspendedCapabilities">;
@@ -108,6 +125,7 @@ export interface CoordinatorDeps {
   /** Fresh policy read; resolves undefined when the read is not possible. Never rejects. */
   readonly refresh: () => Promise<PolicySnapshot | undefined>;
   readonly clock: MonotonicClock;
+  readonly timers?: CoordinatorTimers;
   /** Tracks asynchronous terminal work for the shutdown drain. */
   readonly track: (work: Promise<unknown>) => void;
   /** Called once when the coordinator has nothing left to do. */
@@ -116,6 +134,19 @@ export interface CoordinatorDeps {
 
 export type CoordinatorMode = "undecided" | "card" | "notice";
 
+export type EvaluatedPolicyOutcome =
+  | "unattempted"
+  | "allowed"
+  | "denied"
+  | "unavailable"
+  | "suspended";
+
+export type ObservedFirstReservationReason =
+  | ReservationReason
+  | "no_displayable_row"
+  | "policy_not_allowed"
+  | "open_refused";
+
 export interface CoordinatorState {
   readonly mode: CoordinatorMode;
   readonly opened: boolean;
@@ -123,15 +154,38 @@ export interface CoordinatorState {
   readonly superseded: boolean;
   readonly settled: boolean;
   readonly terminal?: TerminalReason;
+  readonly policy?: EvaluatedPolicyOutcome;
+  readonly firstReservation?: {
+    readonly state: ReservationState;
+    readonly atMs: number | null;
+    readonly reason: ObservedFirstReservationReason;
+  };
+  readonly card?: {
+    readonly initial: InitialSendOutcome;
+    readonly terminal: TerminalEditOutcome;
+  };
 }
 
 export interface AutomaticTurn extends TurnCoordinator {
   readonly generation: string;
   readonly context: TrustedTurnContext;
-  /** True when this turn shows an automatic card, so sanitized tool notices are suppressed. */
-  claimsNotices(): boolean;
+  /**
+   * True when this turn shows an automatic card, so sanitized tool notices are suppressed.
+   * When `facts` is an activity-only item (`category === "activity"`) and no card has
+   * been opened yet (`!opened`), returns `false` without locking `decide()` so
+   * thinking/planning items do not falsely lock `mode = "card"` with `opened: false`,
+   * do not suppress fallback `🔧 Thinking…`/`🔧 Planning…` notices before a card opens,
+   * and do not lock `mode = "notice"` during policy warm-up before a displayable row arrives.
+   */
+  claimsNotices(facts?: SafeItemFacts): boolean;
   /** A newer generation of the same session began: fence this generation's non-terminal writes. */
   supersede(): void;
+  /**
+   * Bounded wait for this turn's asynchronous terminal work after `settle()` / terminal signal.
+   * Resolves `true` once this turn's terminal work finishes, or `false` when the bounded
+   * deadline (`CARD_API_DEADLINE_MS` by default) expires first. Never throws.
+   */
+  drain?(maxWaitMs?: number): Promise<boolean>;
   inspect(): CoordinatorState;
 }
 
@@ -141,6 +195,7 @@ function runtimeReason(category: RuntimeErrorCategory): TerminalReason {
 
 export function createTurnCoordinator(deps: CoordinatorDeps): AutomaticTurn {
   const { ctx, binding, cardId, clientMsgNo, queue, policy, closure, clock } = deps;
+  const timers = deps.timers ?? defaultTimers;
   const generation = binding.generation;
   // One context object per card: the queue's spec carries it, and a closure grant is keyed by it.
   const cardCtx: Pick<TrustedTurnContext, "botRef"> = Object.freeze({ botRef: ctx.botRef });
@@ -155,6 +210,8 @@ export function createTurnCoordinator(deps: CoordinatorDeps): AutomaticTurn {
   const startedAt = now();
 
   let mode: CoordinatorMode = "undecided";
+  let evaluatedPolicy: EvaluatedPolicyOutcome = "unattempted";
+  let openRefused = false;
   let pinned: PolicySnapshot | undefined;
   let template: PinnedTemplate | undefined;
   let capBytes = ENVELOPE_CAP;
@@ -172,10 +229,15 @@ export function createTurnCoordinator(deps: CoordinatorDeps): AutomaticTurn {
   let report: DeliveryReport | undefined;
   let handlerError: RuntimeErrorCategory | undefined;
   let refreshing: Promise<unknown> | undefined;
+  const finishWaiters = new Set<() => void>();
 
   const finish = (): void => {
     if (finished) return;
     finished = true;
+    for (const notify of finishWaiters) {
+      try { notify(); } catch { /* listener errors ignored */ }
+    }
+    finishWaiters.clear();
     try { deps.onFinished?.(); } catch { /* bookkeeping only */ }
   };
 
@@ -193,19 +255,31 @@ export function createTurnCoordinator(deps: CoordinatorDeps): AutomaticTurn {
   const options = (): BuildOptions => ({ reasoningId: cardId, elapsedMs: now() - startedAt, route: { channelId: binding.channelId, channelType: binding.channelType },
     clientMsgNo, maxEnvelopeBytes: capBytes });
 
-  /** Decided once, at the first notice or the first displayable row. */
+  /** Decided once, at the first displayable notice or the first displayable row. */
   function decide(): CoordinatorMode {
     if (mode !== "undecided") return mode;
     if (terminal !== undefined) { mode = "notice"; return mode; }
     let auth: Authorization;
-    try { auth = authorize(); } catch { mode = "notice"; return mode; }
+    try { auth = authorize(); } catch {
+      evaluatedPolicy = "unavailable";
+      mode = "notice";
+      return mode;
+    }
     const tpl = auth.allowed ? auth.snapshot.automatic.template : undefined;
     let suspended = true;
     try { suspended = queue.suspendedCapabilities().includes("automatic"); } catch { /* fail closed */ }
     if (!auth.allowed || tpl === undefined || tpl.controlFree !== true || suspended) {
+      if (!auth.allowed) {
+        evaluatedPolicy = auth.reason === "profile_unavailable" ? "unavailable" : "denied";
+      } else if (suspended) {
+        evaluatedPolicy = "suspended";
+      } else {
+        evaluatedPolicy = "unavailable";
+      }
       mode = "notice";
       return mode;
     }
+    evaluatedPolicy = "allowed";
     pinned = auth.snapshot;
     template = tpl;
     capBytes = Math.min(auth.limits.maxPayloadBytes, ENVELOPE_CAP);
@@ -224,15 +298,21 @@ export function createTurnCoordinator(deps: CoordinatorDeps): AutomaticTurn {
       case "opened":
         opened = true;
         return true;
-      case "duplicate":
       case "suspended":
+        evaluatedPolicy = "suspended";
+        openRefused = true;
+        mode = "notice";
+        return false;
+      case "duplicate":
       case "closing":
       case "contract":
+        openRefused = true;
         mode = "notice";
         return false;
       default: {
         const unreachable: never = result;
         void unreachable;
+        openRefused = true;
         mode = "notice";
         return false;
       }
@@ -322,19 +402,23 @@ export function createTurnCoordinator(deps: CoordinatorDeps): AutomaticTurn {
     // Permission is stale: stop progress now, then decide the terminal after one fresh read.
     queue.cancelNonterminal(generation);
     deps.track((async () => {
-      let current: PolicySnapshot | undefined;
-      try { current = await deps.refresh(); } catch { current = undefined; }
-      if (authorize(pinned).allowed) return finalizeWith(frame, reason);
-      if (current !== undefined && pinned !== undefined
-        && policy.closureDisposition("automatic", pinned, current) === "expired_closure_only") {
-        const minimal = buildClosureFrame(reason, tpl, options());
-        if (minimal !== undefined) {
-          closure.grant(cardCtx, pinned, current);
-          return finalizeWith(minimal, reason);
+      try {
+        let current: PolicySnapshot | undefined;
+        try { current = await deps.refresh(); } catch { current = undefined; }
+        if (authorize(pinned).allowed) return await finalizeWith(frame, reason);
+        if (current !== undefined && pinned !== undefined
+          && policy.closureDisposition("automatic", pinned, current) === "expired_closure_only") {
+          const minimal = buildClosureFrame(reason, tpl, options());
+          if (minimal !== undefined) {
+            closure.grant(cardCtx, pinned, current);
+            return await finalizeWith(minimal, reason);
+          }
         }
+        // Denied: the queue records the policy outcome and sends nothing.
+        return await finalizeWith(frame, reason);
+      } finally {
+        finish();
       }
-      // Denied: the queue records the policy outcome and sends nothing.
-      return finalizeWith(frame, reason);
     })());
   }
 
@@ -363,6 +447,35 @@ export function createTurnCoordinator(deps: CoordinatorDeps): AutomaticTurn {
     }
   }
 
+  function drain(maxWaitMs = CARD_API_DEADLINE_MS): Promise<boolean> {
+    try {
+      if (finished || (!opened && terminal !== undefined)) return Promise.resolve(true);
+      const boundedMs = typeof maxWaitMs === "number" && Number.isFinite(maxWaitMs)
+        ? Math.max(0, Math.min(CARD_API_DEADLINE_MS, Math.trunc(maxWaitMs)))
+        : CARD_API_DEADLINE_MS;
+      return new Promise<boolean>((resolve) => {
+        if (finished) { resolve(true); return; }
+        let settledDrain = false;
+        const onFinish = (): void => {
+          if (settledDrain) return;
+          settledDrain = true;
+          timers.clearTimeout(timerHandle);
+          finishWaiters.delete(onFinish);
+          resolve(true);
+        };
+        const timerHandle = timers.setTimeout(() => {
+          if (settledDrain) return;
+          settledDrain = true;
+          finishWaiters.delete(onFinish);
+          resolve(finished);
+        }, boundedMs);
+        finishWaiters.add(onFinish);
+      });
+    } catch {
+      return Promise.resolve(false);
+    }
+  }
+
   // Warm permission for the decision at the first item; the handler never waits for it.
   try { if (!authorize().allowed) refreshOnce(); } catch { /* notice mode */ }
 
@@ -372,16 +485,72 @@ export function createTurnCoordinator(deps: CoordinatorDeps): AutomaticTurn {
     observe(ev) { try { observe(ev); } catch { /* never into the handler */ } },
     signal(s) { try { signal(s); } catch { /* never into the handler */ } },
     settle() { try { settle(); } catch { /* never into the handler */ } },
-    claimsNotices() {
-      try { return terminal === undefined && decide() === "card"; } catch { return false; }
+    claimsNotices(facts?: SafeItemFacts) {
+      try {
+        if (terminal !== undefined) return false;
+        if (facts !== undefined && facts.category === "activity") {
+          return opened && mode === "card";
+        }
+        return decide() === "card";
+      } catch {
+        return false;
+      }
     },
     supersede() {
       if (superseded) return;
       superseded = true;
       try { if (opened && terminal === undefined) queue.cancelNonterminal(generation); } catch { /* fenced by the flag */ }
     },
+    drain,
     inspect() {
-      return Object.freeze({ mode, opened, answering, superseded, settled, ...(terminal !== undefined ? { terminal } : {}) });
+      let qStatus: ReturnType<LifecycleQueue["status"]> | undefined;
+      try { qStatus = opened ? queue.status(cardId) : undefined; } catch { qStatus = undefined; }
+      const reservationState: ReservationState = qStatus?.reservationState ?? "unattempted";
+      const reservationAtMono = qStatus?.reservationAtMono ?? null;
+      const reservationAtMs =
+        reservationAtMono !== null && Number.isFinite(reservationAtMono)
+          ? Math.max(0, Math.round(reservationAtMono - startedAt))
+          : null;
+      let reservationReason: ObservedFirstReservationReason;
+      if (qStatus?.reservationReason !== undefined && qStatus.reservationReason !== "none") {
+        reservationReason = qStatus.reservationReason;
+      } else if (reservationState === "reserved") {
+        reservationReason = "none";
+      } else if (!hasDisplayableRow(model)) {
+        reservationReason = "no_displayable_row";
+      } else if (evaluatedPolicy !== "allowed" && evaluatedPolicy !== "unattempted") {
+        reservationReason = "policy_not_allowed";
+      } else if (openRefused) {
+        reservationReason = "open_refused";
+      } else {
+        reservationReason = "none";
+      }
+      const initialOutcome: InitialSendOutcome =
+        qStatus?.initialOutcome
+        ?? (evaluatedPolicy === "denied" || evaluatedPolicy === "unavailable"
+          ? "policy"
+          : evaluatedPolicy === "suspended"
+            ? "suspended"
+            : "unattempted");
+      const terminalOutcome: TerminalEditOutcome = qStatus?.terminalOutcome ?? "unattempted";
+      return Object.freeze({
+        mode,
+        opened,
+        answering,
+        superseded,
+        settled,
+        ...(terminal !== undefined ? { terminal } : {}),
+        policy: evaluatedPolicy,
+        firstReservation: Object.freeze({
+          state: reservationState,
+          atMs: reservationAtMs,
+          reason: reservationReason,
+        }),
+        card: Object.freeze({
+          initial: initialOutcome,
+          terminal: terminalOutcome,
+        }),
+      });
     },
   };
   return Object.freeze(turn);

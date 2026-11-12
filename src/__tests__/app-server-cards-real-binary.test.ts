@@ -13,18 +13,23 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LEGACY_TOOLSET_NOTICE, queryAgentEvents, type AgentOutputEvent } from '../agent-bridge.js';
+import { LEGACY_TOOLSET_NOTICE, createTurnObservation, queryAgentEvents, type AgentOutputEvent, type TurnBoundaryReceipt } from '../agent-bridge.js';
 import type { Config } from '../config.js';
 import type { ManagedExecution } from '../execution-scope.js';
 import type { ToolOpcode, TrustedTurnContext } from '../cards/contracts.js';
 import { provisionFirstInstallMarker } from '../cards/migrations.js';
 import { cardSubsystemPaths, openCardSubsystem } from '../cards/recovery.js';
+import { openCardRuntime } from '../cards/runtime.js';
 import type { CardBinding, CardStore, ExplicitCard } from '../cards/store.js';
 import { appServerToolset, createToolHost, type ExplicitOpHandler, type ToolHost } from '../cards/tool-host.js';
 import { createAdapter, type DbAdapter } from '../db-adapter.js';
 import { SessionStore } from '../session-store.js';
 import { resolvePinnedCodexBinary } from '../app-server/spawn.js';
 import type { AppServerExecution } from '../app-server/runner.js';
+import { WS_IM_ORIGIN, deriveRouteFacts } from '../inbound-route-facts.js';
+import { profile } from './fixtures/card-profile.js';
+import { json } from './fixtures/card-write-harness.js';
+import { SERVER_EDIT_ACK, serverSendAck } from './fixtures/octo-server-acks.js';
 import { admissibleGateway, type AdmissibleGateway } from './fixtures/gd-admit.js';
 import { startMockResponses, type MockResponses } from './fixtures/mock-responses.js';
 
@@ -217,5 +222,155 @@ describe.runIf(BIN !== null)('explicit cards over app-server dynamicTools (real 
     for (const req of [...first.requests, ...out.requests]) expect(JSON.stringify(req.body)).not.toContain('[Card tools notice');
     expect(toolNames(out.requests[0])).toEqual(expect.arrayContaining(['display']));
     expect(toolNames(out.requests[0])).not.toContain('interactive');
+  }, 90_000);
+
+  it('Stage-2 real binary: SHELL command execution over app-server opens automatic progress card, drains terminal edit ACK, and emits content-free TurnBoundaryReceipt', async () => {
+    const dataDir = join(mkdtempSync(join(tmpdir(), 'xin2831-auto-card-')), 'data');
+    mkdirSync(dataDir);
+    cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
+    const p = cardSubsystemPaths(dataDir);
+    mkdirSync(p.cardsDir, { recursive: true, mode: 0o700 });
+    writeFileSync(p.installationRefPath, 'install-a\n', { mode: 0o600, flag: 'wx' });
+    chmodSync(p.installationRefPath, 0o600);
+    provisionFirstInstallMarker(p.markerPath, 'install-a', Date.UTC(2026, 9, 24));
+    const adapter = createAdapter(join(dataDir, 'cc-octo.db'));
+    new SessionStore(adapter).init();
+    const gateway = admissibleGateway();
+    const cardSends: Array<Record<string, unknown>> = [];
+    const cardEdits: Array<Record<string, unknown>> = [];
+    let nextId = 8_100;
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/v1/bot/card/profile')) return json(200, profile());
+      if (path.endsWith('/v1/bot/sendMessage')) {
+        cardSends.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+        const id = `9${String(++nextId).padStart(17, '0')}`;
+        return new Response(serverSendAck(id, `srv${String(nextId).padStart(29, '0')}`, nextId), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (path.endsWith('/v1/bot/message/edit')) {
+        cardEdits.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+        return new Response(SERVER_EDIT_ACK, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch;
+
+    const runtime = await openCardRuntime({
+      adapter,
+      dataDir,
+      apiUrl: 'https://example.com',
+      botToken: 'token-real-auto',
+      fetchImpl,
+    });
+    expect(runtime).toBeDefined();
+    cleanups.push(() => { void runtime?.close('shutdown'); adapter.close(); gateway.release(); });
+    // Let background initial profile warm complete before turn starts.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const routeFacts = deriveRouteFacts({
+      origin: WS_IM_ORIGIN,
+      payload: { type: 1, content: 'SHELL:sleep 1 && printf real-card-ok' },
+      outboundIdentity: 'self',
+    });
+    const begun = runtime!.beginTurn({
+      dispatchId: randomUUID(),
+      sessionKey: 'group:g-real',
+      channelId: 'g-real',
+      channelType: 2,
+      requesterUid: 'u1',
+      resetEpoch: 0,
+      currentResetEpoch: () => 0,
+      turnTimeoutMs: 60_000,
+      routeFacts,
+    });
+    expect(begun).toBeDefined();
+    const cardTurn = begun!.coordinator;
+
+    const receipts: TurnBoundaryReceipt[] = [];
+    const obs = createTurnObservation({ emit: (r) => { receipts.push(r); } });
+    obs.admission('coordinator_available');
+    obs.itemStates(true);
+    obs.route('group');
+
+    const executions: ManagedExecution[] = [];
+    const cfg: Config = {
+      botToken: 'token-real-auto',
+      apiUrl: 'https://example.com',
+      baseDir: gateway.cwd,
+      cwd: gateway.cwd,
+      cwdBase: gateway.cwd,
+      dataDir,
+      sdk: {
+        runtime: 'app-server',
+        toolProgress: true,
+        codexHome: gateway.codexHome,
+        codexApiKey: 'sk-synthetic-harness',
+        codexBaseUrl: mock.baseUrl,
+        env: NO_PROXY,
+        model: 'gpt-5.1',
+      },
+      rateLimit: { maxPerMinute: 5 },
+      context: { maxContextChars: 6000, historyLimit: 40 },
+      maxResponseChars: 524288,
+      dispatchTimeoutMs: 300000,
+    } as Config;
+
+    const messages: string[] = [];
+    for await (const ev of queryAgentEvents('SHELL:sleep 1 && printf real-card-ok', cfg, undefined, undefined, {
+      itemStates: true,
+      onManagedExecution: (e) => executions.push(e),
+      onRuntime: (rt) => obs.runtime(rt),
+      onNativeCommand: (source, phase) => obs.nativeCommand(source, phase),
+      onPreProjectionItem: (cat) => obs.preItem(cat),
+      onProjectedItem: (cat) => obs.projectedItem(cat),
+    })) {
+      if (ev.kind === 'attempt_start' || ev.kind === 'attempt_end' || ev.kind === 'item_state') {
+        cardTurn.observe(ev);
+      }
+      if (ev.kind === 'message') messages.push(ev.text);
+    }
+    await (executions[0] as AppServerExecution).waitForStopped(10_000);
+
+    cardTurn.signal({
+      t: 'delivery_report',
+      report: { expected: 1, acked: 1, failed: 0, messageIds: ['9001'], emptyNotice: false },
+    });
+    obs.delivery({ attempted: 1, acked: 1, failed: 0, outcome: 'acked', errorReply: 'unattempted' });
+    obs.settling();
+    cardTurn.settle();
+    expect(await cardTurn.drain(5_000)).toBe(true);
+    obs.finish(() => cardTurn.inspect());
+
+    expect(messages).toContain('hello from mock');
+    expect(cardSends).toHaveLength(1);
+    expect(cardEdits.length).toBeGreaterThanOrEqual(1);
+    expect(cardEdits.at(-1)).toMatchObject({ state: 'completed' });
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      runtime: 'app-server',
+      admission: 'coordinator_available',
+      itemStates: true,
+      route: 'group',
+      command: {
+        presence: 'OBSERVED',
+        sdk: { started: 0, completed: 0 },
+        projectedAppServer: { started: 1, completed: 1 },
+      },
+      coordinator: { mode: 'card', opened: true, reason: 'snapshot' },
+      policy: 'allowed',
+      firstReservation: { state: 'reserved', atMs: expect.any(Number), reason: 'none' },
+      card: { initial: 'acked', terminal: 'acked' },
+      delivery: { attempted: 1, acked: 1, failed: 0, outcome: 'acked', errorReply: 'unattempted' },
+    });
+    expect(receipts[0].items.pre.command).toBeGreaterThanOrEqual(2);
+    expect(receipts[0].items.projected.command).toBeGreaterThanOrEqual(2);
+    expect(receipts[0].items.pre.message).toBeGreaterThanOrEqual(1);
+    expect(receipts[0].items.projected.message).toBeGreaterThanOrEqual(1);
+    expect(Buffer.byteLength(JSON.stringify(receipts[0]))).toBeLessThanOrEqual(1024);
   }, 90_000);
 });

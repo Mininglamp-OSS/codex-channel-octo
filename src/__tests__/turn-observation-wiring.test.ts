@@ -70,6 +70,8 @@ describe('handler boundary receipt wiring', () => {
       expect(receipt.itemStates).toBe(available);
       expect(receipt.firstReservation.state).toBe('unknown');
       expect(receipt.policy).toBe('unknown');
+      expect(receipt.route).toBe('dm');
+      expect(receipt.delivery).toEqual({ attempted: 1, acked: 1, failed: 0, outcome: 'acked', errorReply: 'unattempted' });
       expect(receipt.settlementMs).toEqual(expect.any(Number));
       expect(JSON.stringify(receipt)).not.toContain('CANARY');
       expect(vi.mocked(sendMessage).mock.calls.at(-1)?.[0].content).toBe('FINAL_CANARY');
@@ -79,14 +81,19 @@ describe('handler boundary receipt wiring', () => {
     } finally { store.close(); }
   });
 
-  it('settles cardTurn and emits turn boundary receipt before logging turn failed or awaiting error sendMessage', async () => {
+  it('settles cardTurn immediately on error, then drains cardTurn and awaits error sendMessage before emitting turn boundary receipt', async () => {
     vi.mocked(sendTyping).mockResolvedValue(undefined);
     vi.mocked(sendReadReceipt).mockResolvedValue(undefined);
     vi.mocked(getChannelMessages).mockResolvedValue([]);
     let releaseSend!: () => void;
     const sendGate = new Promise<void>(resolve => { releaseSend = resolve; });
+    let releaseDrain!: () => void;
+    const drainGate = new Promise<void>(resolve => { releaseDrain = resolve; });
+    const events: string[] = [];
     vi.mocked(sendMessage).mockImplementation(async () => {
+      events.push('error_reply_send_start');
       await sendGate;
+      events.push('error_reply_send_done');
       return { message_id: '123', message_seq: 1, client_msg_no: 'safe' };
     });
     const config = { botToken: 'CREDENTIAL_CANARY', apiUrl: 'https://example.test', baseDir: tmpdir(), cwd: tmpdir(),
@@ -98,18 +105,34 @@ describe('handler boundary receipt wiring', () => {
     const store = new SessionStore(adapter); store.init();
     const router = new SessionRouter(config, 'bot');
     const group = new GroupContext(adapter, 6000);
-    const events: string[] = [];
+    const receipts: TurnBoundaryReceipt[] = [];
     const infoSpy = vi.spyOn(console, 'info').mockImplementation((...args: unknown[]) => {
-      if (args[0] === '[codex-channel-octo] turn boundary') events.push('turn_boundary');
+      if (args[0] === '[codex-channel-octo] turn boundary') {
+        events.push('turn_boundary');
+        receipts.push(JSON.parse(String(args[1])) as TurnBoundaryReceipt);
+      }
     });
     let settledAtTurnFailed = false;
     let boundaryCountAtTurnFailed = 0;
     const coordinator = {
       observe: vi.fn(),
       signal: vi.fn(),
-      settle: vi.fn(() => { events.push('card_settle'); }),
+      settle: vi.fn(() => { if (!events.includes('card_settle')) events.push('card_settle'); }),
+      drain: vi.fn(async () => {
+        events.push('card_drain_start');
+        await drainGate;
+        events.push('card_drain_done');
+        return true;
+      }),
       claimsNotices: () => false,
-      inspect: () => ({ mode: 'undecided', opened: false, settled: true }),
+      inspect: () => ({
+        mode: 'undecided',
+        opened: false,
+        settled: true,
+        policy: 'unattempted',
+        firstReservation: { state: 'unattempted', atMs: null, reason: 'no_displayable_row' },
+        card: { initial: 'unattempted', terminal: 'unattempted' },
+      }),
     } as unknown as AutomaticTurn;
     vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
       if (args[0] === '[codex-channel-octo] turn failed') {
@@ -136,16 +159,36 @@ describe('handler boundary receipt wiring', () => {
       const pending = handleMessage({ message_id: 'm-err', message_seq: 1, timestamp: 1, from_uid: 'u1', channel_id: 'u1',
         channel_type: 1, payload: { type: 1, content: 'fail turn' } }, config, store, router, group,
       new StreamRelay(), 'bot', () => '', runtime);
-      await vi.waitFor(() => expect(events).toContain('turn_failed'));
+      await vi.waitFor(() => expect(events).toContain('error_reply_send_start'));
       expect(settledAtTurnFailed).toBe(true);
-      expect(boundaryCountAtTurnFailed).toBe(1);
-      expect(events.slice(0, 3)).toEqual(['card_settle', 'turn_boundary', 'turn_failed']);
+      expect(boundaryCountAtTurnFailed).toBe(0);
+      expect(events).toEqual(['card_settle', 'turn_failed', 'error_reply_send_start']);
       releaseSend();
+      await vi.waitFor(() => expect(events).toContain('card_drain_start'));
+      expect(events).not.toContain('turn_boundary');
+      releaseDrain();
       await pending;
-      expect(coordinator.settle).toHaveBeenCalledTimes(1);
-      expect(infoSpy.mock.calls.filter(c => c[0] === '[codex-channel-octo] turn boundary')).toHaveLength(1);
+      expect(events).toEqual([
+        'card_settle',
+        'turn_failed',
+        'error_reply_send_start',
+        'error_reply_send_done',
+        'card_drain_start',
+        'card_drain_done',
+        'turn_boundary',
+      ]);
+      expect(coordinator.settle).toHaveBeenCalled();
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0].delivery).toEqual({
+        attempted: 0,
+        acked: 0,
+        failed: 0,
+        outcome: 'unattempted',
+        errorReply: 'acked',
+      });
     } finally {
       releaseSend();
+      releaseDrain();
       store.close();
     }
   });

@@ -1065,13 +1065,14 @@ describe("T1: derived facts offer an explicit op only when every other gate hold
 describe("Fifth-window causal reproduction and full target chain after 120s post-startup delay", () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-  it("emits turn boundary receipt and settles cardTurn before logging turn failed when stream fails before command_execution after 120s idle", async () => {
+  it("settles cardTurn on failure, awaits error reply and terminal drain, and only then emits turn boundary receipt after 120s idle", async () => {
     const h = new Harness();
     await h.open(true);
     const order: string[] = [];
     const receipts: Array<Record<string, unknown>> = [];
     let releaseErrorReply: (() => void) | undefined;
     const errorReplyGate = new Promise<void>((resolve) => { releaseErrorReply = resolve; });
+    let turnPromise: Promise<string> | undefined;
 
     vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
       if (args[0] === "[codex-channel-octo] turn boundary" && typeof args[1] === "string") {
@@ -1101,16 +1102,42 @@ describe("Fifth-window causal reproduction and full target chain after 120s post
         return ok("901");
       });
 
-      const turnPromise = h.turn(1);
-      await vi.waitFor(() => expect(order).toContain("turn_failed"));
+      turnPromise = h.turn(1);
+      await vi.waitFor(() => expect(order).toContain("error_reply_send_start"));
 
-      // Even before the error sendMessage HTTP call resolves (where the Fifth-Window watchdog sent SIGTERM),
-      // the turn boundary receipt is already emitted with factual admission and unopened coordinator state.
-      expect(order.slice(0, 2)).toEqual(["turn_boundary", "turn_failed"]);
+      // Turn boundary receipt is NOT emitted while error sendMessage is still in flight.
+      expect(order).toEqual(["turn_failed", "error_reply_send_start"]);
+      expect(receipts).toHaveLength(0);
+
+      releaseErrorReply?.();
+      await turnPromise;
+      expect(order).toEqual([
+        "turn_failed",
+        "error_reply_send_start",
+        "error_reply_send_done",
+        "turn_boundary",
+      ]);
       expect(receipts).toHaveLength(1);
       expect(receipts[0]).toMatchObject({
         admission: "coordinator_available",
         itemStates: true,
+        policy: "unattempted",
+        firstReservation: {
+          state: "unattempted",
+          atMs: null,
+          reason: "no_displayable_row",
+        },
+        card: {
+          initial: "unattempted",
+          terminal: "unattempted",
+        },
+        delivery: {
+          attempted: 0,
+          acked: 0,
+          failed: 0,
+          outcome: "unattempted",
+          errorReply: "acked",
+        },
         command: {
           presence: "UNOBSERVED",
           sdk: { started: 0, completed: 0 },
@@ -1122,13 +1149,10 @@ describe("Fifth-window causal reproduction and full target chain after 120s post
           reason: "snapshot",
         },
       });
-
-      releaseErrorReply?.();
-      await turnPromise;
-      expect(receipts).toHaveLength(1);
       expect(h.cards().sends).toBe(0);
     } finally {
       releaseErrorReply?.();
+      await turnPromise?.catch(() => undefined);
       await h.close();
     }
   });
@@ -1171,6 +1195,186 @@ describe("Fifth-window causal reproduction and full target chain after 120s post
       expect(receipts[0]).toMatchObject({
         admission: "coordinator_available",
         itemStates: true,
+        policy: "allowed",
+        firstReservation: {
+          state: "reserved",
+          atMs: expect.any(Number),
+          reason: "none",
+        },
+        card: {
+          initial: "acked",
+          terminal: "acked",
+        },
+        delivery: {
+          attempted: 1,
+          acked: 1,
+          failed: 0,
+          outcome: "acked",
+          errorReply: "unattempted",
+        },
+        coordinator: {
+          mode: "card",
+          opened: true,
+          reason: "snapshot",
+        },
+      });
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("activity-only turn with provisioned cardRuntime emits fallback thinking/planning notices without locking coordinator mode='card'", async () => {
+    const h = new Harness();
+    await h.open(true);
+    const receipts: Array<Record<string, unknown>> = [];
+    vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
+      if (args[0] === "[codex-channel-octo] turn boundary" && typeof args[1] === "string") {
+        receipts.push(JSON.parse(args[1]) as Record<string, unknown>);
+      }
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await h.time.advance(10);
+      agentScript.events = [
+        { kind: "attempt_start", attempt: 0, reason: "initial", continues: null },
+        {
+          kind: "item_state",
+          attempt: 0,
+          itemId: "rsn-1",
+          seq: 0,
+          itemType: "reasoning",
+          phase: "started",
+          safe: reduceItem({ type: "reasoning", text: "THINKING_CANARY" }),
+        },
+        {
+          kind: "item_state",
+          attempt: 0,
+          itemId: "todo-1",
+          seq: 1,
+          itemType: "todo_list",
+          phase: "started",
+          safe: reduceItem({ type: "todo_list", items: [] }),
+        },
+        { kind: "message", attempt: 0, itemId: "answer", seq: 2, text: "Activity answer", phase: "final_answer" },
+        { kind: "attempt_end", attempt: 0, terminal: "completed" },
+      ];
+      agentScript.throwAfter = false;
+      h.stub(() => ok("702"));
+
+      await h.turn(1);
+
+      expect(h.notices).toEqual(["🔧 Thinking…", "🔧 Planning…"]);
+      expect(h.sends).toEqual(["Activity answer"]);
+      expect(h.cards().sends).toBe(0);
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]).toMatchObject({
+        admission: "coordinator_available",
+        itemStates: true,
+        policy: "unattempted",
+        firstReservation: {
+          state: "unattempted",
+          atMs: null,
+          reason: "no_displayable_row",
+        },
+        card: {
+          initial: "unattempted",
+          terminal: "unattempted",
+        },
+        coordinator: {
+          mode: "undecided",
+          opened: false,
+          reason: "snapshot",
+        },
+        delivery: {
+          attempted: 1,
+          acked: 1,
+          failed: 0,
+          outcome: "acked",
+          errorReply: "unattempted",
+        },
+      });
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("reasoning followed by command_execution emits thinking notice before card open and suppresses command notice once card opens", async () => {
+    const h = new Harness();
+    await h.open(true);
+    const receipts: Array<Record<string, unknown>> = [];
+    vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
+      if (args[0] === "[codex-channel-octo] turn boundary" && typeof args[1] === "string") {
+        receipts.push(JSON.parse(args[1]) as Record<string, unknown>);
+      }
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await h.time.advance(10);
+      agentScript.events = [
+        { kind: "attempt_start", attempt: 0, reason: "initial", continues: null },
+        {
+          kind: "item_state",
+          attempt: 0,
+          itemId: "rsn-1",
+          seq: 0,
+          itemType: "reasoning",
+          phase: "started",
+          safe: reduceItem({ type: "reasoning", text: "THINKING_CANARY" }),
+        },
+        { kind: "work", attempt: 0, itemId: "cmd-1", seq: 1, itemType: "command_execution" },
+        {
+          kind: "item_state",
+          attempt: 0,
+          itemId: "cmd-1",
+          seq: 1,
+          itemType: "command_execution",
+          phase: "started",
+          status: "in_progress",
+          safe: reduceItem({ type: "command_execution", command: "git status", status: "in_progress" }),
+        },
+        { kind: "__advance", ms: 900 },
+        {
+          kind: "item_state",
+          attempt: 0,
+          itemId: "cmd-1",
+          seq: 1,
+          itemType: "command_execution",
+          phase: "completed",
+          status: "completed",
+          safe: reduceItem({ type: "command_execution", command: "git status", status: "completed", exit_code: 0 }),
+        },
+        { kind: "message", attempt: 0, itemId: "answer", seq: 2, text: "Command answer", phase: "final_answer" },
+        { kind: "attempt_end", attempt: 0, terminal: "completed" },
+      ];
+      agentScript.throwAfter = false;
+      h.stub(() => ok("703"));
+
+      await h.turn(1);
+
+      expect(h.notices).toEqual(["🔧 Thinking…"]);
+      expect(h.sends).toEqual(["Command answer"]);
+      expect(h.cards()).toEqual({
+        sends: 1,
+        terminal: { state: "completed", label: "Completed" },
+      });
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]).toMatchObject({
+        admission: "coordinator_available",
+        itemStates: true,
+        policy: "allowed",
+        firstReservation: {
+          state: "reserved",
+          atMs: expect.any(Number),
+          reason: "none",
+        },
+        card: {
+          initial: "acked",
+          terminal: "acked",
+        },
         coordinator: {
           mode: "card",
           opened: true,
