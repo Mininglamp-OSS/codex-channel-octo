@@ -247,13 +247,24 @@ if (!isAbsolute(cwdLex) || !isAbsolute(codexHomeLex)) {
 const cwdReal = realpathSync(cwdLex);
 const codexHomeReal = realpathSync(codexHomeLex);
 const bwrapArgs = ['--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--unshare-ipc', '--die-with-parent'];
-for (const denied of ${JSON.stringify(deniedPaths)}) {
+const sortedDenied = [...${JSON.stringify(deniedPaths)}].sort((a, b) => a.length - b.length);
+const deniedDirs = [];
+for (const denied of sortedDenied) {
   if (!existsSync(denied)) continue;
   const st = lstatSync(denied);
-  if (st.isDirectory()) bwrapArgs.push('--tmpfs', denied);
+  if (st.isDirectory()) { bwrapArgs.push('--tmpfs', denied); deniedDirs.push(denied); }
   else if (st.isFile()) bwrapArgs.push('--ro-bind', '/dev/null', denied);
 }
+bwrapArgs.push('--ro-bind', ${JSON.stringify(targetRealpath)}, ${JSON.stringify(targetRealpath)});
+if (${JSON.stringify(options.targetExecutable)} !== ${JSON.stringify(targetRealpath)}) {
+  bwrapArgs.push('--ro-bind', ${JSON.stringify(options.targetExecutable)}, ${JSON.stringify(options.targetExecutable)});
+}
 bwrapArgs.push('--bind', cwdReal, cwdReal, '--bind', codexHomeReal, codexHomeReal);
+for (const dir of [...deniedDirs].reverse()) {
+  if (dir !== cwdReal && dir !== codexHomeReal && dir !== cwdLex && dir !== codexHomeLex) {
+    bwrapArgs.push('--remount-ro', dir);
+  }
+}
 bwrapArgs.push('--', ${JSON.stringify(options.targetExecutable)}, ...${JSON.stringify(targetArgs)}, ...process.argv.slice(2));
 const child = spawn(${JSON.stringify(bwrap)}, bwrapArgs, { stdio: 'inherit', env: process.env });
 for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {

@@ -115,7 +115,7 @@ function bootFixture(mode = 'normal'): CoordinatorBoot {
     contract_revision: 2, semantics_version: '1' });
   const releasePath = join(root, 'release.json'); writeFileSync(releasePath, release, { mode: 0o600 });
   const source = `#!${process.execPath}
-import tls from 'node:tls';import {readFileSync,writeFileSync,openSync,fsyncSync,closeSync} from 'node:fs';
+import tls from 'node:tls';import {readFileSync,writeFileSync,openSync,fsyncSync,closeSync,renameSync} from 'node:fs';
 const cfg=JSON.parse(readFileSync(process.argv[process.argv.indexOf('--permission-config')+1]));
 const mode=${JSON.stringify(mode)};const id='a'.repeat(32);
 if(mode==='exit')process.exit(42);
@@ -126,7 +126,7 @@ const f=JSON.parse(buffer.subarray(4,buffer.readUInt32BE()+4));buffer=Buffer.all
 const payload=f.method==='hello'?{session_id:f.session_id,selected_binding:2,selected_metadata:2,selected_identity:2,coordinator_incarnation:mode==='wrong-id'?'b'.repeat(32):id}:{fixture:true};
 const b=Buffer.from(canonical({control_version:1,request_id:f.request_id,status:'ok',payload}));const n=Buffer.alloc(4);n.writeUInt32BE(b.length);socket.write(Buffer.concat([n,b]));});});
 server.listen(Number(cfg.control_address.split(':').pop()),'127.0.0.1',()=>{writeFileSync(${JSON.stringify(join(root, 'observed.json'))},JSON.stringify({env:process.env,cfg,port:server.address().port}));
-const path=cfg.ready_path;const fd=openSync(path,'wx',0o600);writeFileSync(fd,canonical({control_version:1,coordinator_incarnation:id}));fsyncSync(fd);closeSync(fd);});
+const path=cfg.ready_path;const tmp=path+'.tmp';const fd=openSync(tmp,'wx',0o600);writeFileSync(fd,canonical({control_version:1,coordinator_incarnation:id}));fsyncSync(fd);closeSync(fd);renameSync(tmp,path);});
 `;
   writeFileSync(executable, source, { mode: 0o700 });
   return { root, executable, executableSha256: createHash('sha256').update(source).digest('hex'),
@@ -311,7 +311,7 @@ describe('private bootstrap and relay selection', () => {
     const coordExec = join(root, 'full-coordinator');
     const coordSource = `#!${process.execPath}
 import tls from 'node:tls';
-import { readFileSync, openSync, writeFileSync, fsyncSync, closeSync } from 'node:fs';
+import { readFileSync, openSync, writeFileSync, fsyncSync, closeSync, renameSync } from 'node:fs';
 const cfg = JSON.parse(readFileSync(process.argv[process.argv.indexOf('--permission-config') + 1], 'utf8'));
 const id = 'a'.repeat(32);
 const canonical = v => v === null || typeof v !== 'object' ? JSON.stringify(v) : Array.isArray(v) ? '[' + v.map(canonical).join(',') + ']' : '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}';
@@ -347,10 +347,12 @@ const server = tls.createServer({
   });
 });
 server.listen(Number(cfg.control_address.split(':').pop()), '127.0.0.1', () => {
-  const fd = openSync(cfg.ready_path, 'wx', 0o600);
+  const tmpPath = cfg.ready_path + '.tmp';
+  const fd = openSync(tmpPath, 'wx', 0o600);
   writeFileSync(fd, canonical({ control_version: 1, coordinator_incarnation: id }));
   fsyncSync(fd);
   closeSync(fd);
+  renameSync(tmpPath, cfg.ready_path);
 });
 `;
     writeFileSync(coordExec, coordSource, { mode: 0o700 });
