@@ -438,6 +438,15 @@ export async function handleMessage(
         console.info('[codex-channel-octo] turn boundary', JSON.stringify(receipt));
       } });
     } catch { /* Observation cannot affect the handler, even at construction. */ }
+    let turnSettled = false;
+    const settleTurn = (): void => {
+      if (turnSettled) return;
+      turnSettled = true;
+      observation?.settling();
+      cardTurn?.settle();
+      const coordinator = cardTurn;
+      observation?.finish(coordinator ? () => coordinator.inspect() : undefined);
+    };
 
     try {
       // --- Session ---
@@ -884,9 +893,9 @@ export async function handleMessage(
       // by onSessionId so the bounded continuation below can resume it.
       let activeResume = resume;
       const originalOnSessionId = sessionOpts.onSessionId;
-      sessionOpts.onSessionId = (id: string, prompt: string): void => {
+      sessionOpts.onSessionId = (id: string, prompt: string, toolsetDigest?: string | null): void => {
         activeResume = id;
-        originalOnSessionId?.(id, prompt);
+        originalOnSessionId?.(id, prompt, toolsetDigest);
       };
 
       // GROUP.md: inject operator-provided per-group instructions (from
@@ -958,7 +967,11 @@ export async function handleMessage(
             continuationUsed = true;
             console.warn('[codex-channel-octo] stream interrupted; continuing the existing thread once');
             prompt = continuationPrompt;
-            options = { ...options, resume: activeResume };
+            options = {
+              ...options,
+              resume: activeResume,
+              ...(config.sdk.runtime === 'app-server' ? { threadToolsetDigest: turnStore.getThreadToolsetDigest(sessionKey) } : {}),
+            };
           }
         }
       }
@@ -1027,6 +1040,7 @@ export async function handleMessage(
         cardTurn.signal(!turn.signal.aborted ? { t: 'handler_error', category: classifyCardError(err) }
           : turn.interruption === 'timed_out' || performance.now() >= turn.deadline ? { t: 'dispatch_timeout' } : { t: 'shutdown' });
       }
+      settleTurn();
       if (turn.signal.aborted) return; // Router owns timeout/shutdown feedback.
       turn.interruption = 'failed';
       turn.assertPublishable();
@@ -1060,10 +1074,7 @@ export async function handleMessage(
         /* swallow — don't crash on reply failure */
       }
     } finally {
-      observation?.settling();
-      cardTurn?.settle();
-      const coordinator = cardTurn;
-      observation?.finish(coordinator ? () => coordinator.inspect() : undefined);
+      settleTurn();
     }
   });
 

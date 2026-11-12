@@ -14,6 +14,7 @@ vi.mock('../octo/socket.js', () => ({ WKSocket: vi.fn() }));
 
 import { handleMessage } from '../index.js';
 import { queryAgentEvents, type QueryAgentOptions, type TurnBoundaryReceipt } from '../agent-bridge.js';
+import { AgentFailure, TurnFailure } from '../agent-failure.js';
 import { createAdapter } from '../db-adapter.js';
 import { SessionStore } from '../session-store.js';
 import { SessionRouter } from '../session-router.js';
@@ -75,6 +76,118 @@ describe('handler boundary receipt wiring', () => {
       expect(store.buildHistoryPrefix('SESSION_CANARY', 40)).toContain('FINAL_CANARY');
       expect(log.mock.calls.filter(args => args[0] === '[codex-channel-octo] turn boundary')).toHaveLength(1);
       expect(coordinator.settle).toHaveBeenCalledTimes(available ? 1 : 0);
+    } finally { store.close(); }
+  });
+
+  it('settles cardTurn and emits turn boundary receipt before logging turn failed or awaiting error sendMessage', async () => {
+    vi.mocked(sendTyping).mockResolvedValue(undefined);
+    vi.mocked(sendReadReceipt).mockResolvedValue(undefined);
+    vi.mocked(getChannelMessages).mockResolvedValue([]);
+    let releaseSend!: () => void;
+    const sendGate = new Promise<void>(resolve => { releaseSend = resolve; });
+    vi.mocked(sendMessage).mockImplementation(async () => {
+      await sendGate;
+      return { message_id: '123', message_seq: 1, client_msg_no: 'safe' };
+    });
+    const config = { botToken: 'CREDENTIAL_CANARY', apiUrl: 'https://example.test', baseDir: tmpdir(), cwd: tmpdir(),
+      dataDir: tmpdir(), sdk: { toolProgress: true },
+      cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' },
+      rateLimit: { maxPerMinute: 100 }, context: { maxContextChars: 6000, historyLimit: 40 },
+      maxResponseChars: 524_288, dispatchTimeoutMs: 300_000, botBlocklist: [] } as Config;
+    const adapter = createAdapter(':memory:');
+    const store = new SessionStore(adapter); store.init();
+    const router = new SessionRouter(config, 'bot');
+    const group = new GroupContext(adapter, 6000);
+    const events: string[] = [];
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation((...args: unknown[]) => {
+      if (args[0] === '[codex-channel-octo] turn boundary') events.push('turn_boundary');
+    });
+    let settledAtTurnFailed = false;
+    let boundaryCountAtTurnFailed = 0;
+    const coordinator = {
+      observe: vi.fn(),
+      signal: vi.fn(),
+      settle: vi.fn(() => { events.push('card_settle'); }),
+      claimsNotices: () => false,
+      inspect: () => ({ mode: 'undecided', opened: false, settled: true }),
+    } as unknown as AutomaticTurn;
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      if (args[0] === '[codex-channel-octo] turn failed') {
+        events.push('turn_failed');
+        settledAtTurnFailed = vi.mocked(coordinator.settle).mock.calls.length === 1;
+        boundaryCountAtTurnFailed = infoSpy.mock.calls.filter(c => c[0] === '[codex-channel-octo] turn boundary').length;
+      }
+    });
+    const runtime = { beginTurn: vi.fn(() => ({ coordinator })) } as unknown as CardRuntime;
+    const snap = { stage: 'inference' as const, category: 'unknown' as const, source: 'sdk_event' as const, evidence: 'unknown' as const };
+    vi.mocked(queryAgentEvents).mockImplementation(async function* () {
+      yield { kind: 'attempt_start', attempt: 0, reason: 'initial', continues: null };
+      throw new TurnFailure({
+        diagnosticId: '00000000-0000-4000-8000-000000000001',
+        attempts: 1,
+        decision: 'blocked_uncertain',
+        recoveryStopReason: 'disabled',
+        executionRisk: 'unknown',
+        first: snap,
+        final: snap,
+      });
+    });
+    try {
+      const pending = handleMessage({ message_id: 'm-err', message_seq: 1, timestamp: 1, from_uid: 'u1', channel_id: 'u1',
+        channel_type: 1, payload: { type: 1, content: 'fail turn' } }, config, store, router, group,
+      new StreamRelay(), 'bot', () => '', runtime);
+      await vi.waitFor(() => expect(events).toContain('turn_failed'));
+      expect(settledAtTurnFailed).toBe(true);
+      expect(boundaryCountAtTurnFailed).toBe(1);
+      expect(events.slice(0, 3)).toEqual(['card_settle', 'turn_boundary', 'turn_failed']);
+      releaseSend();
+      await pending;
+      expect(coordinator.settle).toHaveBeenCalledTimes(1);
+      expect(infoSpy.mock.calls.filter(c => c[0] === '[codex-channel-octo] turn boundary')).toHaveLength(1);
+    } finally {
+      releaseSend();
+      store.close();
+    }
+  });
+
+  it('preserves app-server toolsetDigest through sessionOpts.onSessionId and mid-stream continuation', async () => {
+    vi.mocked(sendTyping).mockResolvedValue(undefined);
+    vi.mocked(sendReadReceipt).mockResolvedValue(undefined);
+    vi.mocked(getChannelMessages).mockResolvedValue([]);
+    vi.mocked(sendMessage).mockResolvedValue({ message_id: '123', message_seq: 1, client_msg_no: 'safe' });
+    const config = { botToken: 'CREDENTIAL_CANARY', apiUrl: 'https://example.test', baseDir: tmpdir(), cwd: tmpdir(),
+      dataDir: tmpdir(), sdk: { runtime: 'app-server', toolProgress: true },
+      cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' },
+      rateLimit: { maxPerMinute: 100 }, context: { maxContextChars: 6000, historyLimit: 40 },
+      maxResponseChars: 524_288, dispatchTimeoutMs: 300_000, botBlocklist: [] } as Config;
+    const adapter = createAdapter(':memory:');
+    const store = new SessionStore(adapter); store.init();
+    const router = new SessionRouter(config, 'bot');
+    const group = new GroupContext(adapter, 6000);
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const seenOpts: QueryAgentOptions[] = [];
+    vi.mocked(queryAgentEvents).mockImplementation(async function* (_prompt, _config, _ctx, _legacy, opts) {
+      seenOpts.push({ ...opts });
+      if (seenOpts.length === 1) {
+        opts?.onSessionId?.('thr-app-1', 'prompt-1', 'v1:toolset-digest');
+        yield { kind: 'attempt_start', attempt: 0, reason: 'initial', continues: null };
+        throw new AgentFailure({ stage: 'inference', category: 'stream_interrupted', source: 'local', evidence: 'recognized_text' });
+      }
+      yield { kind: 'attempt_start', attempt: 0, reason: 'initial', continues: null };
+      yield { kind: 'message', attempt: 0, itemId: 'm2', seq: 0, text: 'RESUMED_OK', phase: 'final_answer' };
+      yield { kind: 'attempt_end', attempt: 0, terminal: 'completed' };
+    });
+    try {
+      await handleMessage({ message_id: 'm-cont', message_seq: 1, timestamp: 1, from_uid: 'u-app', channel_id: 'u-app',
+        channel_type: 1, payload: { type: 1, content: 'start app-server turn' } }, config, store, router, group,
+      new StreamRelay(), 'bot', () => '');
+      expect(store.getSdkSessionId('u-app')).toBe('thr-app-1');
+      expect(store.getThreadToolsetDigest('u-app')).toBe('v1:toolset-digest');
+      expect(seenOpts).toHaveLength(2);
+      expect(seenOpts[1].resume).toBe('thr-app-1');
+      expect(seenOpts[1].threadToolsetDigest).toBe('v1:toolset-digest');
     } finally { store.close(); }
   });
 });

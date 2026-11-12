@@ -1061,3 +1061,124 @@ describe("T1: derived facts offer an explicit op only when every other gate hold
     }
   });
 });
+
+describe("Fifth-window causal reproduction and full target chain after 120s post-startup delay", () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  it("emits turn boundary receipt and settles cardTurn before logging turn failed when stream fails before command_execution after 120s idle", async () => {
+    const h = new Harness();
+    await h.open(true);
+    const order: string[] = [];
+    const receipts: Array<Record<string, unknown>> = [];
+    let releaseErrorReply: (() => void) | undefined;
+    const errorReplyGate = new Promise<void>((resolve) => { releaseErrorReply = resolve; });
+
+    vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
+      if (args[0] === "[codex-channel-octo] turn boundary" && typeof args[1] === "string") {
+        order.push("turn_boundary");
+        receipts.push(JSON.parse(args[1]) as Record<string, unknown>);
+      }
+    });
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      if (args[0] === "[codex-channel-octo] turn failed") {
+        order.push("turn_failed");
+      }
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await h.time.advance(120_000);
+      agentScript.events = [
+        { kind: "attempt_start", attempt: 0, reason: "initial", continues: null },
+        { kind: "__advance", ms: 1_750 },
+      ];
+      agentScript.throwAfter = true;
+      h.stub(async () => {
+        order.push("error_reply_send_start");
+        await errorReplyGate;
+        order.push("error_reply_send_done");
+        return ok("901");
+      });
+
+      const turnPromise = h.turn(1);
+      await vi.waitFor(() => expect(order).toContain("turn_failed"));
+
+      // Even before the error sendMessage HTTP call resolves (where the Fifth-Window watchdog sent SIGTERM),
+      // the turn boundary receipt is already emitted with factual admission and unopened coordinator state.
+      expect(order.slice(0, 2)).toEqual(["turn_boundary", "turn_failed"]);
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]).toMatchObject({
+        admission: "coordinator_available",
+        itemStates: true,
+        command: {
+          presence: "UNOBSERVED",
+          sdk: { started: 0, completed: 0 },
+          projectedAppServer: { started: 0, completed: 0 },
+        },
+        coordinator: {
+          mode: "undecided",
+          opened: false,
+          reason: "snapshot",
+        },
+      });
+
+      releaseErrorReply?.();
+      await turnPromise;
+      expect(receipts).toHaveLength(1);
+      expect(h.cards().sends).toBe(0);
+    } finally {
+      releaseErrorReply?.();
+      await h.close();
+    }
+  });
+
+  it("completes actual-work -> automatic progress-card -> separate ordinary final -> turn boundary receipt -> stop/cleanup after 120s idle", async () => {
+    const h = new Harness();
+    await h.open(true);
+    const receipts: Array<Record<string, unknown>> = [];
+    vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
+      if (args[0] === "[codex-channel-octo] turn boundary" && typeof args[1] === "string") {
+        receipts.push(JSON.parse(args[1]) as Record<string, unknown>);
+      }
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await h.time.advance(120_000);
+      const baseEvents = answerEvents("Final separate plain reply", true);
+      agentScript.events = [
+        baseEvents[0],
+        { kind: "__advance", ms: 10 },
+        ...baseEvents.slice(1),
+      ];
+      agentScript.throwAfter = false;
+      h.stub(() => ok("701"));
+
+      await h.turn(1);
+
+      expect(h.sends).toEqual(["Final separate plain reply"]);
+      expect(h.notices).toEqual([]);
+      expect(h.cards()).toEqual({
+        sends: 1,
+        terminal: { state: "completed", label: "Completed" },
+      });
+      expect(h.rows()).toEqual([
+        { kind: "automatic", state: "done", reason: "completed", terminal: 1 },
+      ]);
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]).toMatchObject({
+        admission: "coordinator_available",
+        itemStates: true,
+        coordinator: {
+          mode: "card",
+          opened: true,
+          reason: "snapshot",
+        },
+      });
+    } finally {
+      await h.close();
+    }
+  });
+});

@@ -206,7 +206,7 @@ describe("dispatch timeout with an uncertain execution (late answer)", () => {
     const off = await run(false, LATE_ANSWER);
     const on = await run(true, LATE_ANSWER);
     expect(off.sends).toHaveLength(2);
-    expect(off.sends[0]).toMatch(/^⚠️ 任务超时，正在停止原执行。/);
+    expect(off.sends[0]).toMatch(/^执行失败：任务超时[\s\S]*后续处理：正在停止原执行，新请求将等待停止完成。/);
     expect(on.sends).toEqual(off.sends);
     expect(off.notices).toEqual(["🔧 Running command…"]);
     expect(on.notices).toEqual([]);
@@ -260,7 +260,7 @@ describe("dispatch timeout before the model starts", () => {
     const off = await run(false, NOT_STARTED);
     const on = await run(true, NOT_STARTED);
     expect(off.sends).toHaveLength(1);
-    expect(off.sends[0]).toMatch(/^⚠️ 任务超时，模型执行未启动；/);
+    expect(off.sends[0]).toMatch(/^执行失败：任务超时[\s\S]*执行状态：本次模型执行未启动。[\s\S]*后续处理：下一条消息继续原线程。/);
     expect(on.sends).toEqual(off.sends);
     expect(off.quarantined).toBe(false);
     expect(on.quarantined).toBe(false);
