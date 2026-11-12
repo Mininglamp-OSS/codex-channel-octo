@@ -132,6 +132,8 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
       deniedPaths: [root, coordinatorDir, hostDataDir],
       allowNetwork: false,
     });
+    const hostCaPath = join(coordinatorDir, 'relay-ca.pem');
+    writeFileSync(hostCaPath, '-----BEGIN CERTIFICATE-----\nU1lOVEhFVElDX0NB\n-----END CERTIFICATE-----\n', { mode: 0o600 });
     const launch = preparePrivateWorker({
       root,
       launcher: isolated.launcher,
@@ -140,13 +142,22 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
         transport: 'http',
         url: 'https://synthetic.invalid/mcp',
         handle: 'synthetic_turn_only',
-        caCert: '-----BEGIN CERTIFICATE-----\nU1lOVEhFVElDX0NB\n-----END CERTIFICATE-----\n',
+        tls: {
+          ca_file: hostCaPath,
+          cert_sha256: 'e'.repeat(64),
+          server_name: 'localhost',
+        },
       },
       instructions: 'ISOLATED_WORKER_INSTRUCTIONS',
     });
     expect(launch.relayCaPath).toBe(join(launch.codexHome, 'relay-ca.pem'));
     expect(launch.env.SSL_CERT_FILE).toBe(launch.relayCaPath);
     expect(launch.env.NODE_EXTRA_CA_CERTS).toBe(launch.relayCaPath);
+    expect(launch.relayTls).toEqual({
+      ca_file: launch.relayCaPath,
+      cert_sha256: 'e'.repeat(64),
+      server_name: 'localhost',
+    });
 
     const config: Config = {
       cwd: root, cwdBase: root, baseDir: root, dataDir: hostDataDir, botToken: 'SYNTHETIC_TOKEN',

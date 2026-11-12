@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 
 const source = process.argv[2];
 if (!source || !isAbsolute(source) || existsSync(join(source, '.git'))) throw new Error('Explicit task-local CLI source archive required');
-const revision = process.argv[3] ?? '27b387f1b767a6e0cc200b8e23d074ad3bd28cc1';
+const revision = process.argv[3] ?? 'd39072f8182a28ce2be5884151eb03f16cd205b2';
 const versions = {
   '14f9b53d3932c532d6424e8783bd94528e5f7fc6': {
     'internal/mcp/permission_relay.go': '864a57424f7076b157bbd596f88cce8f5d98245afdb546ea72ed706165d6519e',
@@ -23,6 +23,15 @@ const versions = {
     'internal/mcp/permission_relay.go': 'b7799d7d97fbfe579fa43ccde05612e0d313471ba4b07cd237b51bca7a08795a',
     'internal/mcp/permission_host.go': '794ef2eaaa17067af772660a4ee0cf64462086ed4c47bafd455f5f58c801bb3b',
     'docs/permission/contract-manifest-v5.json': 'd54a11eac89263c9a5ddd3279af03c750ccc1775d2832cbe647eab9d089b411a',
+    'docs/permission/catalog-package-v2/manifest.json': 'ecc56c2ab0a2c520ab7e5203d2abab06671daf90c28d69f88fe1de8d154109fc',
+    'docs/permission/source-slot-witness-v5.json.gz': '0c5da173bd0f53c64562a70a5c5feebc955ad111bbe84ed11f5588c08b4b9c0b',
+  },
+  'd39072f8182a28ce2be5884151eb03f16cd205b2': {
+    'internal/mcp/permission_relay.go': '1856c7c3bf92490fed33459fe4da3e2c9b6b9d7690a6fbb088f72acd285be7bb',
+    'internal/mcp/permission_host.go': 'b6cf97112fdaa79e86dfa2bd90439b0fbb60bb6dbda1597623e795271bfc055b',
+    'docs/permission/endpoint-abi-v2.json': '7f9556d0526cff30ef1c36d53d2457dbc4266b8912722717badebac796ad8909',
+    'docs/permission/cli-component-contract-v6.json': '8da203c9e6b650f5bc94d81080f4ed7281bd2cc36755ff0027f8e2e6b0b9fe9d',
+    'docs/permission/contract-manifest-v6.json': '7fbb9cece9dfa384181c2fc272cb6afc7f6667b32712aa2e71c8a1c04615301d',
     'docs/permission/catalog-package-v2/manifest.json': 'ecc56c2ab0a2c520ab7e5203d2abab06671daf90c28d69f88fe1de8d154109fc',
     'docs/permission/source-slot-witness-v5.json.gz': '0c5da173bd0f53c64562a70a5c5feebc955ad111bbe84ed11f5588c08b4b9c0b',
   },

@@ -163,8 +163,10 @@ describe('private bootstrap and relay selection', () => {
     await expect(startPermissionCoordinator(bootFixture('wrong-id'))).rejects.toThrow('negotiation');
   });
 
-  it('refuses changed executable, ordinary bearer tickets, different endpoints and added relay fields', () => {
+  it('refuses changed executable, ordinary bearer tickets, different endpoints and added relay fields, and validates TurnRelayTrust (ca_file, cert_sha256, server_name)', () => {
     const boot = bootFixture();
+    const caFile = join(root, 'cert.pem');
+    const certSha256 = boot.tls.peerCertificateSha256;
     const handle = (endpoint = 'https://synthetic.invalid/mcp', token = 'b'.repeat(64)) => Buffer.from(canonicalControl({ endpoint, token })).toString('base64url');
     const relay = { transport: 'stdio', executable: boot.executable, executableSha256: boot.executableSha256, handle: handle() };
     expect(checkedTurnRelay(relay, boot, 'stdio')).toEqual(relay);
@@ -172,6 +174,48 @@ describe('private bootstrap and relay selection', () => {
     const goTicket = JSON.stringify({ endpoint: htmlEndpoint, token: 'b'.repeat(64) }).replace('&', String.fromCharCode(92) + 'u0026');
     expect(checkedTurnRelay({ ...relay, handle: Buffer.from(goTicket).toString('base64url') },
       { ...boot, hostConfig: { ...boot.hostConfig, relay_url: htmlEndpoint } }, 'stdio').transport).toBe('stdio');
+
+    const trustTicket = JSON.stringify({
+      ca_file: caFile,
+      cert_sha256: certSha256,
+      endpoint: 'https://synthetic.invalid/mcp',
+      server_name: 'localhost',
+      token: 'b'.repeat(64),
+    });
+    const trustBoot = {
+      ...boot,
+      hostConfig: {
+        ...boot.hostConfig,
+        relay_ca: caFile,
+        relay_cert_sha256: certSha256,
+        relay_server_name: 'localhost',
+      },
+    };
+    const stdioWithTrust = {
+      transport: 'stdio',
+      executable: boot.executable,
+      executableSha256: boot.executableSha256,
+      handle: Buffer.from(trustTicket).toString('base64url'),
+      tls: { ca_file: caFile, cert_sha256: certSha256, server_name: 'localhost' },
+    };
+    expect(checkedTurnRelay(stdioWithTrust, trustBoot, 'stdio')).toEqual(stdioWithTrust);
+    expect(() => checkedTurnRelay({
+      ...stdioWithTrust,
+      tls: { ca_file: caFile, cert_sha256: 'f'.repeat(64), server_name: 'localhost' },
+    }, trustBoot, 'stdio')).toThrow();
+
+    const httpWithTrust = {
+      transport: 'http',
+      url: 'https://synthetic.invalid/mcp',
+      handle: 'b'.repeat(64),
+      tls: { ca_file: caFile, cert_sha256: certSha256, server_name: 'localhost' },
+    };
+    expect(checkedTurnRelay(httpWithTrust, trustBoot, 'http')).toEqual(httpWithTrust);
+    expect(() => checkedTurnRelay({
+      ...httpWithTrust,
+      tls: { ca_file: '/wrong/ca.pem', cert_sha256: certSha256, server_name: 'localhost' },
+    }, trustBoot, 'http')).toThrow();
+
     expect(() => checkedTurnRelay({ ...relay, handle: handle(undefined, 'bf_synthetic') }, boot, 'stdio')).toThrow();
     expect(() => checkedTurnRelay({ ...relay, handle: handle('https://different.invalid') }, boot, 'stdio')).toThrow();
     expect(() => checkedTurnRelay({ ...relay, credential: 'extra' }, boot, 'stdio')).toThrow();
@@ -337,7 +381,18 @@ const server = tls.createServer({
       else if (f.method === 'admit') payload = { capsule_id: '2'.repeat(32), turn_id: '3'.repeat(32), generation: '4'.repeat(32), scope_incarnation: '5'.repeat(32), context_epoch: '1' };
       else if (f.method === 'bind_context') payload = { context_generation: '4'.repeat(32) };
       else if (f.method === 'renew') payload = { lease_expires_at: new Date(Date.now() + 60000).toISOString() };
-      else if (f.method === 'open_relay') payload = { transport: 'http', url: 'https://localhost/mcp', handle: 'b'.repeat(64) };
+      else if (f.method === 'open_relay') payload = {
+        transport: 'http',
+        url: 'https://localhost/mcp',
+        handle: 'b'.repeat(64),
+        ...(f.payload?.include_tls_trust ? {
+          tls: {
+            ca_file: ${JSON.stringify(join(root, 'cert.pem'))},
+            cert_sha256: ${JSON.stringify(boot.tls.peerCertificateSha256)},
+            server_name: 'localhost',
+          },
+        } : {}),
+      };
       else if (f.method === 'close') payload = {};
       const b = Buffer.from(canonical({ control_version: 1, request_id: f.request_id, status: 'ok', payload }));
       const n = Buffer.alloc(4);

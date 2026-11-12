@@ -74,31 +74,32 @@ func TestXIN2795CurrentEndpointChunkAndRelayABI(t *testing.T) {
             w.Header().Set("Content-Type","application/json");w.WriteHeader(recorder.Code);_ = json.NewEncoder(w).Encode(envelope)
         })
         serverCert, clientCert, roots, peerHash := controlCertificates(t)
-        cfg := PermissionHostConfig{Version:1, Origin:f.backend.URL, BotUID:"bot", RecipientID:"endpoint-1", EndpointIncarnation:strings.Repeat("5",32), PeerSHA256:peerHash, RelayURL:"http://127.0.0.1", RelayExecutable:binary}
+        relayCaPemBytes := pem.EncodeToMemory(&pem.Block{Type:"CERTIFICATE",Bytes:serverCert.Certificate[1]})
+        relayCaPem := string(relayCaPemBytes)
+        relayCaPath := filepath.Join(t.TempDir(), "ca.pem")
+        if err := os.WriteFile(relayCaPath, relayCaPemBytes, 0o600); err != nil { t.Fatal(err) }
+        leafSha256 := sha256Sum(serverCert.Certificate[0])
+        rawRelay, err := net.Listen("tcp", "127.0.0.1:0")
+        if err != nil { t.Fatal(err) }
+        securedRelay := permission.PublicationTLSListener(rawRelay, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serverCert}})
+        relayUrl := "https://127.0.0.1:" + strconv.Itoa(rawRelay.Addr().(*net.TCPAddr).Port)
+        cfg := PermissionHostConfig{Version:1, Origin:f.backend.URL, BotUID:"bot", RecipientID:"endpoint-1", EndpointIncarnation:strings.Repeat("5",32), PeerSHA256:peerHash, RelayURL:relayUrl, RelayExecutable:binary, RelayCA:relayCaPath, RelayCertSHA256:leafSha256, RelayServerName:"localhost"}
         host, err := NewPermissionHost(cfg,f.coordinator,f.policies,f.reader,f.server); if err != nil { t.Fatal(err) }
-        relayCaPem := string(pem.EncodeToMemory(&pem.Block{Type:"CERTIFICATE",Bytes:serverCert.Certificate[1]}))
-        if relayTls {
-            rawRelay, err := net.Listen("tcp", "127.0.0.1:0")
-            if err != nil { t.Fatal(err) }
-            securedRelay := permission.PublicationTLSListener(rawRelay, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serverCert}})
-            relayServer := &http.Server{Handler: host}
-            go func() { _ = relayServer.Serve(securedRelay) }()
-            defer func() { _ = relayServer.Close(); _ = securedRelay.Close() }()
-            host.config.RelayURL = "https://localhost:" + strconv.Itoa(rawRelay.Addr().(*net.TCPAddr).Port)
-        } else {
-            relay := httptest.NewServer(host); defer relay.Close(); host.config.RelayURL = relay.URL
-        }
+        relayServer := &http.Server{Handler: host, ReadHeaderTimeout: 5 * time.Second}
+        go func() { _ = relayServer.Serve(securedRelay) }()
+        defer func() { _ = relayServer.Close(); _ = securedRelay.Close() }()
         listener, err := tls.Listen("tcp","127.0.0.1:0",&tls.Config{MinVersion:tls.VersionTLS13,Certificates:[]tls.Certificate{serverCert},ClientAuth:tls.RequireAndVerifyClientCert,ClientCAs:roots})
         if err != nil { t.Fatal(err) }; defer listener.Close()
         done := make(chan error,1)
         go func(){conn,err:=listener.Accept();if err!=nil{done<-err;return};done<-host.ServeControl(context.Background(),conn.(*tls.Conn))}()
         defer func(){listener.Close();select{case <-done:case <-time.After(5*time.Second):t.Error("control failed to drain")}}()
         dir:=secureTestDir(t)
-        workerRoot:=secureTestDir(t)
+        workerRoot:=t.TempDir()
+        if err := os.Chmod(workerRoot, 0o700); err != nil { t.Fatal(err) }
         private,err:=x509.MarshalPKCS8PrivateKey(clientCert.PrivateKey);if err!=nil{t.Fatal(err)}
         chain:=[]byte{};for _,raw:=range clientCert.Certificate{chain=append(chain,pem.EncodeToMemory(&pem.Block{Type:"CERTIFICATE",Bytes:raw})...)}
-        control:=map[string]any{"port":listener.Addr().(*net.TCPAddr).Port,"host":"127.0.0.1","servername":"localhost","ca":string(pem.EncodeToMemory(&pem.Block{Type:"CERTIFICATE",Bytes:serverCert.Certificate[1]})),"cert":string(chain),"key":string(pem.EncodeToMemory(&pem.Block{Type:"PRIVATE KEY",Bytes:private})),"endpointIncarnation":cfg.EndpointIncarnation,"coordinatorIncarnation":host.Incarnation(),"recipientId":cfg.RecipientID,"configuredOrigin":cfg.Origin,"peerCertificateSha256":sha256Sum(serverCert.Certificate[0]),"timeoutMs":10000}
-        payloadMap:=map[string]any{"control":control,"key":f.bundle.Key,"headers":headers,"transport":transport,"relayTls":relayTls,"relayCa":relayCaPem,"binary":binary,"binarySha256":binarySha256,"workerRoot":workerRoot}
+        control:=map[string]any{"port":listener.Addr().(*net.TCPAddr).Port,"host":"127.0.0.1","servername":"localhost","ca":string(pem.EncodeToMemory(&pem.Block{Type:"CERTIFICATE",Bytes:serverCert.Certificate[1]})),"cert":string(chain),"key":string(pem.EncodeToMemory(&pem.Block{Type:"PRIVATE KEY",Bytes:private})),"endpointIncarnation":cfg.EndpointIncarnation,"coordinatorIncarnation":host.Incarnation(),"recipientId":cfg.RecipientID,"configuredOrigin":cfg.Origin,"peerCertificateSha256":leafSha256,"timeoutMs":10000}
+        payloadMap:=map[string]any{"control":control,"key":f.bundle.Key,"headers":headers,"transport":transport,"relayTls":relayTls,"relayCa":relayCaPem,"relayCaPath":relayCaPath,"relayCertSha256":leafSha256,"relayServerName":"localhost","binary":binary,"binarySha256":binarySha256,"workerRoot":workerRoot}
         if catalogManifestPath != "" {
             payloadMap["catalogManifestPath"] = catalogManifestPath
             payloadMap["catalogVersion"] = catalogVersion

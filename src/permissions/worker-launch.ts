@@ -2,12 +2,26 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 
+export interface TurnRelayTrust {
+  readonly ca_file?: string;
+  readonly cert_sha256?: string;
+  readonly server_name?: string;
+}
+
 export type TurnRelay =
-  | { transport: 'stdio'; executable: string; executableSha256: string; handle: string }
+  | {
+      transport: 'stdio';
+      executable: string;
+      executableSha256: string;
+      handle: string;
+      tls?: Readonly<TurnRelayTrust>;
+      caCert?: Uint8Array | string;
+    }
   | {
       transport: 'http';
       url: string;
       handle: string;
+      tls?: Readonly<TurnRelayTrust>;
       caCert?: Uint8Array | string;
       caSha256?: string;
       peerSha256?: string;
@@ -34,6 +48,7 @@ export interface PrivateWorkerLaunch {
   readonly configOverrides: readonly string[];
   readonly verifiedResume?: Readonly<VerifiedWorkerResume>;
   readonly relayCaPath?: string;
+  readonly relayTls?: Readonly<TurnRelayTrust>;
 }
 
 export interface IsolatingWorkerLauncherOptions {
@@ -289,6 +304,83 @@ child.on('error', () => process.exit(78));
   throw new Error('OS sandbox launcher unavailable');
 }
 
+export function validRelayServerName(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 253) return false;
+  if (/[/:\r\n\t\\ ]/.test(value)) return false;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 33 || code > 126) return false;
+  }
+  return true;
+}
+
+function readRelayCaFile(caFile: string): Buffer {
+  if (!isAbsolute(caFile) || /[\r\n\0]/.test(caFile)) {
+    throw new Error('Turn relay CA file unavailable');
+  }
+  const stat = lstatSync(caFile);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > 256 * 1024) {
+    throw new Error('Turn relay CA file unavailable');
+  }
+  const bytes = readFileSync(caFile);
+  if (bytes.byteLength === 0 || bytes.byteLength > 256 * 1024 || !bytes.toString('utf8').includes('-----BEGIN CERTIFICATE-----')) {
+    throw new Error('Turn relay CA file unavailable');
+  }
+  return bytes;
+}
+
+function validateTurnRelayTrust(tls: TurnRelayTrust | undefined): {
+  trust?: Readonly<TurnRelayTrust>;
+  caBytes?: Buffer;
+} {
+  if (tls === undefined) return {};
+  if (!tls || typeof tls !== 'object' || Array.isArray(tls)) {
+    throw new Error('Turn relay trust unavailable');
+  }
+  const allowed = new Set(['ca_file', 'cert_sha256', 'server_name']);
+  for (const key of Object.keys(tls)) {
+    if (!allowed.has(key)) throw new Error('Turn relay trust unavailable');
+  }
+  let caBytes: Buffer | undefined;
+  const out: { ca_file?: string; cert_sha256?: string; server_name?: string } = {};
+  if (tls.ca_file !== undefined) {
+    if (typeof tls.ca_file !== 'string' || !tls.ca_file) throw new Error('Turn relay CA file unavailable');
+    caBytes = readRelayCaFile(tls.ca_file);
+    out.ca_file = tls.ca_file;
+  }
+  if (tls.cert_sha256 !== undefined) {
+    if (typeof tls.cert_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(tls.cert_sha256)) {
+      throw new Error('Turn relay certificate digest unavailable');
+    }
+    out.cert_sha256 = tls.cert_sha256;
+  }
+  if (tls.server_name !== undefined) {
+    if (!validRelayServerName(tls.server_name)) {
+      throw new Error('Turn relay server_name unavailable');
+    }
+    out.server_name = tls.server_name;
+  }
+  return { trust: Object.freeze(out), ...(caBytes ? { caBytes } : {}) };
+}
+
+function encodeGoRelayTicket(ticket: {
+  ca_file?: string;
+  cert_sha256?: string;
+  endpoint: string;
+  server_name?: string;
+  token: string;
+}): string {
+  const ordered: Record<string, string> = {};
+  if (ticket.ca_file) ordered.ca_file = ticket.ca_file;
+  if (ticket.cert_sha256) ordered.cert_sha256 = ticket.cert_sha256;
+  ordered.endpoint = ticket.endpoint;
+  if (ticket.server_name) ordered.server_name = ticket.server_name;
+  ordered.token = ticket.token;
+  const json = JSON.stringify(ordered)
+    .replace(/[<>&\u2028\u2029]/g, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return Buffer.from(json, 'utf8').toString('base64url');
+}
+
 /**
  * Host-owned launch preparation. The pinned launcher must implement the actual
  * OS/process/network/FD isolation profile; private directories or SDK flags are
@@ -314,10 +406,53 @@ export function preparePrivateWorker(options: {
     }
     provider = Object.freeze({ baseUrl: url.href, ...(options.provider.apiKey ? { apiKey: options.provider.apiKey } : {}) });
   }
-  let relayCaBytes: Buffer | undefined;
+  const validatedTls = validateTurnRelayTrust(options.relay.tls);
+  let relayCaBytes: Buffer | undefined = validatedTls.caBytes;
+  let parsedStdioTicket: {
+    endpoint: string;
+    token: string;
+    ca_file?: string;
+    cert_sha256?: string;
+    server_name?: string;
+  } | undefined;
+  if (options.relay.caCert !== undefined && relayCaBytes === undefined) {
+    relayCaBytes = typeof options.relay.caCert === 'string'
+      ? Buffer.from(options.relay.caCert, 'utf8')
+      : Buffer.from(options.relay.caCert);
+    if (relayCaBytes.byteLength === 0 || relayCaBytes.byteLength > 256 * 1024
+      || !relayCaBytes.toString('utf8').includes('-----BEGIN CERTIFICATE-----')) {
+      throw new Error('Turn relay CA bundle unavailable');
+    }
+  }
   let server: Record<string, unknown>;
   if (options.relay.transport === 'stdio') {
     pinnedExecutable(options.relay.executable, options.relay.executableSha256);
+    try {
+      const rawBytes = Buffer.from(options.relay.handle, 'base64url');
+      if (rawBytes.toString('base64url') === options.relay.handle) {
+        const decoded = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(rawBytes)) as Record<string, unknown>;
+        if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)
+          && typeof decoded.endpoint === 'string' && typeof decoded.token === 'string') {
+          const ticketTrust = validateTurnRelayTrust({
+            ...(typeof decoded.ca_file === 'string' ? { ca_file: decoded.ca_file } : {}),
+            ...(typeof decoded.cert_sha256 === 'string' ? { cert_sha256: decoded.cert_sha256 } : {}),
+            ...(typeof decoded.server_name === 'string' ? { server_name: decoded.server_name } : {}),
+          });
+          if (relayCaBytes === undefined && ticketTrust.caBytes) {
+            relayCaBytes = ticketTrust.caBytes;
+          }
+          parsedStdioTicket = {
+            endpoint: decoded.endpoint,
+            token: decoded.token,
+            ...(ticketTrust.trust?.ca_file ? { ca_file: ticketTrust.trust.ca_file } : {}),
+            ...(ticketTrust.trust?.cert_sha256 ? { cert_sha256: ticketTrust.trust.cert_sha256 } : {}),
+            ...(ticketTrust.trust?.server_name ? { server_name: ticketTrust.trust.server_name } : {}),
+          };
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('Turn relay ')) throw err;
+    }
     server = { command: options.relay.executable, args: ['--turn-relay', options.relay.handle], env: {} };
   } else {
     const url = new URL(options.relay.url);
@@ -327,15 +462,6 @@ export function preparePrivateWorker(options: {
     }
     if (options.relay.peerSha256 !== undefined && !/^[0-9a-f]{64}$/.test(options.relay.peerSha256)) {
       throw new Error('Turn relay peer digest unavailable');
-    }
-    if (options.relay.caCert !== undefined) {
-      relayCaBytes = typeof options.relay.caCert === 'string'
-        ? Buffer.from(options.relay.caCert, 'utf8')
-        : Buffer.from(options.relay.caCert);
-      if (relayCaBytes.byteLength === 0 || relayCaBytes.byteLength > 65536
-        || !relayCaBytes.toString('utf8').includes('-----BEGIN CERTIFICATE-----')) {
-        throw new Error('Turn relay CA bundle unavailable');
-      }
     }
     server = { url: url.href, http_headers: { Authorization: `Bearer ${options.relay.handle}` } };
   }
@@ -364,6 +490,35 @@ export function preparePrivateWorker(options: {
       server = { ...server, env: { ...(server.env as Record<string, string>), SSL_CERT_FILE: relayCaPath, NODE_EXTRA_CA_CERTS: relayCaPath } };
     }
   }
+  const certSha256 = validatedTls.trust?.cert_sha256
+    ?? parsedStdioTicket?.cert_sha256
+    ?? (options.relay.transport === 'http' ? options.relay.peerSha256 : undefined);
+  const serverName = validatedTls.trust?.server_name ?? parsedStdioTicket?.server_name;
+  if (options.relay.transport === 'stdio' && parsedStdioTicket && (relayCaPath || certSha256 || serverName)) {
+    const withStagedCa = encodeGoRelayTicket({
+      ...(relayCaPath ? { ca_file: relayCaPath } : {}),
+      ...(certSha256 ? { cert_sha256: certSha256 } : {}),
+      endpoint: parsedStdioTicket.endpoint,
+      ...(serverName ? { server_name: serverName } : {}),
+      token: parsedStdioTicket.token,
+    });
+    const effectiveHandle = withStagedCa.length <= 512
+      ? withStagedCa
+      : encodeGoRelayTicket({
+          ...(certSha256 ? { cert_sha256: certSha256 } : {}),
+          endpoint: parsedStdioTicket.endpoint,
+          ...(serverName ? { server_name: serverName } : {}),
+          token: parsedStdioTicket.token,
+        });
+    server = { ...server, args: ['--turn-relay', effectiveHandle] };
+  }
+  const relayTls: Readonly<TurnRelayTrust> | undefined = (relayCaPath || validatedTls.trust?.ca_file || certSha256 || serverName)
+    ? Object.freeze({
+        ...((relayCaPath ?? validatedTls.trust?.ca_file) ? { ca_file: relayCaPath ?? validatedTls.trust?.ca_file } : {}),
+        ...(certSha256 ? { cert_sha256: certSha256 } : {}),
+        ...(serverName ? { server_name: serverName } : {}),
+      })
+    : undefined;
   // Explicit clean home + working tree, rather than assuming an empty table
   // override erases an inherited server. Native precedence is separately tested.
   const configOverrides = Object.freeze([
@@ -378,6 +533,7 @@ export function preparePrivateWorker(options: {
     ...(provider ? { provider } : {}),
     ...(verifiedResume ? { verifiedResume } : {}),
     ...(relayCaPath ? { relayCaPath } : {}),
+    ...(relayTls ? { relayTls } : {}),
     env: Object.freeze(envRecord),
     configOverrides,
   });

@@ -1,14 +1,14 @@
 import { randomBytes, createHash } from 'node:crypto';
 import tls, { type TLSSocket } from 'node:tls';
 
-export type ControlMethod = 'register_ingress' | 'admit' | 'bind_context' | 'open_relay' | 'renew' | 'close' | 'checkpoint';
+export type ControlMethod = 'register_ingress' | 'admit' | 'resolve_contributors' | 'bind_context' | 'open_relay' | 'renew' | 'close' | 'checkpoint';
 export type RefusalCategory = 'context_untrusted' | 'policy_unavailable' | 'invocation_denied' | 'capability_denied';
 export interface RefusalRecord { version: 1; category: RefusalCategory; correlation: string }
 const CATEGORIES: readonly string[] = ['context_untrusted', 'policy_unavailable', 'invocation_denied', 'capability_denied'];
 const REASONS = ['authority_unavailable', 'disclosure_unavailable', 'receipt_unavailable', 'parent_unavailable',
   'predicate_unsupported', 'mirror_lag', 'authority_conflict', 'expired_reference', 'budget_exhausted'];
 const HEX32 = /^[0-9a-f]{32}$/;
-const METHODS: readonly string[] = ['register_ingress', 'admit', 'bind_context', 'open_relay', 'renew', 'close', 'checkpoint'];
+const METHODS: readonly string[] = ['register_ingress', 'admit', 'resolve_contributors', 'bind_context', 'open_relay', 'renew', 'close', 'checkpoint'];
 const LIMIT = 64 * 1024;
 
 export class PermissionRefusal extends Error {

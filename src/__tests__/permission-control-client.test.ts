@@ -63,15 +63,15 @@ function hello(frame: Record<string, unknown>) {
 }
 
 describe('private control client over actual mutually authenticated TLS', () => {
-  it('negotiates first and carries all seven non-Hello methods on one pinned session', async () => {
+  it('negotiates first and carries all eight non-Hello methods on one pinned session', async () => {
     const state = await serve(frame => frame.method === 'hello' ? hello(frame)
       : { control_version: 1, request_id: frame.request_id, status: 'ok', payload: { fixture: frame.method } });
     const client = await PermissionControlClient.connect(state.options); clients.push(client);
-    const methods: ControlMethod[] = ['register_ingress', 'admit', 'bind_context', 'open_relay', 'renew', 'checkpoint', 'close'];
+    const methods: ControlMethod[] = ['register_ingress', 'admit', 'resolve_contributors', 'bind_context', 'open_relay', 'renew', 'checkpoint', 'close'];
     for (const method of methods) expect(await client.call(method, {})).toEqual({ fixture: method });
     expect(state.requests.map(frame => frame.method)).toEqual(['hello', ...methods]);
     expect(new Set(state.requests.map(frame => frame.session_id)).size).toBe(1);
-    expect(new Set(state.requests.map(frame => frame.request_id)).size).toBe(8);
+    expect(new Set(state.requests.map(frame => frame.request_id)).size).toBe(9);
     const payload = state.requests[0].payload as Record<string, unknown>;
     expect(payload).toEqual({ versions: [2], metadata_versions: [2], identity_versions: [2],
       configured_origin: 'https://synthetic.invalid', endpoint_incarnation: 'b'.repeat(32), recipient_id: 'synthetic:relay' });

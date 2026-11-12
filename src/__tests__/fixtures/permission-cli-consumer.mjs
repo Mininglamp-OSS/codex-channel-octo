@@ -34,27 +34,85 @@ control.call = async (method, payload) => {
   catch (cause) { throw new Error(`Synthetic CLI consumer stopped at ${method}`, { cause }); }
 };
 try {
-  let ingress;
-  for (const [i, header] of fixture.headers.entries()) {
-    const observed = await control.call('register_ingress', { key: fixture.key, delivery_reference: `delivery_${i}`,
-      stream: header.delivery, payload_sha256: header.payload_sha256 });
-    if (i === 0) ingress = observed;
-  }
+  // Register only the invoking delivery_0 via register_ingress; resolve 253 unseen
+  // contributor references via resolve_contributors (>32 batching) and 1 unseen
+  // contributor reference via bind_context contributor_references, leaving delivery_255
+  // for Turn 2 same-generation reuse verification.
+  const ingress = await control.call('register_ingress', {
+    key: fixture.key,
+    delivery_reference: 'delivery_0',
+    stream: fixture.headers[0].delivery,
+    payload_sha256: fixture.headers[0].payload_sha256,
+  });
   const context_id = randomBytes(16).toString('hex');
   const admitted = await control.call('admit', { ingress_id: ingress.ingress_id, proposed_context_id: context_id });
-  // Each complete Header has already been resolved by this actual CLI host;
-  // no Header/delivery token alias or unseen-history bridge is invented.
-  const core = { context_id, context_generation: admitted.generation, originals: fixture.headers };
+  assert.match(String(admitted.scope_incarnation), /^[0-9a-f]{32}$/);
+  assert.match(String(admitted.context_epoch), /^(0|[1-9][0-9]{0,19})$/);
+  const resolveRefs = Array.from({ length: 253 }, (_, i) => `delivery_${i + 1}`);
+  const resolvedHeaders = [];
+  for (let start = 0; start < resolveRefs.length; start += 32) {
+    const batch = resolveRefs.slice(start, start + 32);
+    const resolved = await control.call('resolve_contributors', {
+      capsule_id: admitted.capsule_id,
+      delivery_references: batch,
+    });
+    assert.equal(resolved.headers.length, batch.length);
+    resolvedHeaders.push(...resolved.headers);
+  }
+  assert.equal(resolvedHeaders.length, 253);
+  const turn1Originals = fixture.headers.slice(0, 255);
+  const core = { context_id, context_generation: admitted.generation, originals: turn1Originals };
   const bytes = Buffer.from(canonicalControl(core));
   assert(bytes.length > 65536);
   await assert.rejects(control.call('bind_context', { capsule_id: admitted.capsule_id,
     manifest: { ...core, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } }));
-  await bindContextManifest(control, admitted.capsule_id, core, AbortSignal.timeout(10000));
+  await bindContextManifest(control, admitted.capsule_id, core, AbortSignal.timeout(10000), {
+    contributorReferences: ['delivery_254'],
+  });
   const renewed = await control.call('renew', { capsule_id: admitted.capsule_id,
     generation: admitted.generation, ingress_id: ingress.ingress_id });
   assert(Date.parse(renewed.lease_expires_at) > Date.now());
-  const relay = await control.call('open_relay', { capsule_id: admitted.capsule_id,
-    recipient_id: 'endpoint-1', transport: fixture.transport, relay_nonce: randomBytes(16).toString('hex') });
+  const relay = await control.call('open_relay', {
+    capsule_id: admitted.capsule_id,
+    recipient_id: 'endpoint-1',
+    transport: fixture.transport,
+    relay_nonce: randomBytes(16).toString('hex'),
+    include_tls_trust: true,
+  });
+  assert.deepEqual(relay.tls, {
+    ca_file: fixture.relayCaPath,
+    cert_sha256: fixture.relayCertSha256,
+    server_name: fixture.relayServerName,
+  });
+  const checked = checkedTurnRelay(
+    relay,
+    {
+      executable: fixture.binary,
+      executableSha256: fixture.binarySha256,
+      hostConfig: {
+        relay_url: fixture.transport === 'http' ? relay.url : JSON.parse(Buffer.from(relay.handle, 'base64url').toString('utf8')).endpoint,
+        relay_ca: fixture.relayCaPath,
+        relay_cert_sha256: fixture.relayCertSha256,
+        relay_server_name: fixture.relayServerName,
+      },
+    },
+    fixture.transport,
+  );
+  const worker = preparePrivateWorker({
+    root: fixture.workerRoot,
+    launcher: fixture.binary,
+    launcherSha256: fixture.binarySha256,
+    relay: checked,
+    instructions: 'SYNTHETIC_TLS_RELAY_CHECK',
+  });
+  assert(worker.relayCaPath);
+  assert.equal(worker.env.SSL_CERT_FILE, worker.relayCaPath);
+  assert.equal(worker.env.NODE_EXTRA_CA_CERTS, worker.relayCaPath);
+  assert.deepEqual(worker.relayTls, {
+    ca_file: worker.relayCaPath,
+    cert_sha256: fixture.relayCertSha256,
+    server_name: fixture.relayServerName,
+  });
   const requests = [{ jsonrpc: '2.0', id: 1, method: 'initialize', params: { capabilities: {} } },
     ...['execute', 'call_op'].map((name, i) => ({ jsonrpc: '2.0', id: i + 2, method: 'tools/call',
       params: { name, arguments: { operation_id: 'message.send', arguments: {
@@ -62,29 +120,23 @@ try {
       } } } }))];
   if (fixture.transport === 'stdio') {
     assert.equal(createHash('sha256').update(readFileSync(relay.executable)).digest('hex'), relay.executableSha256);
-    const child = spawnSync(relay.executable, ['--turn-relay', relay.handle], {
-      input: requests.map(request => JSON.stringify(request) + '\n').join(''), encoding: 'utf8', env: {}, timeout: 20000,
+    const match = /"args"=\["--turn-relay","([A-Za-z0-9_-]+)"\]/.exec(worker.configOverrides[0]);
+    assert(match, 'expected rebound stdio turn-relay handle in worker configOverrides[0]');
+    const reboundTicket = JSON.parse(Buffer.from(match[1], 'base64url').toString('utf8'));
+    assert.equal(reboundTicket.ca_file, worker.relayCaPath);
+    assert.equal(reboundTicket.cert_sha256, fixture.relayCertSha256);
+    assert.equal(reboundTicket.server_name, fixture.relayServerName);
+    const child = spawnSync(relay.executable, ['--turn-relay', match[1]], {
+      input: requests.map(request => JSON.stringify(request) + '\n').join(''),
+      encoding: 'utf8',
+      env: { ...worker.env },
+      timeout: 20000,
     });
     assert.equal(child.status, 0, child.stderr);
     const results = child.stdout.trim().split('\n').map(line => JSON.parse(line));
     assert.equal(results.length, 3);
     for (const result of results.slice(1)) { assert(!result.error); assert(JSON.stringify(result).includes('synthetic-result')); }
-  } else if (fixture.relayTls) {
-    const checked = checkedTurnRelay(
-      relay,
-      { executable: fixture.binary, executableSha256: fixture.binarySha256, hostConfig: { relay_url: relay.url } },
-      'http',
-    );
-    const worker = preparePrivateWorker({
-      root: fixture.workerRoot,
-      launcher: fixture.binary,
-      launcherSha256: fixture.binarySha256,
-      relay: { ...checked, caCert: fixture.relayCa },
-      instructions: 'SYNTHETIC_TLS_RELAY_CHECK',
-    });
-    assert(worker.relayCaPath);
-    assert.equal(worker.env.SSL_CERT_FILE, worker.relayCaPath);
-    assert.equal(worker.env.NODE_EXTRA_CA_CERTS, worker.relayCaPath);
+  } else {
     const https = await import('node:https');
     const ca = readFileSync(worker.relayCaPath);
     const url = new URL(relay.url);
@@ -93,7 +145,7 @@ try {
       const r = https.request({
         host: '127.0.0.1',
         port: Number(url.port),
-        servername: 'localhost',
+        servername: worker.relayTls.server_name,
         path: url.pathname,
         method: 'POST',
         ca,
@@ -117,15 +169,26 @@ try {
       assert(!result.error);
       if (request.id > 1) assert(JSON.stringify(result).includes('synthetic-result'));
     }
-  } else {
-    for (const request of requests) {
-      const response = await fetch(relay.url, { method: 'POST', headers: { Authorization: `Bearer ${relay.handle}` },
-        body: JSON.stringify(request), signal: AbortSignal.timeout(10000) });
-      const result = await response.json(); assert(!result.error);
-      if (request.id > 1) assert(JSON.stringify(result).includes('synthetic-result'));
-    }
   }
   await control.call('close', { capsule_id: admitted.capsule_id, reason: 'completed' });
+  // Turn 2: verify same-generation context reuse via prior_generation under identical (key, scope_incarnation, context_epoch).
+  const ingress2 = await control.call('register_ingress', {
+    key: fixture.key,
+    delivery_reference: 'delivery_255',
+    stream: fixture.headers[255].delivery,
+    payload_sha256: fixture.headers[255].payload_sha256,
+  });
+  const admitted2 = await control.call('admit', {
+    ingress_id: ingress2.ingress_id,
+    proposed_context_id: context_id,
+    prior_generation: admitted.generation,
+  });
+  assert.equal(admitted2.generation, admitted.generation);
+  assert.equal(admitted2.scope_incarnation, admitted.scope_incarnation);
+  assert.equal(admitted2.context_epoch, admitted.context_epoch);
+  const core2 = { context_id, context_generation: admitted2.generation, originals: fixture.headers };
+  await bindContextManifest(control, admitted2.capsule_id, core2, AbortSignal.timeout(10000));
+  await control.call('close', { capsule_id: admitted2.capsule_id, reason: 'completed' });
   await assert.rejects(control.call('renew', { capsule_id: admitted.capsule_id, generation: admitted.generation, ingress_id: ingress.ingress_id }));
   console.log(`ENDPOINT_ABI_OK ${fixture.transport} ${bytes.length} complete-core-bytes`);
 } finally { control.close(); }

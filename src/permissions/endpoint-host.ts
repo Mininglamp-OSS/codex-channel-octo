@@ -50,6 +50,7 @@ export interface EndpointHostPorts {
   readonly key: Readonly<PermissionKey>;
   readonly recipientId: string;
   relayTransport: 'http' | 'stdio';
+  readonly includeRelayTlsTrust?: boolean;
   readonly journal: ReplayJournal;
   readonly authoritySignal?: AbortSignal;
   readonly catalog?: Readonly<CatalogBootPin>;
@@ -65,6 +66,7 @@ export interface EndpointHostPorts {
   prepareInput(binding: Readonly<EndpointBinding>, signal: AbortSignal): Promise<{
     input: string;
     originals: readonly Readonly<NativeHeader>[];
+    contributorReferences?: readonly string[];
   }>;
   /** Owns actual model input/start and the generation-isolated worker/relay;
    * cannot implement this as a cached allow followed by an unchecked launch. */
@@ -268,8 +270,20 @@ export class EndpointPermissionHost implements PermissionEndpoint {
         key: this.key, delivery_reference: ingress.deliveryReference,
         stream: ingress.header.delivery, payload_sha256: ingress.header.payload_sha256,
       }), ['ingress_id']);
+      if (this.ports.revalidateOriginal && lineage.headersByOriginalKey.size > 0) {
+        for (const [origKey, storedHeader] of lineage.headersByOriginalKey.entries()) {
+          const orig = JSON.parse(origKey) as OriginalIdentity;
+          const verdict = await this.ports.revalidateOriginal(orig, storedHeader, controller.signal);
+          if (verdict !== 'allow') {
+            resetLineage(lineage);
+            break;
+          }
+        }
+      }
       const rawAdmitted = await this.ports.control.call('admit', {
-        ingress_id: hex(registered.ingress_id), proposed_context_id: lineage.contextId,
+        ingress_id: hex(registered.ingress_id),
+        proposed_context_id: lineage.contextId,
+        ...(lineage.coordinatorGeneration ? { prior_generation: lineage.coordinatorGeneration } : {}),
       });
       const hasAuthoritativeEpoch = typeof rawAdmitted === 'object' && rawAdmitted !== null
         && ('scope_incarnation' in rawAdmitted || 'context_epoch' in rawAdmitted);
@@ -288,7 +302,11 @@ export class EndpointPermissionHost implements PermissionEndpoint {
         scopeIncarnation = hex(admitted.scope_incarnation);
         contextEpoch = epochDecimal(admitted.context_epoch);
         if (lineage.coordinatorGeneration !== undefined && lineage.coordinatorGeneration !== admittedGeneration) {
-          resetLineage(lineage);
+          lineage.provenance.invalidate();
+          lineage.coordinatorGeneration = undefined;
+          lineage.headersByOriginalKey.clear();
+          lineage.workdir = undefined;
+          lineage.codexHome = undefined;
         }
         const validateOriginal = async (orig: Readonly<OriginalIdentity>): Promise<'allow' | 'deny' | 'unknown'> => {
           if (!this.ports.revalidateOriginal) return 'allow';
@@ -308,10 +326,7 @@ export class EndpointPermissionHost implements PermissionEndpoint {
           lineage.headersByOriginalKey.clear();
           lineage.workdir = undefined;
           lineage.codexHome = undefined;
-          if (lineage.coordinatorGeneration !== undefined) {
-            lineage.contextId = randomBytes(16).toString('hex');
-            lineage.coordinatorGeneration = undefined;
-          }
+          lineage.coordinatorGeneration = undefined;
         }
       } else {
         // Without authoritative scope_incarnation + context_epoch from admit,
@@ -334,13 +349,44 @@ export class EndpointPermissionHost implements PermissionEndpoint {
       controller.signal.throwIfAborted();
       const prepared = await this.ports.prepareInput(binding, controller.signal);
       controller.signal.throwIfAborted();
+      const resolvedContributorHeaders: Readonly<NativeHeader>[] = [];
+      if (prepared.contributorReferences && prepared.contributorReferences.length > 0) {
+        if (prepared.contributorReferences.length > 256) {
+          throw new Error('Contributor reference bound exceeded');
+        }
+        const uniqueRefs: string[] = [];
+        const seenRefs = new Set<string>();
+        for (const ref of prepared.contributorReferences) {
+          if (typeof ref !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(ref) || seenRefs.has(ref)) {
+            throw new Error('Contributor reference unavailable');
+          }
+          seenRefs.add(ref);
+          uniqueRefs.push(ref);
+        }
+        for (let start = 0; start < uniqueRefs.length; start += 32) {
+          const batchRefs = uniqueRefs.slice(start, start + 32);
+          const resolved = object(
+            await this.ports.control.call('resolve_contributors', {
+              capsule_id: binding.capsuleId,
+              delivery_references: batchRefs,
+            }),
+            ['headers'],
+          );
+          if (!Array.isArray(resolved.headers) || resolved.headers.length !== batchRefs.length) {
+            throw new Error('Contributor headers unavailable');
+          }
+          for (const rawHeader of resolved.headers) {
+            resolvedContributorHeaders.push(nativeHeader(structuredClone(rawHeader)));
+          }
+        }
+      }
       const originals = new Map<string, Readonly<NativeHeader>>();
       if (invocation) {
         for (const priorHeader of lineage.headersByOriginalKey.values()) {
           originals.set(canonicalControl(priorHeader), priorHeader);
         }
       }
-      for (const supplied of [ingress.header, ...prepared.originals]) {
+      for (const supplied of [ingress.header, ...prepared.originals, ...resolvedContributorHeaders]) {
         const header = nativeHeader(structuredClone(supplied));
         if (header.recipient_bot_uid !== this.key.bot_uid || header.space_id !== this.key.space_id) {
           throw new Error('Contributor binding unavailable');
@@ -402,8 +448,13 @@ export class EndpointPermissionHost implements PermissionEndpoint {
           }
         },
       });
-      const relay = await this.ports.control.call('open_relay', { capsule_id: binding.capsuleId,
-        recipient_id: this.recipientId, transport: relayTransport, relay_nonce: randomBytes(16).toString('hex') });
+      const relay = await this.ports.control.call('open_relay', {
+        capsule_id: binding.capsuleId,
+        recipient_id: this.recipientId,
+        transport: relayTransport,
+        relay_nonce: randomBytes(16).toString('hex'),
+        ...(this.ports.includeRelayTlsTrust !== false ? { include_tls_trust: true } : {}),
+      });
       controller.signal.throwIfAborted();
       workerStarted = true;
       const text = await this.ports.runWorker(binding, prepared.input, Object.freeze(relay), controller.signal);

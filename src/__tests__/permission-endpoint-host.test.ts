@@ -261,7 +261,13 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
     let currentTurnId = '3'.repeat(32);
     let allowAlice = true;
     const boundManifests: Array<{ context_id: string; context_generation: string; originals: NativeHeader[] }> = [];
+    const admitPayloads: Array<Record<string, unknown>> = [];
+    const resolveCalls: Array<Record<string, unknown>> = [];
     const seenResumes: Array<string | undefined> = [];
+    const hdrHistory: NativeHeader = {
+      ...header, header_reference: 'native_history_1', message_id: '499', author_uid: 'alice',
+      delivery: { ...header.delivery, sequence: '99' },
+    };
 
     ports.revalidateOriginal = vi.fn(async orig => {
       if (orig.headerReference === 'native_alice' && !allowAlice) return 'deny';
@@ -270,6 +276,7 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
     ports.control.call = vi.fn(async (method, payload) => {
       if (method === 'register_ingress') return { ingress_id: '1'.repeat(32) };
       if (method === 'admit') {
+        admitPayloads.push(payload);
         return {
           capsule_id: '2'.repeat(32),
           turn_id: currentTurnId,
@@ -278,11 +285,18 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
           context_epoch: currentEpoch,
         };
       }
+      if (method === 'resolve_contributors') {
+        resolveCalls.push(payload);
+        return { headers: [hdrHistory] };
+      }
       if (method === 'bind_context') {
         boundManifests.push(payload.manifest as { context_id: string; context_generation: string; originals: NativeHeader[] });
         return { context_generation: currentGeneration };
       }
-      if (method === 'open_relay') return { transport: payload.transport };
+      if (method === 'open_relay') {
+        expect(payload.include_tls_trust).toBe(true);
+        return { transport: payload.transport };
+      }
       return {};
     });
 
@@ -306,30 +320,38 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
       deliveryReference: `receipt_${delivery.message.message_id}`,
       header: headersByMsgId.get(delivery.message.message_id)!,
     }));
-    ports.prepareInput = vi.fn(async binding => ({ input: `INPUT_${binding.header.message_id}`, originals: [binding.header] }));
+    ports.prepareInput = vi.fn(async binding => ({
+      input: `INPUT_${binding.header.message_id}`,
+      originals: [binding.header],
+      ...(binding.header.message_id === '501' ? { contributorReferences: ['history_ref_499'] } : {}),
+    }));
     ports.runWorker = vi.fn(async binding => {
       seenResumes.push(binding.verifiedResume?.sessionId);
       binding.bindSession?.('sess-gen-1', { workdir: join(root, 'work'), codexHome: join(root, 'data') });
       return `ANSWER_${binding.header.message_id}`;
     });
 
-    // Turn 1 (Alice): starts fresh generation, binds sess-gen-1
+    // Turn 1 (Alice + resolved unseen history_ref_499): starts fresh generation, binds sess-gen-1
     expect(await receive(msg1)).toBe('reserved');
     expect(seenResumes).toEqual([undefined]);
-    expect(boundManifests[0].originals.map(h => h.header_reference)).toEqual(['native_alice']);
+    expect(admitPayloads[0]).not.toHaveProperty('prior_generation');
+    expect(resolveCalls).toEqual([{ capsule_id: '2'.repeat(32), delivery_references: ['history_ref_499'] }]);
+    expect(boundManifests[0].originals.map(h => h.header_reference).sort()).toEqual(['native_alice', 'native_history_1']);
 
-    // Turn 2 (Bob, same epoch & incarnation): resumes sess-gen-1 with union [Alice, Bob]
+    // Turn 2 (Bob, same epoch & incarnation): passes prior_generation, resumes sess-gen-1 with union [Alice, History1, Bob]
     currentTurnId = '5'.repeat(32);
     expect(await receive(msg2)).toBe('reserved');
+    expect(admitPayloads[1]).toMatchObject({ proposed_context_id: boundManifests[0].context_id, prior_generation: '4'.repeat(32) });
     expect(seenResumes).toEqual([undefined, 'sess-gen-1']);
     expect(boundManifests[1].context_id).toBe(boundManifests[0].context_id);
-    expect(boundManifests[1].originals.map(h => h.header_reference).sort()).toEqual(['native_alice', 'native_bob']);
+    expect(boundManifests[1].originals.map(h => h.header_reference).sort()).toEqual(['native_alice', 'native_bob', 'native_history_1']);
 
-    // Turn 3 (Carol, Alice now denied): resets generation, clears prior contributors and session
+    // Turn 3 (Carol, Alice now denied): resets generation before admit, clears prior contributors and session
     allowAlice = false;
     currentTurnId = '6'.repeat(32);
     currentGeneration = '7'.repeat(32);
     expect(await receive(msg3)).toBe('reserved');
+    expect(admitPayloads[2]).not.toHaveProperty('prior_generation');
     expect(seenResumes).toEqual([undefined, 'sess-gen-1', undefined]);
     expect(boundManifests[2].context_id).not.toBe(boundManifests[0].context_id);
     expect(boundManifests[2].originals.map(h => h.header_reference)).toEqual(['native_carol']);
