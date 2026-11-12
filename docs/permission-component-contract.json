@@ -1,0 +1,52 @@
+{
+  "format": "endpoint-permission-local-components-v1",
+  "status": "partial_not_native_or_integrated_permission_acceptance",
+  "base_sha": "5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34",
+  "shared_sources": [
+    {
+      "name": "endpoint-appendix-v8-draft.md",
+      "bytes": 159470,
+      "sha256": "4bedb8a7afea8588ebc226f8289baba14972a63a87e14185c8633eda00626288",
+      "attachment_id": "01a1af0f-f460-7ca3-8499-f154309d293c"
+    },
+    {
+      "name": "shared-contract-v6.json",
+      "bytes": 163796,
+      "sha256": "bb90830850e6ea97666b10230f14763d2ba06315c2cf2288cb2c42f59931abe1",
+      "attachment_id": "01a1ab1b-735c-77c5-b7ba-90acf054be87"
+    },
+    {
+      "name": "permission-managed-v2.schema.json",
+      "bytes": 9203,
+      "sha256": "1deb9a708a39fb68e29ab61b4123254d4e02e77672e18b9619f7bbd97ab455fc",
+      "attachment_id": "01a1ab1b-735c-77c5-b7ba-90acf054be87"
+    },
+    {
+      "name": "permission-native-facts-v1.schema.json",
+      "bytes": 30549,
+      "sha256": "bf08d33e87ad1a4726116c97171b008394e6896bba4babf03762914b5ad0e643",
+      "attachment_id": "01a1ab1b-735c-77c5-b7ba-90acf054be87"
+    }
+  ],
+  "local_delivery_key": {
+    "algorithm": "HMAC-SHA256",
+    "encoding": "Each exact nonempty UTF-8 component is prefixed by its uint32 big-endian byte length. No normalization, trimming or delimiter concatenation.",
+    "components_in_order": [
+      "octo-permission-replay-v1", "replay_key_version", "delivery", "configured_origin",
+      "recipient_bot_uid", "native_stream_id", "native_stream_incarnation", "native_sequence",
+      "native_message_id", "native_message_version", "native_payload_sha256"
+    ],
+    "synthetic_vector": {
+      "key_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+      "components": [
+        "octo-permission-replay-v1", "1", "delivery", "https://synthetic.invalid", "synthetic-bot",
+        "synthetic-stream", "11111111111111111111111111111111", "18446744073709551615",
+        "9223372036854775807", "native_version",
+        "2222222222222222222222222222222222222222222222222222222222222222"
+      ],
+      "encoded_bytes": 281,
+      "delivery_key_hex": "4248066b16de16e17b8f1868fab00e0b8bf81f6d6bcb2efb402f28907914e6f8"
+    }
+  },
+  "production_integration": "No native authority adapter, coordinator, capability catalog, worker containment or full permission activation is supplied by this local component contract."
+}

@@ -1,0 +1,77 @@
+{
+  "format": "endpoint-permission-host-handoff-v2",
+  "status": "BLOCKED_INCOMPLETE_PRODUCTION_COMPOSITION_NOT_NATIVE_ACCEPTANCE",
+  "base_sha": "5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34",
+  "previous_endpoint_head": "c152cb54df8e3fb822288933e39cf6dcad4b9335",
+  "consumed": {
+    "cli": {
+      "task": "XIN-2794",
+      "head": "3b07d4d2f6c4637f0c389a71fab056ddf91c3965",
+      "path": "docs/permission/cli-component-contract-v1.json",
+      "bytes": 1436,
+      "sha256": "514d4edd4ce7f22b4f318de79d381cea083f5132fe3327198dc03aef9c104e73"
+    },
+    "server": {
+      "task": "XIN-2793",
+      "head": "1fae0db209d656a4b60562e14b71aeb23ad8e87b",
+      "path": "pkg/permissionbundle/contracts/handoff-v2.json",
+      "bytes": 2460,
+      "sha256": "041fa98ab4888c309e91f3ab34c7246dba78622e7ef327203c411a08041ef6c5"
+    },
+    "server_producers": {
+      "task": "XIN-2793",
+      "head": "1fae0db209d656a4b60562e14b71aeb23ad8e87b",
+      "path": "pkg/permissionbundle/contracts/remaining-producers-v1.json",
+      "bytes": 5153,
+      "sha256": "53f29a0e572cf240584511627236489658089bfcf70598a56216d545730f6a52"
+    }
+  },
+  "immutable_shared_wire": {
+    "name": "shared-contract-v6.json",
+    "bytes": 163796,
+    "sha256": "bb90830850e6ea97666b10230f14763d2ba06315c2cf2288cb2c42f59931abe1",
+    "v8_overrides": "endpoint-appendix-v8-draft.md, SHA256 4bedb8a7afea8588ebc226f8289baba14972a63a87e14185c8633eda00626288"
+  },
+  "provided_endpoint_symbols": [
+    "startBot(config, multi, permissionFactory)",
+    "EndpointPermissionHost",
+    "PermissionControlClient.connect/call/close",
+    "PermissionRefusal/permissionRefusalText",
+    "preparePrivateWorker",
+    "QueryAgentOptions.privateWorker"
+  ],
+  "control_transport": {
+    "implementation": "host-only mutually authenticated TLS 1.3 with exact peer certificate SHA256 pin",
+    "framing": "uint32 big-endian byte length plus canonical JSON, maximum 65536 body bytes",
+    "queue": "at most 64 immutable pending requests, one on-wire request at a time",
+    "methods": ["hello", "register_ingress", "admit", "bind_context", "open_relay", "renew", "close", "checkpoint"],
+    "hello": "unchanged managed-v2 request/selection/unavailable envelope; exact session and pinned coordinator incarnation",
+    "failure": "close on bad authentication/framing/correlation/negotiation; no retransmission, downgrade, ordinary credential or alternate-host fallback"
+  },
+  "host_call_expectations": {
+    "register_ingress": {"request": ["key", "delivery_reference", "stream", "payload_sha256"], "reply": ["ingress_id"]},
+    "admit": {"request": ["ingress_id", "proposed_context_id"], "reply": ["capsule_id", "turn_id", "generation"]},
+    "bind_context": {"request": ["capsule_id", "manifest"], "reply": ["context_generation"], "remaining": "full manifest descriptor/carrier must be reconciled with CLI to preserve complete 1MiB/256-original input within 64KiB control frames"},
+    "open_relay": {"request": ["capsule_id", "recipient_id", "transport", "relay_nonce"], "reply": "trusted one-turn relay record; concrete executable/handle ABI is still required from CLI"},
+    "renew": "generic client method retained; complete generation/original-ingress fresh-proof lease integration is not yet composed",
+    "close": {"request": ["capsule_id", "reason"], "reply": "coordinator-owned drain/close result"},
+    "checkpoint": "generic ingress-owner client method retained; real native checkpoint/fence producer is required"
+  },
+  "native_host_ports": ["inspect", "candidate", "prepareInput", "runWorker", "publish", "refuse", "stop"],
+  "host_configuration": ["key", "recipientId", "relayTransport", "journal"],
+  "worker_stdio_consumer_expectation": "Pinned relay executable receives --turn-relay <one-turn handle>; this concrete ABI must be reconciled with the actual CLI relay producer, not assumed to exist in Draft234.",
+  "port_semantics": "Host-only composition. inspect consumes real native evidence; input/worker/publication ports own their actual fresh checked actions, not scalar allow tickets. Tests supply synthetic ports, never an installed production provider.",
+  "owned_remaining": [
+    "main concrete managed factory and complete legacy command/rate/mention/settings/strict/compatible preservation",
+    "all disclosure/import/store/derivative/publication paths, proven same-generation reuse, lease renewal and recovery integration",
+    "actual platform isolation launcher/supervisor and supported native distribution/provider sealing",
+    "large manifest carrier and concrete CLI relay payload reconciliation"
+  ],
+  "external_required_outputs": {
+    "XIN-2794": "served authenticated full control protocol, actual CapsuleV2, one-turn HTTP/stdio relays, supported catalog and owned physical sinks; see internal/permission/coordinator.go:128-129 and docs/permission/cli-component-contract-v1.json:19-22 at consumed head",
+    "XIN-2793": "bind the implemented NativeFactSource.Read/ValidateCuts wire adapter and real FencedAuthority to native Header/current access/disclosure/body/receipt/checkpoint and current-writer/recovery primitives; exact sources and retained ownership are in pkg/permissionbundle/contracts/remaining-producers-v1.json at the consumed latest head"
+  },
+  "catalog": "not created; shared CLI catalog remains authoritative",
+  "native_cross_repository_acceptance": "NOT_RUN",
+  "os_containment_acceptance": "NOT_RUN"
+}

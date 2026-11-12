@@ -48,6 +48,7 @@ jobs:
       - run: npm run type-check:mention-tests
       - run: npm run type-check:recovery-tests
       - run: npm run type-check:continuity-tests
+      - run: npm run type-check:permission-tests
       - name: Type-check WP-05 corpus and notice contracts
         run: npx tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --esModuleInterop --resolveJsonModule src/__tests__/cards-redact.test.ts src/__tests__/cards-redact-regressions.test.ts src/__tests__/cards-redact-idna.test.ts src/__tests__/cards-notices.test.ts src/__tests__/cards-safe-bridge.test.ts
       - name: Type-check canonical options test contract
@@ -122,6 +123,7 @@ jobs:
       - run: npm run type-check:mention-tests
       - run: npm run type-check:recovery-tests
       - run: npm run type-check:continuity-tests
+      - run: npm run type-check:permission-tests
       - run: npm run lint
       - run: npm run build
       - run: npm test

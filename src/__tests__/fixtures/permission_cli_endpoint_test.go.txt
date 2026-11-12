@@ -1,0 +1,213 @@
+package mcp
+
+import (
+    "bytes"
+    "context"
+    "crypto/tls"
+    "crypto/x509"
+    "encoding/json"
+    "encoding/pem"
+    "fmt"
+    "net"
+    "net/http"
+    "net/http/httptest"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "strconv"
+    "strings"
+    "sync/atomic"
+    "testing"
+    "time"
+    "github.com/Mininglamp-OSS/octo-cli/internal/permission"
+)
+
+// Copied exclusively into an unmodified task-local archive of the pinned CLI revision.
+// Its existing native/policy fixtures supply synthetic facts, not acceptance.
+func TestXIN2795CurrentEndpointChunkAndRelayABI(t *testing.T) {
+    dist, script := os.Getenv("XIN2795_ENDPOINT_DIST"), os.Getenv("XIN2795_ENDPOINT_CONSUMER")
+    if dist == "" || script == "" { t.Fatal("explicit built endpoint and consumer paths required") }
+    node, err := exec.LookPath("node"); if err != nil { t.Fatal(err) }
+    binary := filepath.Join(secureTestDir(t), "relay-cli")
+    build := exec.Command("go", "build", "-o", binary, "./cmd/octo-cli"); build.Dir = "../.."
+    if output, err := build.CombinedOutput(); err != nil { t.Fatal(err, string(output)) }
+    if err := os.Chmod(binary, 0o700); err != nil { t.Fatal(err) }
+    binaryBytes, err := os.ReadFile(binary); if err != nil { t.Fatal(err) }
+    binarySha256 := sha256Sum(binaryBytes)
+    catalogManifestPath := ""
+    catalogVersion := ""
+    if candidate, err := filepath.Abs("../../docs/permission/catalog-package-v2/manifest.json"); err == nil {
+        if raw, err := os.ReadFile(candidate); err == nil {
+            staged := filepath.Join(secureTestDir(t), "manifest.json")
+            if err := os.WriteFile(staged, raw, 0o600); err == nil {
+                var parsed struct { CatalogVersion string `json:"catalog_version"` }
+                if json.Unmarshal(raw, &parsed) == nil && parsed.CatalogVersion != "" {
+                    catalogManifestPath = staged
+                    catalogVersion = parsed.CatalogVersion
+                }
+            }
+        }
+    }
+    for _, mode := range []string{"http", "stdio", "https_tls"} { t.Run(mode, func(t *testing.T) {
+        transport := mode
+        relayTls := false
+        if mode == "https_tls" {
+            transport = "http"
+            relayTls = true
+        }
+        f := newManagedFixture(t)
+        allowedCaps := []string{
+            "octo-cli/message/op/message.send",
+            "octo-cli/message/schema/message.send",
+            "octo-cli/docs/op/docs.scene.export",
+            "octo-cli/docs/op/docs.search",
+        }
+        allCatalogCaps := append([]string{}, allowedCaps...)
+        allCatalogCaps = append(allCatalogCaps, "octo-cli/docs/op/docs.scene.get", "octo-cli/docs/op/docs.scene.edit")
+        f.bundle.Capability.Rules[0]["capabilities"] = allowedCaps
+        f.save()
+        var err error
+        f.coordinator, err = permission.NewCoordinator(
+            permission.Catalog{
+                Version:      f.bundle.CatalogVersion,
+                Digest:       f.bundle.CatalogDigest,
+                Capabilities: allCatalogCaps,
+            },
+            f.policies,
+            f.reader,
+        )
+        if err != nil { t.Fatal(err) }
+        budgets := permission.ResponseBudgets{
+            MaxAcquisitionBytes:   1024,
+            MaxPageItems:          10,
+            MaxPages:              2,
+            MaxCumulativeBytes:    1024,
+            MaxSerializedRPCBytes: permission.MinSerializedRPCBudgetBytes,
+        }
+        if err := f.coordinator.ConfigureResponseBudgets(budgets); err != nil { t.Fatal(err) }
+
+        headers := make([]permission.NativeHeader, 256)
+        nativeHeaders := map[string]permission.NativeHeader{}
+        for i := range headers {
+            h := f.header; h.Reference = "header_" + strings.Repeat("x", 400) + "_" + strconv.Itoa(i)
+            h.MessageID = strconv.Itoa(1000 + i); h.Delivery.Sequence = strconv.Itoa(1000 + i)
+            headers[i] = h; nativeHeaders["delivery_"+strconv.Itoa(i)] = h
+        }
+        deniedHeader := f.header
+        deniedHeader.Reference = "header_denied"
+        deniedHeader.MessageID = "2000"
+        deniedHeader.Delivery.Sequence = "2000"
+        nativeHeaders["delivery_denied"] = deniedHeader
+        epochHeader := f.header
+        epochHeader.Reference = "header_epoch_reset"
+        epochHeader.MessageID = "2001"
+        epochHeader.Delivery.Sequence = "2001"
+        nativeHeaders["delivery_epoch_reset"] = epochHeader
+
+        var deniedDispatches atomic.Int64
+        var exportOverflowCalls atomic.Int64
+        // Extend only the synthetic native producer, retaining the actual
+        // CLI reader, authority cuts, Stage1 and current policy evaluation.
+        f.backend.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            switch r.URL.Path {
+            case "/v1/bot/permission-facts/v1":
+                recorder := httptest.NewRecorder(); f.serve(recorder, r)
+                var envelope map[string]any
+                if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil { t.Error(err); return }
+                if results, ok := envelope["results"].([]any); ok {
+                    for _, value := range results {
+                        row := value.(map[string]any); ref, _ := row["reference"].(string)
+                        if h, ok := nativeHeaders[ref]; ok { row["header"] = h }
+                        if ref == "delivery_denied" {
+                            if preds, ok := row["predicates"].(map[string]any); ok {
+                                for k := range preds { preds[k] = false }
+                            }
+                        }
+                        if ref == "delivery_epoch_reset" {
+                            f.mu.Lock()
+                            f.bundle.ContextEpoch = "1"
+                            f.bundle.Revision = "1"
+                            f.save()
+                            f.mu.Unlock()
+                        }
+                    }
+                }
+                w.Header().Set("Content-Type", "application/json"); w.WriteHeader(recorder.Code); _ = json.NewEncoder(w).Encode(envelope)
+            case "/v1/bot/docs/doc_ok/export":
+                f.business.Add(1)
+                w.Header().Set("Content-Type", "image/png")
+                _, _ = w.Write(bytes.Repeat([]byte{0x89, 'P', 'N', 'G'}, 32))
+            case "/v1/bot/docs/doc_overflow_cl/export":
+                exportOverflowCalls.Add(1)
+                w.Header().Set("Content-Type", "image/png")
+                payload := bytes.Repeat([]byte{0x89, 'P', 'N', 'G'}, 512)
+                w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)))
+                _, _ = w.Write(payload)
+            case "/v1/bot/docs/doc_overflow_stream/export":
+                exportOverflowCalls.Add(1)
+                w.Header().Set("Content-Type", "image/png")
+                flusher, _ := w.(http.Flusher)
+                _, _ = w.Write(bytes.Repeat([]byte{0x89, 'P', 'N', 'G'}, 512))
+                if flusher != nil { flusher.Flush() }
+            case "/v1/bot/docs/search":
+                w.Header().Set("Content-Type", "application/json")
+                _ = json.NewEncoder(w).Encode(map[string]any{
+                    "total":      1,
+                    "items":      []map[string]any{{"docId": "d_bound", "snippet": strings.Repeat(`"`, 180)}},
+                    "nextCursor": "",
+                })
+            case "/v1/bot/docs/board/scene", "/v1/bot/docs/board_1/scene":
+                deniedDispatches.Add(1)
+                w.WriteHeader(http.StatusOK)
+                _, _ = w.Write([]byte(`{"elements":[]}`))
+            default:
+                f.serve(w, r)
+            }
+        })
+        serverCert, clientCert, roots, peerHash := controlCertificates(t)
+        otherServerCert, _, _, _ := controlCertificates(t)
+        otherCaPemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: otherServerCert.Certificate[1]})
+        otherCaPath := filepath.Join(t.TempDir(), "other-ca.pem")
+        if err := os.WriteFile(otherCaPath, otherCaPemBytes, 0o600); err != nil { t.Fatal(err) }
+        relayCaPemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]})
+        relayCaPem := string(relayCaPemBytes)
+        relayCaPath := filepath.Join(t.TempDir(), "ca.pem")
+        if err := os.WriteFile(relayCaPath, relayCaPemBytes, 0o600); err != nil { t.Fatal(err) }
+        relayCaSha256 := sha256Sum(relayCaPemBytes)
+        leafSha256 := sha256Sum(serverCert.Certificate[0])
+        rawRelay, err := net.Listen("tcp", "127.0.0.1:0")
+        if err != nil { t.Fatal(err) }
+        securedRelay := permission.PublicationTLSListener(rawRelay, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serverCert}})
+        relayUrl := "https://127.0.0.1:" + strconv.Itoa(rawRelay.Addr().(*net.TCPAddr).Port)
+        cfg := PermissionHostConfig{Version: 1, Origin: f.backend.URL, BotUID: "bot", RecipientID: "endpoint-1", EndpointIncarnation: strings.Repeat("5", 32), PeerSHA256: peerHash, RelayURL: relayUrl, RelayExecutable: binary, RelayCA: relayCaPath, RelayCASHA256: relayCaSha256, RelayPeerSHA256: leafSha256, RelayCertSHA256: leafSha256, RelayServerName: "localhost", ResponseBudgets: &budgets}
+        host, err := NewPermissionHost(cfg, f.coordinator, f.policies, f.reader, f.server); if err != nil { t.Fatal(err) }
+        relayServer := &http.Server{Handler: host, ReadHeaderTimeout: 5 * time.Second}
+        go func() { _ = relayServer.Serve(securedRelay) }()
+        defer func() { _ = relayServer.Close(); _ = securedRelay.Close() }()
+        listener, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serverCert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: roots})
+        if err != nil { t.Fatal(err) }; defer listener.Close()
+        done := make(chan error, 1)
+        go func() { conn, err := listener.Accept(); if err != nil { done <- err; return }; done <- host.ServeControl(context.Background(), conn.(*tls.Conn)) }()
+        defer func() { listener.Close(); select { case <-done: case <-time.After(5 * time.Second): t.Error("control failed to drain") } }()
+        dir := secureTestDir(t)
+        workerRoot := t.TempDir()
+        if err := os.Chmod(workerRoot, 0o700); err != nil { t.Fatal(err) }
+        private, err := x509.MarshalPKCS8PrivateKey(clientCert.PrivateKey); if err != nil { t.Fatal(err) }
+        chain := []byte{}; for _, raw := range clientCert.Certificate { chain = append(chain, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: raw})...) }
+        control := map[string]any{"port": listener.Addr().(*net.TCPAddr).Port, "host": "127.0.0.1", "servername": "localhost", "ca": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Certificate[1]})), "cert": string(chain), "key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private})), "endpointIncarnation": cfg.EndpointIncarnation, "coordinatorIncarnation": host.Incarnation(), "recipientId": cfg.RecipientID, "configuredOrigin": cfg.Origin, "peerCertificateSha256": leafSha256, "timeoutMs": 10000}
+        payloadMap := map[string]any{"control": control, "key": f.bundle.Key, "headers": headers, "deniedHeader": deniedHeader, "epochHeader": epochHeader, "transport": transport, "relayTls": relayTls, "relayCa": relayCaPem, "relayCaPath": relayCaPath, "otherCaPath": otherCaPath, "relayCertSha256": leafSha256, "relayServerName": "localhost", "binary": binary, "binarySha256": binarySha256, "workerRoot": workerRoot}
+        if catalogManifestPath != "" {
+            payloadMap["catalogManifestPath"] = catalogManifestPath
+            payloadMap["catalogVersion"] = catalogVersion
+        }
+        data, _ := json.Marshal(payloadMap)
+        fixture := filepath.Join(dir, "fixture.json"); if err := os.WriteFile(fixture, data, 0o600); err != nil { t.Fatal(err) }
+        ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second); defer cancel()
+        command := exec.CommandContext(ctx, node, script, fixture, dist)
+        output, err := command.CombinedOutput()
+        if err != nil || !strings.Contains(string(output), "ENDPOINT_ABI_OK") || f.business.Load() != 4 || deniedDispatches.Load() != 0 || exportOverflowCalls.Load() != 4 {
+            t.Fatal(err, string(output), "business=", f.business.Load(), "deniedDispatches=", deniedDispatches.Load(), "exportOverflowCalls=", exportOverflowCalls.Load())
+        }
+        t.Log(strings.TrimSpace(string(output)))
+    }) }
+}

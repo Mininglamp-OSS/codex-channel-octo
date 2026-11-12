@@ -1,0 +1,29 @@
+{
+  "passed": true,
+  "endpointTestCount": 76,
+  "catalogBootTestCount": 12,
+  "totalPermissionTestCount": 88,
+  "fullRegressionFiles": 136,
+  "fullRegressionTests": 5440,
+  "actualCliTransportCases": 3,
+  "cliHead": "29d81e09dc544b9928d94a9123736330d5d0174f",
+  "serverHead": "e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d",
+  "catalogPackageV2": {
+    "version": "octo-capabilities-v1-xin2748-v4",
+    "supportedCatalogDigest": null,
+    "manifestSha256": "ecc56c2ab0a2c520ab7e5203d2abab06671daf90c28d69f88fe1de8d154109fc",
+    "files": 30,
+    "storedBytes": 7823327,
+    "semanticDigest": "15c7ca2bf6df703979df529afbca6828f116b2463b1a818456edfad80bcad799"
+  },
+  "checks": [
+    "WKSocket + ReplayJournal + OctoGateway + EndpointPermissionHost: RECVACK withheld until handler completion and durable reservation.finish('terminal') SQLite commit; duplicate disposition only when existing.state === 'terminal'; draining/shutdown/abort returns 'uncertain' without ACK",
+    "worker-launch Linux bwrap isolation: adds '--unshare-net' to bwrap args when allowNetwork === false alongside --unshare-all, --die-with-parent, --new-session, and read-only mounts",
+    "checkedTurnRelay + preparePrivateWorker + verifyHttpRelayTlsPin: cryptographically verifies ca_sha256 against staged <codexHome>/relay-ca.pem (0600) bytes and enforces TLS 1.3 custom CA, server_name, and leaf cert_sha256/peer_sha256 pin before HTTP relay worker execution",
+    "createNativeEndpointDriver: consumes octo-server e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d v7 routes (/v1/bot/permission-facts/v1/bind-delivery?space_id=..., /v1/bot/permission-facts/v1?space_id=... with operation resolve/history_headers/history_disclosure, and /v1/bot/permission-facts/v1/fence?space_id=...) with zero octo-im/WukongIM modifications",
+    "ContextProvenance + createContainedWorkerDriver: closed ContextInvocation handles are fenced in assertCurrent(); unreferenced generation directories are cleaned up when worker execution fails before sessionId is produced",
+    "Actual Go CLI 29d81e09dc544b9928d94a9123736330d5d0174f control + HTTP, stdio (rebound <codexHome>/relay-ca.pem ticket), and HTTPS TLS (PublicationTLSListener + TurnRelayTrust ca_sha256/cert_sha256/server_name) relay: 218,289-byte Turn 1 core, Turn 2 prior_generation reuse, catalog-package-v2 manifest preflight, renewal, and closed-capsule rejection",
+    "Cross-repo octo-server e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d pkg/permissionbundle test suite and octo-cli 29d81e09dc544b9928d94a9123736330d5d0174f TestXIN2795CurrentEndpointChunkAndRelayABI pass on unmodified archives"
+  ],
+  "limits": "Zero octo-im/WukongIM changes or tasks. Zero external recovery/election/fence platform prerequisite. supported_catalog_digest remains null pending Owner sign-off on candidate 15c7ca2bf6df703979df529afbca6828f116b2463b1a818456edfad80bcad799 and A1 ResponseBudgets constants. Residual external blockers remain in octo-server (XIN-2793 = 6a92a547-cb82-4c3d-ac6c-8f5529028ba4): historical bot_original_visible/caller_original_visible proof, legacy untagged DM space_id, durable SQL+IM authority incarnation/restore fence, and production ServedCatalogs composition."
+}

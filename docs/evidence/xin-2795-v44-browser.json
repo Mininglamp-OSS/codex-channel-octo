@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "endpointTestCount": 66,
+  "componentTestCount": 18,
+  "actualCliTransportCases": 3,
+  "cliHead": "27b387f1b767a6e0cc200b8e23d074ad3bd28cc1",
+  "serverHead": "ff4d43c403083fd059ec2e6ef6e0d6d505228d48",
+  "catalogPackageV2": {
+    "version": "octo-capabilities-v1-xin2748-v4",
+    "manifestSha256": "ecc56c2ab0a2c520ab7e5203d2abab06671daf90c28d69f88fe1de8d154109fc",
+    "files": 30,
+    "storedBytes": 7823327,
+    "semanticDigest": "415acc86598208cbf051c9c08cc47e33e0ec9cd8fe7f9444b48b80f11d95ba21"
+  },
+  "checks": [
+    "OS-level kernel containment (macOS Seatbelt sandbox-exec / Linux bwrap): protected host secret paths denied under same UID; generation workdir/codexHome allowed",
+    "Private relay CA staging (0600 relay-ca.pem) + SSL_CERT_FILE and NODE_EXTRA_CA_CERTS environment injection + ca_sha256/peer_sha256 pin checks",
+    "AgentBridge privateWorker.verifiedResume: permits resumeThread only when verifiedResume matches authenticated ContextProvenance session",
+    "PermissionEndpointHost: per-conversation serialization, ContextProvenance lineage, full contributor union, and 3-field vs 5-field admit epoch/incarnation handling",
+    "Concrete createNativeEndpointDriver and createContainedWorkerDriver composed by default in managedPermissionFactory; single-attempt publish and <=2s refuse",
+    "ReplayJournal exclusive SQLite locking mode (PRAGMA busy_timeout = 0; PRAGMA locking_mode = EXCLUSIVE)",
+    "Actual Go CLI 27b387f1 control + HTTP, stdio, and HTTPS TLS (PublicationTLSListener + staged relay-ca.pem) relay: 219,145 core bytes, real catalog-package-v2 manifest preflight, renewal, and closed-capsule rejection",
+    "Cross-repo octo-server ff4d43c4 VerifyCatalogPackage passes on octo-cli 27b387f1 catalog-package-v2 (30 files, 7,823,327 B) + source-slot-witness-v5.json.gz"
+  ],
+  "limits": "Proposals A1/A2/A3 remain unapproved. External native WKSocket delivery_reference/HeaderV1 wire, CLI 5-field admit + unseen-history resolution, and production supported-catalog allowlist remain external producer deliverables."
+}

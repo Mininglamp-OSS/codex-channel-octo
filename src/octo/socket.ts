@@ -8,8 +8,9 @@ import { generateKeyPair, sharedKey } from "curve25519-js";
 import { Buffer } from "buffer";
 import CryptoJS from "crypto-js";
 import { Md5 } from "md5-typescript";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { BotMessage, MessagePayload, MessageType } from "./types.js";
+import type { IngressReservation, ProcessingDisposition, ReserveBeforeAck } from '../permissions/ingress-reservation.js';
 
 // ─── WuKongIM Binary Protocol Constants ─────────────────────────────────────
 
@@ -270,11 +271,12 @@ function parseSettingByte(v: number): SettingFlags {
 
 // ─── WKSocket — Independent WebSocket Connection ────────────────────────────
 
-interface WKSocketOptions {
+export interface WKSocketOptions {
   wsUrl: string;
   uid: string;
   token: string;
-  onMessage: (msg: BotMessage) => void;
+  onMessage: (msg: BotMessage) => void | ProcessingDisposition | Promise<void | ProcessingDisposition>;
+  reserveBeforeAck?: ReserveBeforeAck;
   onConnected?: () => void;
   onDisconnected?: () => void;
   onError?: (err: Error) => void;
@@ -291,6 +293,23 @@ interface WKSocketOptions {
  * enabling multiple bot accounts to run simultaneously.
  */
 export class WKSocket extends EventEmitter {
+  private readonly pendingReceives = new Set<Promise<void>>();
+
+  /** Collect host reservation/handler work before closing its durable store. */
+  async drainReceives(timeoutMs = 10_000): Promise<void> {
+    if (this.pendingReceives.size === 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.allSettled([...this.pendingReceives]),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
   private ws: WebSocket | null = null;
   private connected = false;
   private needReconnect = true;
@@ -569,6 +588,18 @@ export class WKSocket extends EventEmitter {
     }
   }
 
+  private sendRawAck(socket: WebSocket | null, data: Uint8Array): Promise<void> {
+    if (!socket || this.ws !== socket || !this.connected || !this.needReconnect || socket.readyState !== WebSocket.OPEN) {
+      throw new Error('Managed ingress ACK transport unavailable');
+    }
+    return new Promise<void>((resolve, reject) => {
+      socket.send(data, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  }
+
   private handleRawData(data: Uint8Array): void {
     for (let i = 0; i < data.length; i++) this.tempBuffer.push(data[i]);
 
@@ -814,11 +845,19 @@ export class WKSocket extends EventEmitter {
     // from CONNACK is wrong — onConnack now fails the connection in that case,
     // forcing a fresh handshake rather than a silent-drop or redelivery loop.)
     let payloadObj: Record<string, unknown> | undefined;
+    let payloadSha256 = '';
     try {
       const decryptedBytes = aesDecrypt(encryptedPayload, this.aesKey, this.aesIV);
+      payloadSha256 = createHash('sha256').update(decryptedBytes).digest('hex');
       const payloadStr = uintToString(Array.from(decryptedBytes));
       payloadObj = JSON.parse(payloadStr);
     } catch (err) {
+      // Managed ingress cannot ACK even a poison delivery without a durable,
+      // native-bound disposition. Leave it unacknowledged; never fall back.
+      if (this.opts.reserveBeforeAck) {
+        this.opts.onError?.(new Error('Managed ingress payload unavailable'));
+        return;
+      }
       // Count failures per messageID. Below the cap, leave it un-acked so the
       // server redelivers (handles a transient hiccup). At the cap, ack-and-drop
       // this one poison message so it can't wedge the stream forever.
@@ -844,9 +883,9 @@ export class WKSocket extends EventEmitter {
       return;
     }
 
-    // Parse succeeded — clear any prior failure count and ack.
+    // Legacy ingress retains its existing ACK behavior. Managed ingress reserves
+    // before handler work and sends RECVACK only after terminal handler + journal completion.
     this.decryptFailCounts.delete(messageID);
-    this.sendRaw(encodeRecvackPacket(messageID, messageSeq));
 
     // Build MessagePayload (same shape as SDK's contentObj-based output)
     const payload: MessagePayload = {
@@ -866,7 +905,71 @@ export class WKSocket extends EventEmitter {
       streamOn: setting.streamOn,
     };
 
-    this.opts.onMessage(msg);
+    if (!this.opts.reserveBeforeAck) {
+      this.sendRaw(encodeRecvackPacket(messageID, messageSeq));
+      this.opts.onMessage(msg);
+      return;
+    }
+    if (this.pendingReceives.size >= 64) {
+      this.opts.onError?.(new Error('Managed ingress reservation limit reached'));
+      return;
+    }
+    const socket = this.ws;
+    const reserve = this.opts.reserveBeforeAck;
+    // Keep transport identity and payload fixed across asynchronous native
+    // resolution. This is still an observation, never a native attestation.
+    const objects: object[] = [msg];
+    for (const object of objects) {
+      for (const value of Object.values(object)) {
+        if (value && typeof value === 'object') objects.push(value);
+      }
+      Object.freeze(object);
+    }
+    const delivery = Object.freeze({ recipientUid: this.opts.uid, message: msg, payloadSha256 });
+    const task = (async () => {
+      let reservation: IngressReservation | undefined;
+      let finished = false;
+      const finishUncertain = () => {
+        if (finished || reservation?.disposition !== 'reserved') return;
+        finished = true;
+        reservation.finish('uncertain');
+      };
+      try {
+        reservation = await reserve(delivery);
+        if (!reservation || !['reserved', 'duplicate', 'unavailable'].includes(reservation.disposition)
+          || reservation.disposition === 'reserved' && typeof reservation.finish !== 'function') {
+          throw new Error('Invalid reservation');
+        }
+        if (reservation.disposition === 'unavailable') return;
+        if (this.ws !== socket || !this.connected || !this.needReconnect || socket?.readyState !== WebSocket.OPEN) {
+          finishUncertain();
+          return;
+        }
+        if (reservation.disposition === 'duplicate') {
+          await this.sendRawAck(socket, encodeRecvackPacket(messageID, messageSeq));
+          return;
+        }
+        const outcome = await this.opts.onMessage(msg);
+        if (outcome === 'uncertain') {
+          finishUncertain();
+          return;
+        }
+        if (this.ws !== socket || !this.connected || !this.needReconnect || socket?.readyState !== WebSocket.OPEN) {
+          finishUncertain();
+          return;
+        }
+        reservation.finish('terminal');
+        finished = true;
+        await this.sendRawAck(socket, encodeRecvackPacket(messageID, messageSeq));
+      } catch {
+        // Provider/handler exceptions can contain private data. Keep the socket
+        // error bounded and never retry work whose outcome is uncertain.
+        try { finishUncertain(); } catch { /* remain non-replayable */ }
+        this.opts.onError?.(new Error('Managed ingress reservation or handler unavailable'));
+      }
+    })();
+    this.pendingReceives.add(task);
+    void task.then(() => this.pendingReceives.delete(task), () => this.pendingReceives.delete(task));
   }
 
   private onDisconnect(dec: Decoder): void {

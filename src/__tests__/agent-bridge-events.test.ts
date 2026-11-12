@@ -447,6 +447,7 @@ describe('T25: one canonical options contract', () => {
   it('exposes only supported query options', () => {
     expectTypeOf<Extract<keyof QueryAgentOptions, 'onResumeFailed' | 'fallbackRetryPrompt'>>().toEqualTypeOf<never>();
     expectTypeOf<QueryAgentOptions>().toEqualTypeOf<{
+      privateWorker?: Readonly<import('../permissions/worker-launch.js').PrivateWorkerLaunch>;
       resume?: string;
       onSessionId?: (id: string, prompt: string) => void;
       groupInstructions?: string;

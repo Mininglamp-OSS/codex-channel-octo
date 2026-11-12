@@ -5,6 +5,7 @@ import { rememberSdkFailure, inheritSdkDiagnostic, type SdkDiagnosticRun } from 
 import { recover, type RecoveryConfig } from './agent-recovery.js';
 import { AgentFailure, classifyFailure, type ExecutionRisk } from './agent-failure.js';
 import { ExecutionScope, type ManagedExecution } from './execution-scope.js';
+import type { PrivateWorkerLaunch } from './permissions/worker-launch.js';
 import type { InterruptedTurn } from './turn-context.js';
 import { reduceItem, type ReducedItemFacts } from './cards/redact.js';
 /**
@@ -326,6 +327,8 @@ export type AgentOutputEvent =
  *   - `groupInstructions`: per-group operator instructions (GROUP.md).
  */
 export interface QueryAgentOptions {
+  /** Trusted host plan only; never parsed from a prompt, MCP argument or _meta. */
+  privateWorker?: Readonly<PrivateWorkerLaunch>;
   privateMemoryContext?: SafeText;
   resume?: string;
   onSessionId?: (id: string, prompt: string) => void;
@@ -427,18 +430,21 @@ export async function* queryAgentEvents(
   opts?.signal?.throwIfAborted();
   opts?.assertPublishable?.();
   // Frozen system text (security prefix + SOUL + group instructions).
-  const systemPrompt = buildSystemPrompt(config.sdk.systemPrompt, opts?.groupInstructions);
+  const privateWorker = opts?.privateWorker;
+  if (privateWorker && !opts?.onManagedExecution) throw new Error('Private worker requires host-owned execution');
+  if (privateWorker && process.platform === 'win32') throw new Error('Private worker requires a supported host-owned process isolation path');
+  const systemPrompt = privateWorker ? privateWorker.instructions : buildSystemPrompt(config.sdk.systemPrompt, opts?.groupInstructions);
 
   // Per-session cwd under cwdBase — created on first use. Fall back to the base
   // dir when sessionCtx is omitted (tests / legacy callers).
   const cwdBase = config.cwdBase ?? config.cwd;
-  const cwd = sessionCtx ? resolveSessionCwd(cwdBase, sessionCtx) : cwdBase;
+  const cwd = privateWorker?.workdir ?? (sessionCtx ? resolveSessionCwd(cwdBase, sessionCtx) : cwdBase);
 
   // Codex reads project instructions from AGENTS.md in the working directory.
   const agentsMdOk = writeAgentsMd(cwd, systemPrompt);
 
-  const env = buildCodexEnv(config.sdk, process.env);
-  const testExecutable = process.env.CODEX_OCTO_TEST_CODEX_PATH;
+  const env = privateWorker ? { ...privateWorker.env } : buildCodexEnv(config.sdk, process.env);
+  const testExecutable = privateWorker ? undefined : process.env.CODEX_OCTO_TEST_CODEX_PATH;
   if (testExecutable) {
     if (!process.env.CODEX_OCTO_TEST_PROFILE_ROOT) throw new Error('Pinned test executable requires an isolated profile');
     // Validate both profile switches and protected paths, not just a nonempty root.
@@ -448,9 +454,12 @@ export async function* queryAgentEvents(
     // Managed runs always retain the JSONL proxy; pin its owned child instead.
     codexPathOverride: (testExecutable && !opts?.onManagedExecution) ? testExecutable
       : resolveJsonlProxyPath(fileURLToPath(new URL('./codex-jsonl-proxy.mjs', import.meta.url))),
-    ...(config.sdk.codexApiKey ? { apiKey: config.sdk.codexApiKey } : {}),
-    ...(config.sdk.codexBaseUrl ? { baseUrl: config.sdk.codexBaseUrl } : {}),
+    ...((privateWorker ? privateWorker.provider?.apiKey : config.sdk.codexApiKey)
+      ? { apiKey: privateWorker ? privateWorker.provider!.apiKey : config.sdk.codexApiKey } : {}),
+    ...((privateWorker ? privateWorker.provider?.baseUrl : config.sdk.codexBaseUrl)
+      ? { baseUrl: privateWorker ? privateWorker.provider!.baseUrl : config.sdk.codexBaseUrl } : {}),
     ...(env ? { env } : {}),
+    ...(privateWorker ? { configOverrides: [...privateWorker.configOverrides] } : {}),
   };
   let codex: Codex | undefined;
   try { codex = opts?.onManagedExecution ? undefined : new Codex(codexOptions); }
@@ -469,6 +478,11 @@ export async function* queryAgentEvents(
     throw error;
   }
   const threadOpts = buildThreadOptions(config, cwd);
+  if (privateWorker) {
+    threadOpts.sandboxMode = 'read-only'; threadOpts.approvalPolicy = 'never';
+    threadOpts.networkAccessEnabled = false; threadOpts.webSearchEnabled = false;
+    threadOpts.webSearchMode = 'disabled'; delete threadOpts.additionalDirectories;
+  }
   // Do not execute with stale instructions or silently re-enable a sandbox
   // the operator explicitly disabled (which may be unavailable in a container).
   if (!agentsMdOk && threadOpts.sandboxMode === 'danger-full-access') {
@@ -489,7 +503,7 @@ export async function* queryAgentEvents(
 
   // Restate the security framing atop the prompt (defense in depth — AGENTS.md
   // is the primary channel, this guards against it being ignored/unread).
-  const memoryContext = opts?.privateMemoryContext ?? '';
+  const memoryContext = privateWorker ? '' : opts?.privateMemoryContext ?? '';
   const senderContext = opts?.senderContext ?? safeSenderMetadata({
     from_uid: null, channel_id: null, channel_type: null, is_owner: false,
     message_id: null, ...normalizeInboundMention(undefined, undefined),
@@ -526,7 +540,8 @@ export async function* queryAgentEvents(
   ): AsyncIterable<AgentOutputEvent> {
     const attempt = attemptCount++;
     diagnosticRun = {mode:resumeId ? 'resume' : 'start', attempt, resumeId};
-    const scope = opts?.onManagedExecution ? new ExecutionScope(testExecutable, testExecutable ? 'executable' : 'node') : undefined;
+    const scope = opts?.onManagedExecution ? new ExecutionScope(privateWorker?.launcher ?? testExecutable,
+      privateWorker || testExecutable ? 'executable' : 'node', privateWorker?.workdir) : undefined;
     attemptScope = scope;
     if (scope) opts?.onManagedExecution?.(scope);
     const baseEnv = { ...(env ?? Object.fromEntries(Object.entries(process.env).filter((pair): pair is [string,string] => pair[1] !== undefined))) };
@@ -537,8 +552,13 @@ export async function* queryAgentEvents(
     // fields or infer stopped from a file it could write itself.
     const client = codex ?? new Codex({ ...codexOptions, env: managedProxy ? scope!.environment(baseEnv) : baseEnv });
     yield { kind: 'attempt_start', attempt, reason: attemptCtx.reason, continues: attemptCtx.continues };
-    const thread = resumeId
-      ? client.resumeThread(resumeId, threadOpts)
+    const verifiedSessionId = privateWorker?.verifiedResume?.sessionId;
+    if (privateWorker && resumeId && resumeId !== verifiedSessionId) {
+      throw new Error('Unverified private worker resume refused');
+    }
+    const effectiveResumeId = privateWorker ? verifiedSessionId : resumeId;
+    const thread = effectiveResumeId
+      ? client.resumeThread(effectiveResumeId, threadOpts)
       : client.startThread(threadOpts);
     opts?.signal?.throwIfAborted();
     opts?.assertPublishable?.();
@@ -753,6 +773,8 @@ export async function* queryAgentEvents(
       throw error;
     }
   }
-  yield* recover(attempt, { config: config.sdk.recovery as RecoveryConfig | undefined,
+  // A managed permission launch cannot silently reuse its prior physical-start
+  // proof. A later attempt needs a new prepared/coordinator-owned boundary.
+  yield* recover(attempt, { config: privateWorker ? undefined : config.sdk.recovery as RecoveryConfig | undefined,
     signal: opts?.signal, deadline: opts?.deadline, id: opts?.diagnosticId, risk: () => risk });
 }

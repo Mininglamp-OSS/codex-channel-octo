@@ -18,6 +18,10 @@ import { watchConfig } from './config-watcher.js';
 import { createAdapter } from './db-adapter.js';
 import { SessionStore } from './session-store.js';
 import { OctoGateway } from './gateway.js';
+import type { ProcessingDisposition } from './permissions/ingress-reservation.js';
+import type { PermissionEndpoint } from './permissions/endpoint-host.js';
+import { managedPermissionFactory } from './permissions/endpoint-factory.js';
+import type { DbAdapter } from './db-adapter.js';
 import { SessionRouter } from './session-router.js';
 import { GroupContext } from './group-context.js';
 import { queryAgentEvents } from './agent-bridge.js';
@@ -165,7 +169,13 @@ export type BotStack = ManagedBot;
  * (the gateway registers its own SIGINT/SIGTERM handlers); false in multi-bot
  * mode where main() owns a single combined shutdown.
  */
-export async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean): Promise<BotStack> {
+export type PermissionEndpointFactory = (context: {
+  config: ReturnType<typeof loadConfig>; adapter: DbAdapter; botId: string;
+}) => Promise<PermissionEndpoint>;
+
+export async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean,
+  permissionFactory?: PermissionEndpointFactory): Promise<BotStack> {
+  permissionFactory ??= managedPermissionFactory(config);
   const label = multi ? `[${config.botId}] ` : '';
   const cwdBase = config.cwdBase ?? config.cwd;
   console.log(
@@ -182,12 +192,12 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
   }
 
   // --- Q3: per-session cwd cleanup (7d TTL) ---
-  cleanupExpiredCwds(cwdBase);
+  if (!permissionFactory) cleanupExpiredCwds(cwdBase);
   const CWD_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-  const cwdCleanupTimer = setInterval(() => {
+  const cwdCleanupTimer = permissionFactory ? undefined : setInterval(() => {
     cleanupExpiredCwds(cwdBase);
   }, CWD_CLEANUP_INTERVAL_MS);
-  cwdCleanupTimer.unref();
+  cwdCleanupTimer?.unref();
 
   // --- Database (per-bot dataDir → no cross-bot history) ---
   // createAdapter / new SessionStore are created INSIDE the try below, so a
@@ -196,6 +206,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
   // interval for the surviving gateway's lifetime.
   const dbPath = join(config.dataDir, 'cc-octo.db');
   let storeForCleanup: SessionStore | undefined;
+  let permissionForCleanup: PermissionEndpoint | undefined;
 
   // Set right after gateway construction; releaseLock is nonce-guarded so it is
   // a no-op until register() actually acquires the lock, and the catch can call
@@ -212,27 +223,36 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     const store = new SessionStore(adapter);
     storeForCleanup = store;
     store.init();
-    const cleaned = store.cleanExpired();
+    const cleaned = permissionFactory ? 0 : store.cleanExpired();
     if (cleaned > 0) {
       console.log(`[codex-channel-octo] ${label}Cleaned ${cleaned} expired session(s)`);
     }
 
     // --- Group context ---
     const groupContext = new GroupContext(adapter, config.context.maxContextChars);
-    groupContext.loadAllFromDb();
+    if (!permissionFactory) groupContext.loadAllFromDb();
 
     // --- Stream relay ---
     const streamRelay = new StreamRelay();
 
     // --- Gateway. In multi-bot mode main() owns shutdown signals, so the gateway
     // must NOT register its own (N gateways racing process.exit). ---
-    const gateway = new OctoGateway(config, { handleSignals: !multi });
+    let permissionEndpoint: PermissionEndpoint | undefined;
+    const gateway = new OctoGateway(config, { handleSignals: !multi,
+      reserveBeforeAck: permissionFactory ? delivery => permissionEndpoint
+        ? permissionEndpoint.reserveBeforeAck(delivery) : { disposition: 'unavailable' } : undefined });
     releaseGatewayLock = () => gateway.releaseLock();
     // Phase 1: register over REST (gets botId) — does NOT open the socket yet, so
     // no message can arrive before the handler below is installed.
     await gateway.register();
-    store.recoverInterruptedTurns();
-    console.log(`[codex-channel-octo] quarantined sessions=${store.quarantinedTurnCount()}`);
+    // Managed bootstrap completes before opening the native socket. A failed
+    // factory never falls back to the legacy handler or an ordinary credential.
+    if (permissionFactory) {
+      permissionEndpoint = await permissionFactory({ config, adapter, botId: gateway.botId });
+      permissionForCleanup = permissionEndpoint;
+    }
+    if (!permissionFactory) store.recoverInterruptedTurns();
+    if (!permissionFactory) console.log(`[codex-channel-octo] quarantined sessions=${store.quarantinedTurnCount()}`);
     console.log(`[codex-channel-octo] ${label}Bot registered: id=${gateway.botId}`);
 
     // #86: prefetch the media CDN host (best-effort). Octo serves media from a
@@ -240,7 +260,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // are rejected by buildMediaUrl and the agent can't see them. The STS
     // upload-credentials response carries cdnBaseUrl; we only need its host. A
     // failure leaves mediaCdnHost undefined (same-host-only media), never fatal.
-    try {
+    if (!permissionFactory) try {
       const creds = await getUploadCredentials({
         apiUrl: config.apiUrl,
         botToken: config.botToken,
@@ -268,20 +288,26 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // opened later via connect(), after main() has cross-registered sibling bot
     // ids — so there is no window where a message is ACK'd and dropped, nor one
     // where a sibling bot's message slips through unrecognized.
-    const onInbound = (msg: BotMessage): void => {
-      if (gateway.draining) return;
+    const onInbound = (msg: BotMessage): ProcessingDisposition | Promise<void | ProcessingDisposition> => {
+      if (gateway.draining) return 'uncertain';
       // Match the gateway's self-echo guard: server preference notifications
       // authored as this bot must reach the router to invalidate its cache.
       if (msg.from_uid === gateway.botId && msg.payload.event?.type !== 'mention_pref_updated'
-        && !isConversationMdEvent(msg.payload.event?.type)) return;
-      const p = handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId, () => gateway.ownerUid)
-        .catch((err) => {
+        && !isConversationMdEvent(msg.payload.event?.type)) return 'terminal';
+      let tracked!: Promise<void>;
+      const p = (permissionEndpoint ? permissionEndpoint.handle(msg)
+        : handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId, () => gateway.ownerUid))
+        .catch((err): ProcessingDisposition => {
           console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, summarizeAgentError(err));
+          if (permissionEndpoint) throw err; // WKSocket records an uncertain managed outcome.
+          return 'uncertain';
         })
         .finally(() => {
-          activeHandlers.delete(p);
+          activeHandlers.delete(tracked);
         });
-      activeHandlers.add(p);
+      tracked = p.then(() => undefined, () => undefined);
+      activeHandlers.add(tracked);
+      return p;
     };
     gateway.setMessageHandler(onInbound);
 
@@ -297,6 +323,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       clearInterval(cwdCleanupTimer);
       await router.stopTurns();
       await gateway.stop(activeHandlers);
+      await permissionEndpoint?.stop();
       store.close();
     };
     // Single-bot: the gateway's own SIGINT/SIGTERM handler invokes this.
@@ -310,6 +337,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // register() releases its own lock when IT fails; this covers the window
     // where register() succeeded (lock held) but a later step threw.
     releaseGatewayLock?.();
+    try { await permissionForCleanup?.stop(); } catch { /* startup remains failed */ }
     try {
       storeForCleanup?.close();
     } catch {

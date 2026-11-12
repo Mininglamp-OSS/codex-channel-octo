@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/__tests__/octo/preack-loopback.test.ts",
+    "src/__tests__/permission-replay-journal.test.ts",
+    "src/__tests__/permission-context-provenance.test.ts",
+    "src/__tests__/permission-control-client.test.ts",
+    "src/__tests__/permission-endpoint-host.test.ts",
+    "src/__tests__/permission-worker-launch.test.ts",
+    "src/__tests__/permission-producer-abi.test.ts",
+    "src/__tests__/permission-catalog-boot.test.ts"
+  ],
+  "exclude": ["node_modules", "dist", "coverage"]
+}

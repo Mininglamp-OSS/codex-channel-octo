@@ -1,0 +1,1283 @@
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { createConnection as createNetConnection, createServer as createNetServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, relative } from 'node:path';
+import { checkServerIdentity as tlsCheckServerIdentity, connect as tlsConnect } from 'node:tls';
+
+export interface TurnRelayTrust {
+  readonly ca_file?: string;
+  readonly ca_pem?: string;
+  readonly ca_sha256?: string;
+  readonly peer_sha256?: string;
+  readonly cert_sha256?: string;
+  readonly server_name?: string;
+}
+
+export type TurnRelay =
+  | {
+      transport: 'stdio';
+      executable: string;
+      executableSha256: string;
+      handle: string;
+      tls?: Readonly<TurnRelayTrust>;
+      caCert?: Uint8Array | string;
+      caSha256?: string;
+      peerSha256?: string;
+    }
+  | {
+      transport: 'http';
+      url: string;
+      handle: string;
+      tls?: Readonly<TurnRelayTrust>;
+      caCert?: Uint8Array | string;
+      caSha256?: string;
+      peerSha256?: string;
+    };
+
+export interface VerifiedWorkerResume {
+  readonly generation: string;
+  readonly turnId: string;
+  readonly sessionId: string;
+  readonly scopeIncarnation: string;
+  readonly contextEpoch: string;
+  readonly contributorCount: number;
+  readonly workdir?: string;
+  readonly codexHome?: string;
+}
+
+export interface PrivateWorkerLaunch {
+  readonly launcher: string;
+  readonly workdir: string;
+  readonly codexHome: string;
+  readonly instructions: string;
+  readonly provider?: Readonly<{ baseUrl: string; apiKey?: string }>;
+  readonly env: Readonly<Record<string, string>>;
+  readonly configOverrides: readonly string[];
+  readonly verifiedResume?: Readonly<VerifiedWorkerResume>;
+  readonly relayCaPath?: string;
+  readonly relayTls?: Readonly<TurnRelayTrust>;
+  readonly relayUrl?: string;
+}
+
+export interface IsolatingWorkerLauncherOptions {
+  readonly root: string;
+  readonly targetExecutable: string;
+  readonly targetExecutableSha256: string;
+  readonly targetArgs?: readonly string[];
+  readonly deniedPaths?: readonly string[];
+  readonly allowNetwork?: boolean;
+  readonly platform?: 'darwin' | 'linux';
+  readonly sandboxExecutable?: string;
+}
+
+export interface PinnedIsolatingLauncher {
+  readonly launcher: string;
+  readonly launcherSha256: string;
+  readonly backend: 'darwin-sandbox-exec' | 'linux-bwrap';
+  readonly profilePath?: string;
+}
+
+function pinnedExecutable(path: string, digest: string): void {
+  if (!isAbsolute(path) || !/^[0-9a-f]{64}$/.test(digest)) throw new Error('Pinned worker executable unavailable');
+  const stat = lstatSync(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 || (stat.mode & 0o111) === 0
+    || createHash('sha256').update(readFileSync(path)).digest('hex') !== digest) throw new Error('Pinned worker executable unavailable');
+}
+
+function assertPrivateDirectory(path: string, message: string): void {
+  if (!isAbsolute(path)) throw new Error(message);
+  const stat = lstatSync(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) throw new Error(message);
+}
+
+function assertInsideRoot(root: string, candidate: string, message: string): void {
+  assertPrivateDirectory(candidate, message);
+  const rootReal = realpathSync(root);
+  const candidateReal = realpathSync(candidate);
+  const rel = relative(rootReal, candidateReal);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error(message);
+}
+
+function writeFreshPrivateFile(path: string, content: string | Uint8Array): void {
+  try {
+    const prev = lstatSync(path);
+    if (!prev.isFile() || prev.isSymbolicLink() || prev.nlink !== 1) {
+      throw new Error('Private worker file unavailable');
+    }
+    rmSync(path);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
+  }
+  writeFileSync(path, content, { mode: 0o600, flag: 'wx' });
+}
+
+function validateVerifiedResume(root: string, resume: VerifiedWorkerResume): Readonly<VerifiedWorkerResume> {
+  if (!/^[0-9a-f]{32}$/.test(resume.generation)
+    || !/^[0-9a-f]{32}$/.test(resume.turnId)
+    || !/^[0-9a-f]{32}$/.test(resume.scopeIncarnation)
+    || !/^(?:0|[1-9][0-9]{0,19})$/.test(resume.contextEpoch)
+    || !/^[\x21-\x7e]{1,256}$/.test(resume.sessionId)
+    || !Number.isInteger(resume.contributorCount)
+    || resume.contributorCount < 1
+    || resume.contributorCount > 256) {
+    throw new Error('Verified worker resume unavailable');
+  }
+  if ((resume.workdir !== undefined) !== (resume.codexHome !== undefined)) {
+    throw new Error('Verified worker resume unavailable');
+  }
+  if (resume.workdir !== undefined && resume.codexHome !== undefined) {
+    if (resume.workdir === resume.codexHome) throw new Error('Verified worker resume unavailable');
+    assertInsideRoot(root, resume.workdir, 'Verified worker resume unavailable');
+    assertInsideRoot(root, resume.codexHome, 'Verified worker resume unavailable');
+  }
+  return Object.freeze({ ...resume });
+}
+
+/** Fixed launch-data encoder, not a configuration language/interpreter. */
+function inlineTable(value: unknown): string {
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(inlineTable).join(',')}]`;
+  if (!value || typeof value !== 'object') throw new Error('Worker configuration unavailable');
+  return `{${Object.entries(value).map(([key, item]) => `${JSON.stringify(key)}=${inlineTable(item)}`).join(',')}}`;
+}
+
+/**
+ * Materialize a host-owned, SHA-256-pinned OS-sandboxed worker launcher that
+ * denies reading/writing protected host paths (coordinator socket/keys, replay
+ * journal, host dataDir) even under the same UID, and restricts filesystem
+ * writes to the worker's per-generation workdir and CODEX_HOME.
+ */
+export function createIsolatingWorkerLauncher(options: IsolatingWorkerLauncherOptions): Readonly<PinnedIsolatingLauncher> {
+  assertPrivateDirectory(options.root, 'Private worker root unavailable');
+  pinnedExecutable(options.targetExecutable, options.targetExecutableSha256);
+  const targetArgs = options.targetArgs ? [...options.targetArgs] : [];
+  if (!targetArgs.every(arg => typeof arg === 'string' && !arg.includes('\0'))) {
+    throw new Error('Pinned worker executable unavailable');
+  }
+  const deniedSet = new Set<string>();
+  for (const rawPath of options.deniedPaths ?? []) {
+    if (typeof rawPath !== 'string' || !isAbsolute(rawPath) || /[\0\r\n"\\]/.test(rawPath)) {
+      throw new Error('Isolated worker denied path unavailable');
+    }
+    deniedSet.add(rawPath);
+    if (existsSync(rawPath)) {
+      const resolved = realpathSync(rawPath);
+      if (/[\0\r\n"\\]/.test(resolved)) throw new Error('Isolated worker denied path unavailable');
+      deniedSet.add(resolved);
+    }
+  }
+  const deniedPaths = [...deniedSet];
+  const launcherDir = mkdtempSync(join(options.root, 'isolated-launcher-'));
+  chmodSync(launcherDir, 0o700);
+  const targetRealpath = realpathSync(options.targetExecutable);
+  const targetPlatform = options.platform ?? process.platform;
+
+  if (targetPlatform === 'darwin') {
+    const sandboxExec = options.sandboxExecutable ?? '/usr/bin/sandbox-exec';
+    if (!isAbsolute(sandboxExec) || !existsSync(sandboxExec)) throw new Error('OS sandbox launcher unavailable');
+    const sbStat = lstatSync(sandboxExec);
+    if (!sbStat.isFile() || sbStat.isSymbolicLink() || (sbStat.mode & 0o111) === 0) {
+      throw new Error('OS sandbox launcher unavailable');
+    }
+    const profilePath = join(launcherDir, 'worker.sb');
+    const denyRules = deniedPaths.flatMap(p => [
+      `(deny file-read* file-write* (subpath ${JSON.stringify(p)}) (literal ${JSON.stringify(p)}))`,
+    ]);
+    const networkRules = options.allowNetwork === false
+      ? [
+          '(deny network-outbound (remote ip))',
+          '(allow network-outbound (remote ip "localhost:*"))',
+        ]
+      : [];
+    const profileLines = [
+      '(version 1)',
+      '(allow default)',
+      '(deny file-write* (subpath "/"))',
+      ...networkRules,
+      ...denyRules,
+      '(allow file-read-metadata (subpath "/"))',
+      `(allow file-read* (literal ${JSON.stringify(options.targetExecutable)}) (literal ${JSON.stringify(targetRealpath)}))`,
+      '(allow file-read* file-write* (subpath (param "WORKER_CWD")) (subpath (param "CODEX_HOME")) (subpath (param "WORKER_CWD_LEX")) (subpath (param "CODEX_HOME_LEX")))',
+      '(allow file-write* (literal "/dev/null") (literal "/dev/zero") (literal "/dev/tty") (literal "/dev/dtracehelper"))',
+    ];
+    writeFileSync(profilePath, profileLines.join('\n') + '\n', { mode: 0o600, flag: 'wx' });
+    const profileRealpath = realpathSync(profilePath);
+    const finalProfile = [
+      ...profileLines,
+      `(allow file-read* (literal ${JSON.stringify(profilePath)}) (literal ${JSON.stringify(profileRealpath)}))`,
+    ].join('\n') + '\n';
+    writeFreshPrivateFile(profilePath, finalProfile);
+
+    const launcherPath = join(launcherDir, 'isolated-worker');
+    const wrapperSource = `#!${process.execPath}
+const { spawn } = require('node:child_process');
+const { isAbsolute } = require('node:path');
+const { realpathSync } = require('node:fs');
+const cwdLex = process.cwd();
+const codexHomeLex = process.env.CODEX_HOME || '';
+delete process.env.CODEX_OCTO_RELAY_UDS;
+delete process.env.CODEX_OCTO_RELAY_PORT;
+if (!isAbsolute(cwdLex) || !isAbsolute(codexHomeLex)) {
+  process.stderr.write('Isolated worker requires absolute cwd and CODEX_HOME\\n');
+  process.exit(78);
+}
+const cwdReal = realpathSync(cwdLex);
+const codexHomeReal = realpathSync(codexHomeLex);
+const args = [
+  '-f', ${JSON.stringify(profileRealpath)},
+  '-D', 'WORKER_CWD=' + cwdReal,
+  '-D', 'CODEX_HOME=' + codexHomeReal,
+  '-D', 'WORKER_CWD_LEX=' + cwdLex,
+  '-D', 'CODEX_HOME_LEX=' + codexHomeLex,
+  ${JSON.stringify(options.targetExecutable)},
+  ...${JSON.stringify(targetArgs)},
+  ...process.argv.slice(2),
+];
+const child = spawn(${JSON.stringify(sandboxExec)}, args, { stdio: 'inherit', env: process.env });
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  process.on(sig, () => { try { child.kill(sig); } catch {} });
+}
+child.on('exit', (code, signal) => {
+  if (signal) { try { process.kill(process.pid, signal); } catch {} process.exit(1); }
+  process.exit(code ?? 1);
+});
+child.on('error', () => process.exit(78));
+`;
+    writeFileSync(launcherPath, wrapperSource, { mode: 0o700, flag: 'wx' });
+    const launcherSha256 = createHash('sha256').update(wrapperSource).digest('hex');
+    pinnedExecutable(launcherPath, launcherSha256);
+    return Object.freeze({
+      launcher: launcherPath,
+      launcherSha256,
+      backend: 'darwin-sandbox-exec',
+      profilePath: profileRealpath,
+    });
+  }
+
+  if (targetPlatform === 'linux') {
+    const candidates = options.sandboxExecutable ? [options.sandboxExecutable] : ['/usr/bin/bwrap', '/bin/bwrap'];
+    const bwrap = candidates.find(candidate => {
+      if (!isAbsolute(candidate) || !existsSync(candidate)) return false;
+      const st = lstatSync(candidate);
+      return st.isFile() && !st.isSymbolicLink() && (st.mode & 0o111) !== 0;
+    });
+    if (!bwrap) throw new Error('OS sandbox launcher unavailable');
+    const bwrapBaseArgs = [
+      '--ro-bind', '/', '/',
+      '--dev', '/dev',
+      '--proc', '/proc',
+      '--unshare-pid',
+      '--unshare-ipc',
+      ...(options.allowNetwork === false ? ['--unshare-net'] : []),
+      '--die-with-parent',
+    ];
+    const bridgeScriptPath = join(launcherDir, 'bwrap-netns-bridge.cjs');
+    const bridgeScriptSource = `const { spawn } = require('node:child_process');
+const net = require('node:net');
+const [target, ...args] = process.argv.slice(2);
+const udsPath = process.env.CODEX_OCTO_RELAY_UDS || '';
+const relayPort = Number(process.env.CODEX_OCTO_RELAY_PORT || '0');
+delete process.env.CODEX_OCTO_RELAY_UDS;
+delete process.env.CODEX_OCTO_RELAY_PORT;
+function runTarget(effectiveArgs) {
+  const child = spawn(target, effectiveArgs, { stdio: 'inherit', env: process.env });
+  for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+    process.on(sig, () => { try { child.kill(sig); } catch {} });
+  }
+  child.on('exit', (code, signal) => {
+    if (signal) { try { process.kill(process.pid, signal); } catch {} process.exit(1); }
+    process.exit(code ?? 1);
+  });
+  child.on('error', () => process.exit(78));
+}
+function pipeToUds(client) {
+  const upstream = net.createConnection(udsPath);
+  client.pipe(upstream);
+  upstream.pipe(client);
+  client.on('error', () => upstream.destroy());
+  upstream.on('error', () => client.destroy());
+}
+if (!udsPath || !Number.isInteger(relayPort) || relayPort <= 0) {
+  runTarget(args);
+} else {
+  const server = net.createServer(pipeToUds);
+  server.unref();
+  server.once('error', (err) => {
+    if (err && err.code === 'EADDRINUSE') {
+      const fallback = net.createServer(pipeToUds);
+      fallback.unref();
+      fallback.once('error', () => process.exit(78));
+      fallback.listen(0, '127.0.0.1', () => {
+        const addr = fallback.address();
+        const newPort = addr && typeof addr === 'object' ? addr.port : relayPort;
+        const rewritten = args.map(a => a.replaceAll('127.0.0.1:' + relayPort, '127.0.0.1:' + newPort));
+        runTarget(rewritten);
+      });
+      return;
+    }
+    process.exit(78);
+  });
+  server.listen(relayPort, '127.0.0.1', () => runTarget(args));
+}
+`;
+    writeFileSync(bridgeScriptPath, bridgeScriptSource, { mode: 0o700, flag: 'wx' });
+    const bridgeScriptReal = realpathSync(bridgeScriptPath);
+    const launcherPath = join(launcherDir, 'isolated-worker');
+    const wrapperSource = `#!${process.execPath}
+const { spawn } = require('node:child_process');
+const { existsSync, lstatSync, realpathSync } = require('node:fs');
+const { dirname, isAbsolute } = require('node:path');
+const cwdLex = process.cwd();
+const codexHomeLex = process.env.CODEX_HOME || '';
+const relayUds = process.env.CODEX_OCTO_RELAY_UDS || '';
+const relayPort = process.env.CODEX_OCTO_RELAY_PORT || '';
+if (!isAbsolute(cwdLex) || !isAbsolute(codexHomeLex)) {
+  process.stderr.write('Isolated worker requires absolute cwd and CODEX_HOME\\n');
+  process.exit(78);
+}
+const cwdReal = realpathSync(cwdLex);
+const codexHomeReal = realpathSync(codexHomeLex);
+const bwrapArgs = ${JSON.stringify(bwrapBaseArgs)};
+const sortedDenied = [...${JSON.stringify(deniedPaths)}].sort((a, b) => a.length - b.length);
+const deniedDirs = [];
+for (const denied of sortedDenied) {
+  if (!existsSync(denied)) continue;
+  const st = lstatSync(denied);
+  if (st.isDirectory()) { bwrapArgs.push('--tmpfs', denied); deniedDirs.push(denied); }
+  else if (st.isFile()) bwrapArgs.push('--ro-bind', '/dev/null', denied);
+}
+bwrapArgs.push('--ro-bind', ${JSON.stringify(targetRealpath)}, ${JSON.stringify(targetRealpath)});
+if (${JSON.stringify(options.targetExecutable)} !== ${JSON.stringify(targetRealpath)}) {
+  bwrapArgs.push('--ro-bind', ${JSON.stringify(options.targetExecutable)}, ${JSON.stringify(options.targetExecutable)});
+}
+bwrapArgs.push('--bind', cwdReal, cwdReal, '--bind', codexHomeReal, codexHomeReal);
+let useNetnsBridge = false;
+let udsDirReal = '';
+if (relayUds && relayPort && isAbsolute(relayUds) && existsSync(dirname(relayUds))) {
+  udsDirReal = realpathSync(dirname(relayUds));
+  bwrapArgs.push('--bind', udsDirReal, udsDirReal);
+  bwrapArgs.push('--ro-bind', ${JSON.stringify(bridgeScriptReal)}, ${JSON.stringify(bridgeScriptReal)});
+  useNetnsBridge = true;
+} else {
+  delete process.env.CODEX_OCTO_RELAY_UDS;
+  delete process.env.CODEX_OCTO_RELAY_PORT;
+}
+for (const dir of [...deniedDirs].reverse()) {
+  if (dir !== cwdReal && dir !== codexHomeReal && dir !== cwdLex && dir !== codexHomeLex && dir !== udsDirReal) {
+    bwrapArgs.push('--remount-ro', dir);
+  }
+}
+if (useNetnsBridge) {
+  bwrapArgs.push('--', ${JSON.stringify(process.execPath)}, ${JSON.stringify(bridgeScriptReal)}, ${JSON.stringify(options.targetExecutable)}, ...${JSON.stringify(targetArgs)}, ...process.argv.slice(2));
+} else {
+  bwrapArgs.push('--', ${JSON.stringify(options.targetExecutable)}, ...${JSON.stringify(targetArgs)}, ...process.argv.slice(2));
+}
+const child = spawn(${JSON.stringify(bwrap)}, bwrapArgs, { stdio: 'inherit', env: process.env });
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  process.on(sig, () => { try { child.kill(sig); } catch {} });
+}
+child.on('exit', (code, signal) => {
+  if (signal) { try { process.kill(process.pid, signal); } catch {} process.exit(1); }
+  process.exit(code ?? 1);
+});
+child.on('error', () => process.exit(78));
+`;
+    writeFileSync(launcherPath, wrapperSource, { mode: 0o700, flag: 'wx' });
+    const launcherSha256 = createHash('sha256').update(wrapperSource).digest('hex');
+    pinnedExecutable(launcherPath, launcherSha256);
+    return Object.freeze({
+      launcher: launcherPath,
+      launcherSha256,
+      backend: 'linux-bwrap',
+    });
+  }
+
+  throw new Error('OS sandbox launcher unavailable');
+}
+
+export function validRelayServerName(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 253) return false;
+  if (/[/:\r\n\t\\ ]/.test(value)) return false;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 33 || code > 126) return false;
+  }
+  return true;
+}
+
+function readRelayCaFile(caFile: string): Buffer {
+  if (!isAbsolute(caFile) || /[\r\n\0]/.test(caFile)) {
+    throw new Error('Turn relay CA file unavailable');
+  }
+  const stat = lstatSync(caFile);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > 256 * 1024) {
+    throw new Error('Turn relay CA file unavailable');
+  }
+  const bytes = readFileSync(caFile);
+  if (bytes.byteLength === 0 || bytes.byteLength > 256 * 1024 || !bytes.toString('utf8').includes('-----BEGIN CERTIFICATE-----')) {
+    throw new Error('Turn relay CA file unavailable');
+  }
+  return bytes;
+}
+
+function validateTurnRelayTrust(tls: TurnRelayTrust | undefined): {
+  trust?: Readonly<TurnRelayTrust>;
+  caBytes?: Buffer;
+} {
+  if (tls === undefined) return {};
+  if (!tls || typeof tls !== 'object' || Array.isArray(tls)) {
+    throw new Error('Turn relay trust unavailable');
+  }
+  const allowed = new Set(['ca_file', 'ca_pem', 'ca_sha256', 'peer_sha256', 'cert_sha256', 'server_name']);
+  for (const key of Object.keys(tls)) {
+    if (!allowed.has(key)) throw new Error('Turn relay trust unavailable');
+  }
+  let caBytes: Buffer | undefined;
+  const out: {
+    ca_file?: string;
+    ca_sha256?: string;
+    peer_sha256?: string;
+    cert_sha256?: string;
+    server_name?: string;
+  } = {};
+  if (tls.ca_file !== undefined) {
+    if (typeof tls.ca_file !== 'string' || !tls.ca_file) throw new Error('Turn relay CA file unavailable');
+    caBytes = readRelayCaFile(tls.ca_file);
+    out.ca_file = tls.ca_file;
+  }
+  if (tls.ca_pem !== undefined) {
+    if (typeof tls.ca_pem !== 'string' || !tls.ca_pem) throw new Error('Turn relay CA bundle unavailable');
+    const pemBytes = Buffer.from(tls.ca_pem, 'utf8');
+    if (pemBytes.byteLength === 0 || pemBytes.byteLength > 256 * 1024 || !tls.ca_pem.includes('-----BEGIN CERTIFICATE-----')) {
+      throw new Error('Turn relay CA bundle unavailable');
+    }
+    if (caBytes && Buffer.compare(caBytes, pemBytes) !== 0) {
+      throw new Error('Turn relay CA bundle mismatch');
+    }
+    caBytes = pemBytes;
+  }
+  if (tls.ca_sha256 !== undefined) {
+    if (typeof tls.ca_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(tls.ca_sha256)) {
+      throw new Error('Turn relay CA digest unavailable');
+    }
+    if (caBytes && createHash('sha256').update(caBytes).digest('hex') !== tls.ca_sha256) {
+      throw new Error('Turn relay CA digest mismatch');
+    }
+    out.ca_sha256 = tls.ca_sha256;
+  }
+  if (tls.peer_sha256 !== undefined) {
+    if (typeof tls.peer_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(tls.peer_sha256)) {
+      throw new Error('Turn relay peer digest unavailable');
+    }
+    out.peer_sha256 = tls.peer_sha256;
+  }
+  if (tls.cert_sha256 !== undefined) {
+    if (typeof tls.cert_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(tls.cert_sha256)) {
+      throw new Error('Turn relay certificate digest unavailable');
+    }
+    out.cert_sha256 = tls.cert_sha256;
+  }
+  if (out.peer_sha256 !== undefined && out.cert_sha256 !== undefined && out.peer_sha256 !== out.cert_sha256) {
+    throw new Error('Turn relay peer digest mismatch');
+  }
+  if (out.peer_sha256 !== undefined && out.cert_sha256 === undefined) {
+    out.cert_sha256 = out.peer_sha256;
+  }
+  if (tls.server_name !== undefined) {
+    if (!validRelayServerName(tls.server_name)) {
+      throw new Error('Turn relay server_name unavailable');
+    }
+    out.server_name = tls.server_name;
+  }
+  return { trust: Object.freeze(out), ...(caBytes ? { caBytes } : {}) };
+}
+
+function validRelayMaxResponseBytes(value: unknown): value is number | string {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 1 && value <= 64 * 1024 * 1024;
+  }
+  if (typeof value === 'string' && /^[1-9][0-9]{0,18}$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 64 * 1024 * 1024;
+  }
+  return false;
+}
+
+function encodeGoRelayTicket(ticket: {
+  ca_file?: string;
+  ca_sha256?: string;
+  cert_sha256?: string;
+  endpoint: string;
+  max_response_bytes?: number | string;
+  peer_sha256?: string;
+  server_name?: string;
+  token: string;
+}): string {
+  const ordered: Record<string, number | string> = {};
+  if (ticket.ca_file) ordered.ca_file = ticket.ca_file;
+  if (ticket.ca_sha256) ordered.ca_sha256 = ticket.ca_sha256;
+  if (ticket.cert_sha256) ordered.cert_sha256 = ticket.cert_sha256;
+  ordered.endpoint = ticket.endpoint;
+  if (ticket.max_response_bytes !== undefined) ordered.max_response_bytes = ticket.max_response_bytes;
+  if (ticket.peer_sha256) ordered.peer_sha256 = ticket.peer_sha256;
+  if (ticket.server_name) ordered.server_name = ticket.server_name;
+  ordered.token = ticket.token;
+  const json = JSON.stringify(ordered)
+    .replace(/[<>&\u2028\u2029]/g, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return Buffer.from(json, 'utf8').toString('base64url');
+}
+
+/**
+ * Host-owned launch preparation. The pinned launcher must implement the actual
+ * OS/process/network/FD isolation profile; private directories or SDK flags are
+ * not substitutes for it. No host credential/config/environment is inherited.
+ */
+export function preparePrivateWorker(options: {
+  root: string; launcher: string; launcherSha256: string; relay: TurnRelay; instructions: string;
+  provider?: { baseUrl: string; apiKey?: string };
+  verifiedResume?: VerifiedWorkerResume;
+}): Readonly<PrivateWorkerLaunch> {
+  pinnedExecutable(options.launcher, options.launcherSha256);
+  assertPrivateDirectory(options.root, 'Private worker root unavailable');
+  if (!/^[A-Za-z0-9_-]{1,512}$/.test(options.relay.handle)) throw new Error('Turn relay handle unavailable');
+  const verifiedResume = options.verifiedResume !== undefined
+    ? validateVerifiedResume(options.root, options.verifiedResume)
+    : undefined;
+  let provider: Readonly<{ baseUrl: string; apiKey?: string }> | undefined;
+  if (options.provider) {
+    const url = new URL(options.provider.baseUrl);
+    if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search
+      || (options.provider.apiKey !== undefined && (typeof options.provider.apiKey !== 'string' || !options.provider.apiKey))) {
+      throw new Error('Explicit model provider unavailable');
+    }
+    provider = Object.freeze({ baseUrl: url.href, ...(options.provider.apiKey ? { apiKey: options.provider.apiKey } : {}) });
+  }
+  const validatedTls = validateTurnRelayTrust(options.relay.tls);
+  let relayCaBytes: Buffer | undefined = validatedTls.caBytes;
+  let parsedStdioTicket: {
+    endpoint: string;
+    token: string;
+    ca_file?: string;
+    ca_sha256?: string;
+    peer_sha256?: string;
+    cert_sha256?: string;
+    server_name?: string;
+    max_response_bytes?: number | string;
+  } | undefined;
+  if (options.relay.caCert !== undefined && relayCaBytes === undefined) {
+    relayCaBytes = typeof options.relay.caCert === 'string'
+      ? Buffer.from(options.relay.caCert, 'utf8')
+      : Buffer.from(options.relay.caCert);
+    if (relayCaBytes.byteLength === 0 || relayCaBytes.byteLength > 256 * 1024
+      || !relayCaBytes.toString('utf8').includes('-----BEGIN CERTIFICATE-----')) {
+      throw new Error('Turn relay CA bundle unavailable');
+    }
+  }
+  if (options.relay.caSha256 !== undefined && !/^[0-9a-f]{64}$/.test(options.relay.caSha256)) {
+    throw new Error('Turn relay CA digest unavailable');
+  }
+  if (options.relay.peerSha256 !== undefined && !/^[0-9a-f]{64}$/.test(options.relay.peerSha256)) {
+    throw new Error('Turn relay peer digest unavailable');
+  }
+  let server: Record<string, unknown>;
+  let relayUrl: string | undefined;
+  if (options.relay.transport === 'stdio') {
+    pinnedExecutable(options.relay.executable, options.relay.executableSha256);
+    try {
+      const rawBytes = Buffer.from(options.relay.handle, 'base64url');
+      if (rawBytes.toString('base64url') === options.relay.handle) {
+        const decoded = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(rawBytes)) as Record<string, unknown>;
+        if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)
+          && typeof decoded.endpoint === 'string' && typeof decoded.token === 'string') {
+          if (Object.hasOwn(decoded, 'max_response_bytes') && !validRelayMaxResponseBytes(decoded.max_response_bytes)) {
+            throw new Error('Turn relay max_response_bytes unavailable');
+          }
+          const ticketTrust = validateTurnRelayTrust({
+            ...(typeof decoded.ca_file === 'string' ? { ca_file: decoded.ca_file } : {}),
+            ...(typeof decoded.ca_sha256 === 'string' ? { ca_sha256: decoded.ca_sha256 } : {}),
+            ...(typeof decoded.peer_sha256 === 'string' ? { peer_sha256: decoded.peer_sha256 } : {}),
+            ...(typeof decoded.cert_sha256 === 'string' ? { cert_sha256: decoded.cert_sha256 } : {}),
+            ...(typeof decoded.server_name === 'string' ? { server_name: decoded.server_name } : {}),
+          });
+          if (relayCaBytes === undefined && ticketTrust.caBytes) {
+            relayCaBytes = ticketTrust.caBytes;
+          }
+          parsedStdioTicket = {
+            endpoint: decoded.endpoint,
+            token: decoded.token,
+            ...(ticketTrust.trust?.ca_file ? { ca_file: ticketTrust.trust.ca_file } : {}),
+            ...(ticketTrust.trust?.ca_sha256 ? { ca_sha256: ticketTrust.trust.ca_sha256 } : {}),
+            ...(ticketTrust.trust?.peer_sha256 ? { peer_sha256: ticketTrust.trust.peer_sha256 } : {}),
+            ...(ticketTrust.trust?.cert_sha256 ? { cert_sha256: ticketTrust.trust.cert_sha256 } : {}),
+            ...(ticketTrust.trust?.server_name ? { server_name: ticketTrust.trust.server_name } : {}),
+            ...(validRelayMaxResponseBytes(decoded.max_response_bytes) ? { max_response_bytes: decoded.max_response_bytes } : {}),
+          };
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('Turn relay ')) throw err;
+    }
+    server = { command: options.relay.executable, args: ['--turn-relay', options.relay.handle], env: {} };
+  } else {
+    const url = new URL(options.relay.url);
+    if (url.protocol !== 'https:' || url.username || url.password || url.hash) throw new Error('Turn relay URL unavailable');
+    relayUrl = url.href;
+    server = { url: url.href, http_headers: { Authorization: `Bearer ${options.relay.handle}` } };
+  }
+  const caSha256Candidates = [
+    options.relay.caSha256,
+    validatedTls.trust?.ca_sha256,
+    parsedStdioTicket?.ca_sha256,
+  ].filter((v): v is string => v !== undefined);
+  const caSha256 = caSha256Candidates[0];
+  if (caSha256Candidates.some(v => v !== caSha256)) {
+    throw new Error('Turn relay CA digest mismatch');
+  }
+  if (caSha256 !== undefined) {
+    if (!relayCaBytes) {
+      throw new Error('Turn relay CA bundle unavailable for pinned ca_sha256');
+    }
+    const actualCaSha256 = createHash('sha256').update(relayCaBytes).digest('hex');
+    if (actualCaSha256 !== caSha256) {
+      throw new Error('Turn relay CA digest mismatch');
+    }
+  }
+  const peerSha256Candidates = [
+    options.relay.peerSha256,
+    validatedTls.trust?.cert_sha256,
+    validatedTls.trust?.peer_sha256,
+    parsedStdioTicket?.cert_sha256,
+    parsedStdioTicket?.peer_sha256,
+  ].filter((v): v is string => v !== undefined);
+  const certSha256 = peerSha256Candidates[0];
+  if (peerSha256Candidates.some(v => v !== certSha256)) {
+    throw new Error('Turn relay peer digest mismatch');
+  }
+  let workdir: string;
+  let codexHome: string;
+  if (verifiedResume?.workdir && verifiedResume?.codexHome) {
+    workdir = verifiedResume.workdir;
+    codexHome = verifiedResume.codexHome;
+    writeFreshPrivateFile(join(workdir, 'AGENTS.md'), options.instructions);
+  } else {
+    const generation = mkdtempSync(join(options.root, 'generation-'));
+    chmodSync(generation, 0o700);
+    workdir = join(generation, 'work');
+    codexHome = join(generation, 'codex');
+    mkdirSync(workdir, { mode: 0o700 }); mkdirSync(codexHome, { mode: 0o700 });
+    writeFileSync(join(workdir, 'AGENTS.md'), options.instructions, { mode: 0o600, flag: 'wx' });
+  }
+  let relayCaPath: string | undefined;
+  const envRecord: Record<string, string> = { CODEX_HOME: codexHome };
+  if (relayCaBytes) {
+    relayCaPath = join(codexHome, 'relay-ca.pem');
+    writeFreshPrivateFile(relayCaPath, relayCaBytes);
+    envRecord.SSL_CERT_FILE = relayCaPath;
+    envRecord.NODE_EXTRA_CA_CERTS = relayCaPath;
+    if (server.env && typeof server.env === 'object') {
+      server = { ...server, env: { ...(server.env as Record<string, string>), SSL_CERT_FILE: relayCaPath, NODE_EXTRA_CA_CERTS: relayCaPath } };
+    }
+  }
+  const serverName = validatedTls.trust?.server_name ?? parsedStdioTicket?.server_name;
+  const maxResponseBytes = parsedStdioTicket?.max_response_bytes;
+  if (options.relay.transport === 'stdio' && parsedStdioTicket && (relayCaPath || caSha256 || certSha256 || serverName || maxResponseBytes !== undefined)) {
+    const withStagedCaAndDigest = encodeGoRelayTicket({
+      ...(relayCaPath ? { ca_file: relayCaPath } : {}),
+      ...(caSha256 ? { ca_sha256: caSha256 } : {}),
+      ...(certSha256 ? { cert_sha256: certSha256 } : {}),
+      endpoint: parsedStdioTicket.endpoint,
+      ...(maxResponseBytes !== undefined ? { max_response_bytes: maxResponseBytes } : {}),
+      ...(serverName ? { server_name: serverName } : {}),
+      token: parsedStdioTicket.token,
+    });
+    const withStagedCa = encodeGoRelayTicket({
+      ...(relayCaPath ? { ca_file: relayCaPath } : {}),
+      ...(certSha256 ? { cert_sha256: certSha256 } : {}),
+      endpoint: parsedStdioTicket.endpoint,
+      ...(maxResponseBytes !== undefined ? { max_response_bytes: maxResponseBytes } : {}),
+      ...(serverName ? { server_name: serverName } : {}),
+      token: parsedStdioTicket.token,
+    });
+    const effectiveHandle = withStagedCaAndDigest.length <= 512
+      ? withStagedCaAndDigest
+      : withStagedCa.length <= 512
+        ? withStagedCa
+        : encodeGoRelayTicket({
+            ...(caSha256 ? { ca_sha256: caSha256 } : {}),
+            ...(certSha256 ? { cert_sha256: certSha256 } : {}),
+            endpoint: parsedStdioTicket.endpoint,
+            ...(maxResponseBytes !== undefined ? { max_response_bytes: maxResponseBytes } : {}),
+            ...(serverName ? { server_name: serverName } : {}),
+            token: parsedStdioTicket.token,
+          });
+    server = { ...server, args: ['--turn-relay', effectiveHandle] };
+  }
+  const explicitPeerField = validatedTls.trust?.peer_sha256 ?? parsedStdioTicket?.peer_sha256 ?? options.relay.peerSha256;
+  const relayTls: Readonly<TurnRelayTrust> | undefined = (relayCaPath || validatedTls.trust?.ca_file || caSha256 || certSha256 || serverName)
+    ? Object.freeze({
+        ...((relayCaPath ?? validatedTls.trust?.ca_file) ? { ca_file: relayCaPath ?? validatedTls.trust?.ca_file } : {}),
+        ...(caSha256 ? { ca_sha256: caSha256 } : {}),
+        ...(explicitPeerField && !validatedTls.trust?.cert_sha256 ? { peer_sha256: explicitPeerField } : {}),
+        ...(certSha256 ? { cert_sha256: certSha256 } : {}),
+        ...(serverName ? { server_name: serverName } : {}),
+      })
+    : undefined;
+  // Explicit clean home + working tree, rather than assuming an empty table
+  // override erases an inherited server. Native precedence is separately tested.
+  const configOverrides = Object.freeze([
+    `mcp_servers=${inlineTable({ octo: server })}`, 'web_search="disabled"',
+    'project_doc_max_bytes=0', 'approval_policy="never"', 'sandbox_mode="read-only"',
+  ]);
+  return Object.freeze({
+    launcher: options.launcher,
+    workdir,
+    codexHome,
+    instructions: options.instructions,
+    ...(provider ? { provider } : {}),
+    ...(verifiedResume ? { verifiedResume } : {}),
+    ...(relayCaPath ? { relayCaPath } : {}),
+    ...(relayTls ? { relayTls } : {}),
+    ...(relayUrl ? { relayUrl } : {}),
+    env: Object.freeze(envRecord),
+    configOverrides,
+  });
+}
+
+/**
+ * Cryptographically verify the HTTP turn relay TLS 1.3 handshake, custom CA
+ * bundle (`ca_sha256` / `ca_file`), `server_name`, and leaf certificate digest
+ * (`cert_sha256` / `peer_sha256`) before executing a worker against an HTTP relay.
+ */
+export async function verifyHttpRelayTlsPin(
+  launch: Readonly<PrivateWorkerLaunch>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!launch.relayUrl || !launch.relayTls) return;
+  const trust = launch.relayTls;
+  const expectedPeerSha256 = trust.cert_sha256 ?? trust.peer_sha256;
+  const expectedCaSha256 = trust.ca_sha256;
+  const caPath = launch.relayCaPath ?? trust.ca_file;
+  if (!expectedPeerSha256 && !expectedCaSha256 && !caPath && !trust.server_name) return;
+
+  signal?.throwIfAborted();
+  const parsed = new URL(launch.relayUrl);
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Turn relay URL unavailable');
+  }
+  let caBytes: Buffer | undefined;
+  if (caPath) {
+    caBytes = readRelayCaFile(caPath);
+  }
+  if (expectedCaSha256) {
+    if (!caBytes) throw new Error('Turn relay CA bundle unavailable');
+    const actualCaSha256 = createHash('sha256').update(caBytes).digest('hex');
+    if (actualCaSha256 !== expectedCaSha256) {
+      throw new Error('Turn relay CA digest mismatch');
+    }
+  }
+
+  const host = parsed.hostname.startsWith('[') && parsed.hostname.endsWith(']')
+    ? parsed.hostname.slice(1, -1)
+    : parsed.hostname;
+  const port = parsed.port ? Number(parsed.port) : 443;
+  const servername = trust.server_name ?? host;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      clearTimeout(timer);
+      socket.destroy();
+      if (err) reject(err);
+      else resolve();
+    };
+    const onAbort = () => finish(new Error('Turn relay TLS verification aborted'));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => finish(new Error('Turn relay TLS verification timed out')), 5000);
+    const socket = tlsConnect({
+      host,
+      port,
+      servername,
+      ...(caBytes ? { ca: caBytes } : {}),
+      minVersion: 'TLSv1.3',
+      maxVersion: 'TLSv1.3',
+      rejectUnauthorized: true,
+    });
+    socket.once('error', (err) => finish(new Error(`Turn relay TLS verification failed: ${err.message}`)));
+    socket.once('secureConnect', () => {
+      try {
+        if (socket.getProtocol() !== 'TLSv1.3') {
+          finish(new Error('Turn relay requires TLS 1.3'));
+          return;
+        }
+        const peer = socket.getPeerCertificate(false);
+        if (!peer || !peer.raw || peer.raw.byteLength === 0) {
+          finish(new Error('Turn relay peer certificate unavailable'));
+          return;
+        }
+        if (expectedPeerSha256) {
+          const actualPeerSha256 = createHash('sha256').update(peer.raw).digest('hex');
+          if (actualPeerSha256 !== expectedPeerSha256) {
+            finish(new Error('Turn relay peer certificate digest mismatch'));
+            return;
+          }
+        }
+        finish();
+      } catch (err) {
+        finish(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  });
+}
+
+const MAX_RELAY_RESPONSE_BUDGET_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Execute an MCP JSON-RPC POST request over the actual HTTP turn-relay TLS 1.3
+ * receiving connection, enforcing custom CA (`ca_sha256` / `ca_file`),
+ * `server_name`, leaf certificate DER SHA-256 (`cert_sha256` / `peer_sha256`)
+ * via `checkServerIdentity` before sending or receiving application bytes, and
+ * fail-closed response byte bounds (`X-Octo-Acquisition-Budget-Bytes` /
+ * `Content-Length` pre-check / bounded streaming read).
+ */
+export async function postHttpTurnRelay(
+  launch: Readonly<PrivateWorkerLaunch>,
+  bearerToken: string,
+  payload: unknown,
+  options?: {
+    readonly signal?: AbortSignal;
+    readonly maxResponseBytes?: number;
+  },
+): Promise<Record<string, unknown> | undefined> {
+  if (!launch.relayUrl) throw new Error('Turn relay URL unavailable');
+  if (!/^[0-9a-f]{64}$/.test(bearerToken)) throw new Error('Turn relay bearer invalid');
+  const signal = options?.signal;
+  signal?.throwIfAborted();
+  const parsed = new URL(launch.relayUrl);
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash) {
+    throw new Error('Turn relay URL unavailable');
+  }
+  const trust = launch.relayTls;
+  const expectedPeerSha256 = trust?.cert_sha256 ?? trust?.peer_sha256;
+  const expectedCaSha256 = trust?.ca_sha256;
+  const caPath = launch.relayCaPath ?? trust?.ca_file;
+  let caBytes: Buffer | undefined;
+  if (caPath) {
+    caBytes = readRelayCaFile(caPath);
+  }
+  if (expectedCaSha256) {
+    if (!caBytes) throw new Error('Turn relay CA bundle unavailable');
+    const actualCaSha256 = createHash('sha256').update(caBytes).digest('hex');
+    if (actualCaSha256 !== expectedCaSha256) {
+      throw new Error('Turn relay CA digest mismatch');
+    }
+  }
+  const host = parsed.hostname.startsWith('[') && parsed.hostname.endsWith(']')
+    ? parsed.hostname.slice(1, -1)
+    : parsed.hostname;
+  const port = parsed.port ? Number(parsed.port) : 443;
+  const servername = trust?.server_name ?? host;
+  const bodyBytes = Buffer.from(JSON.stringify(payload), 'utf8');
+  const callerBudget = options?.maxResponseBytes;
+  if (callerBudget !== undefined && (!Number.isInteger(callerBudget) || callerBudget < 1 || callerBudget > MAX_RELAY_RESPONSE_BUDGET_BYTES)) {
+    throw new Error('RELAY_TICKET_INVALID');
+  }
+
+  return new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
+    let settled = false;
+    const finish = (err?: Error, result?: Record<string, unknown>) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      clearTimeout(timer);
+      if (err) {
+        req.destroy();
+        reject(err);
+      } else {
+        resolve(result);
+      }
+    };
+    const onAbort = () => finish(new Error('Turn relay request aborted'));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => finish(new Error('Turn relay request timed out')), 15_000);
+
+    const req = httpsRequest({
+      host,
+      port,
+      path: `${parsed.pathname}${parsed.search}`,
+      method: 'POST',
+      servername,
+      ...(caBytes ? { ca: caBytes } : {}),
+      minVersion: 'TLSv1.3',
+      maxVersion: 'TLSv1.3',
+      rejectUnauthorized: true,
+      agent: false,
+      headers: {
+        Authorization: `Bearer ${bearerToken}`,
+        'Content-Type': 'application/json',
+        'Content-Length': String(bodyBytes.byteLength),
+      },
+      checkServerIdentity: (_hostname, cert) => {
+        const sniErr = tlsCheckServerIdentity(servername, cert);
+        if (sniErr) return sniErr;
+        if (!cert || !cert.raw || cert.raw.byteLength === 0) {
+          return new Error('Turn relay peer certificate unavailable');
+        }
+        if (expectedPeerSha256) {
+          const actualPeerSha256 = createHash('sha256').update(cert.raw).digest('hex');
+          if (actualPeerSha256 !== expectedPeerSha256) {
+            return new Error('Turn relay peer certificate digest mismatch');
+          }
+        }
+        return undefined;
+      },
+    }, (res) => {
+      let effectiveLimit = callerBudget ?? MAX_RELAY_RESPONSE_BUDGET_BYTES;
+      const headerBudgetRaw = res.headers['x-octo-acquisition-budget-bytes'];
+      const headerBudgetStr = Array.isArray(headerBudgetRaw) ? headerBudgetRaw[0] : headerBudgetRaw;
+      if (typeof headerBudgetStr === 'string' && headerBudgetStr.trim() !== '') {
+        const parsedHeaderBudget = Number.parseInt(headerBudgetStr.trim(), 10);
+        if (!Number.isSafeInteger(parsedHeaderBudget) || parsedHeaderBudget < 1 || parsedHeaderBudget > MAX_RELAY_RESPONSE_BUDGET_BYTES) {
+          res.resume();
+          finish(new Error('RELAY_RESPONSE_INVALID'));
+          return;
+        }
+        if (parsedHeaderBudget < effectiveLimit) {
+          effectiveLimit = parsedHeaderBudget;
+        }
+      }
+      const contentLengthHeader = res.headers['content-length'];
+      const contentLengthRaw = Array.isArray(contentLengthHeader) ? contentLengthHeader.join(',') : contentLengthHeader;
+      if (typeof contentLengthRaw === 'string' && contentLengthRaw.trim() !== '') {
+        let declared: number | undefined;
+        for (const part of contentLengthRaw.split(',')) {
+          const trimmed = part.trim();
+          if (!trimmed) continue;
+          if (!/^(0|[1-9][0-9]*)$/.test(trimmed)) {
+            res.resume();
+            finish(new Error('RELAY_UNAVAILABLE'));
+            return;
+          }
+          const num = Number.parseInt(trimmed, 10);
+          if (declared !== undefined && declared !== num) {
+            res.resume();
+            finish(new Error('RELAY_UNAVAILABLE'));
+            return;
+          }
+          declared = num;
+        }
+        if (declared !== undefined && declared > effectiveLimit) {
+          res.destroy();
+          finish(new Error('RESPONSE_BUDGET_EXCEEDED'));
+          return;
+        }
+      }
+      if (res.statusCode !== 200 && res.statusCode !== 202) {
+        res.resume();
+        finish(new Error('RELAY_UNAVAILABLE'));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let totalBytes = 0;
+      res.on('data', (chunk: Buffer) => {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        totalBytes += buf.byteLength;
+        if (totalBytes > effectiveLimit) {
+          res.destroy();
+          finish(new Error('RESPONSE_BUDGET_EXCEEDED'));
+          return;
+        }
+        chunks.push(buf);
+      });
+      res.on('error', (err) => finish(new Error(`Turn relay response failed: ${err.message}`)));
+      res.on('end', () => {
+        if (settled) return;
+        if (res.statusCode === 202 && totalBytes === 0) {
+          finish(undefined, undefined);
+          return;
+        }
+        try {
+          const rawText = Buffer.concat(chunks, totalBytes).toString('utf8');
+          const parsedJson = JSON.parse(rawText);
+          if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
+            finish(new Error('RELAY_UNAVAILABLE'));
+            return;
+          }
+          finish(undefined, parsedJson as Record<string, unknown>);
+        } catch {
+          finish(new Error('RELAY_UNAVAILABLE'));
+        }
+      });
+    });
+
+    req.once('error', (err) => finish(new Error(`Turn relay TLS verification failed: ${err.message}`)));
+    req.end(bodyBytes);
+  });
+}
+
+export interface TurnRelayBridge {
+  readonly launch: Readonly<PrivateWorkerLaunch>;
+  readonly url?: string;
+  readonly bridgeUrl?: string;
+  readonly bridgeBearerToken?: string;
+  readonly udsPath?: string;
+  close(): Promise<void>;
+}
+
+/**
+ * Start a host-owned per-turn local relay bridge so the contained worker's
+ * actual consuming MCP connection traverses `postHttpTurnRelay` (enforcing
+ * custom CA `ca_sha256`, `server_name` SNI/SAN, leaf certificate pin
+ * `cert_sha256` / `peer_sha256`, and `X-Octo-Acquisition-Budget-Bytes` caps on
+ * every request) and bridges across Linux `bwrap --unshare-net` network
+ * namespaces over a bind-mounted Unix domain socket.
+ */
+export async function startTurnRelayBridge(
+  launch: Readonly<PrivateWorkerLaunch>,
+  options?: {
+    readonly signal?: AbortSignal;
+    readonly maxResponseBytes?: number;
+  },
+): Promise<TurnRelayBridge> {
+  const signal = options?.signal;
+  signal?.throwIfAborted();
+  let supportsNetnsUds = false;
+  try {
+    supportsNetnsUds = readFileSync(launch.launcher, 'utf8').includes('CODEX_OCTO_RELAY_UDS');
+  } catch { /* ignore */ }
+
+  if (launch.relayUrl) {
+    await verifyHttpRelayTlsPin(launch, signal);
+    const mcpOverride = launch.configOverrides.find(item => item.startsWith('mcp_servers='));
+    const bearerMatch = mcpOverride?.match(/"Authorization"="Bearer ([A-Za-z0-9_-]{1,512})"/);
+    if (!bearerMatch) throw new Error('Turn relay bearer unavailable');
+    const upstreamBearer = bearerMatch[1];
+    const bridgeBearerToken = randomBytes(32).toString('hex');
+    const expectedAuth = Buffer.from(`Bearer ${bridgeBearerToken}`, 'utf8');
+
+    const udsDir = mkdtempSync(join(tmpdir(), 'octo-r-'));
+    chmodSync(udsDir, 0o700);
+    const udsPath = join(udsDir, 'r.sock');
+
+    const handleHttp = (req: IncomingMessage, res: ServerResponse): void => {
+      void (async () => {
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' });
+          res.end('{"error":"METHOD_NOT_ALLOWED"}');
+          return;
+        }
+        const authHeader = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
+        const actualAuth = Buffer.from(authHeader, 'utf8');
+        if (actualAuth.byteLength !== expectedAuth.byteLength || !timingSafeEqual(actualAuth, expectedAuth)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end('{"error":"UNAUTHORIZED"}');
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let total = 0;
+        for await (const chunk of req) {
+          const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          total += buf.byteLength;
+          if (total > 1024 * 1024) {
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end('{"error":"REQUEST_TOO_LARGE"}');
+            return;
+          }
+          chunks.push(buf);
+        }
+        let rpcPayload: unknown;
+        try {
+          rpcPayload = JSON.parse(Buffer.concat(chunks, total).toString('utf8'));
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end('{"error":"INVALID_JSON"}');
+          return;
+        }
+        try {
+          const rpcResult = await postHttpTurnRelay(launch, upstreamBearer, rpcPayload, {
+            signal,
+            maxResponseBytes: options?.maxResponseBytes,
+          });
+          if (rpcResult === undefined) {
+            res.writeHead(202, {
+              'Content-Length': '0',
+            });
+            res.end();
+            return;
+          }
+          const body = JSON.stringify(rpcResult);
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Content-Length': String(Buffer.byteLength(body)),
+          });
+          res.end(body);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg === 'RESPONSE_BUDGET_EXCEEDED'
+            && rpcPayload && typeof rpcPayload === 'object' && !Array.isArray(rpcPayload) && 'id' in rpcPayload) {
+            const replacement = JSON.stringify({
+              jsonrpc: '2.0',
+              id: (rpcPayload as Record<string, unknown>).id ?? null,
+              error: {
+                code: -32007,
+                message: 'Permission denied',
+                data: {
+                  version: 1,
+                  category: 'response_budget_exceeded',
+                  correlation: randomBytes(16).toString('hex'),
+                },
+              },
+            });
+            res.writeHead(200, {
+              'Content-Type': 'application/json',
+              'Content-Length': String(Buffer.byteLength(replacement)),
+              'X-Octo-Relay-Error': 'RESPONSE_BUDGET_EXCEEDED',
+            });
+            res.end(replacement);
+            return;
+          }
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: msg }));
+        }
+      })();
+    };
+
+    const httpServer = createHttpServer(handleHttp);
+    const udsServer = createHttpServer(handleHttp);
+    let closed = false;
+    const close = async (): Promise<void> => {
+      if (closed) return;
+      closed = true;
+      httpServer.closeAllConnections();
+      udsServer.closeAllConnections();
+      await Promise.all([
+        new Promise<void>(resolve => httpServer.close(() => resolve())),
+        new Promise<void>(resolve => udsServer.close(() => resolve())),
+      ]);
+      try { rmSync(udsDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    };
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        httpServer.once('error', reject);
+        httpServer.listen(0, '127.0.0.1', () => resolve());
+      });
+      await new Promise<void>((resolve, reject) => {
+        udsServer.once('error', reject);
+        udsServer.listen(udsPath, () => resolve());
+      });
+      chmodSync(udsPath, 0o600);
+      const addr = httpServer.address();
+      if (!addr || typeof addr === 'string') throw new Error('Turn relay bridge address unavailable');
+      const bridgeUrl = `http://127.0.0.1:${addr.port}/mcp`;
+      const bridgedServer = {
+        url: bridgeUrl,
+        http_headers: { Authorization: `Bearer ${bridgeBearerToken}` },
+      };
+      const bridgedOverrides = Object.freeze(
+        launch.configOverrides.map(item =>
+          item.startsWith('mcp_servers=') ? `mcp_servers=${inlineTable({ octo: bridgedServer })}` : item,
+        ),
+      );
+      const bridgedEnv = Object.freeze({
+        ...launch.env,
+        ...(supportsNetnsUds ? {
+          CODEX_OCTO_RELAY_UDS: udsPath,
+          CODEX_OCTO_RELAY_PORT: String(addr.port),
+        } : {}),
+      });
+      const bridgedLaunch: Readonly<PrivateWorkerLaunch> = Object.freeze({
+        ...launch,
+        env: bridgedEnv,
+        configOverrides: bridgedOverrides,
+      });
+      return {
+        launch: bridgedLaunch,
+        url: bridgeUrl,
+        bridgeUrl,
+        bridgeBearerToken,
+        udsPath,
+        close,
+      };
+    } catch (err) {
+      await close();
+      throw err;
+    }
+  }
+
+  // Stdio (--turn-relay) UDS forwarder for Linux bwrap --unshare-net
+  const mcpOverride = launch.configOverrides.find(item => item.startsWith('mcp_servers='));
+  const handleMatch = mcpOverride?.match(/"args"=\["--turn-relay","([A-Za-z0-9_-]{1,512})"\]/);
+  if (handleMatch && supportsNetnsUds) {
+    let targetHost = '127.0.0.1';
+    let targetPort = 0;
+    try {
+      const rawBytes = Buffer.from(handleMatch[1], 'base64url');
+      if (rawBytes.toString('base64url') === handleMatch[1]) {
+        const decoded = JSON.parse(rawBytes.toString('utf8')) as Record<string, unknown>;
+        if (typeof decoded.endpoint === 'string') {
+          const parsedUrl = new URL(decoded.endpoint);
+          if (parsedUrl.protocol === 'https:') {
+            targetHost = parsedUrl.hostname.startsWith('[') && parsedUrl.hostname.endsWith(']')
+              ? parsedUrl.hostname.slice(1, -1)
+              : parsedUrl.hostname;
+            targetPort = parsedUrl.port ? Number(parsedUrl.port) : 443;
+          }
+        }
+      }
+    } catch { /* non-JSON synthetic test handle */ }
+
+    if (targetPort > 0) {
+      const udsDir = mkdtempSync(join(tmpdir(), 'octo-r-'));
+      chmodSync(udsDir, 0o700);
+      const udsPath = join(udsDir, 'r.sock');
+      const udsServer = createNetServer(client => {
+        const upstream = createNetConnection({ host: targetHost, port: targetPort });
+        client.pipe(upstream);
+        upstream.pipe(client);
+        client.on('error', () => upstream.destroy());
+        upstream.on('error', () => client.destroy());
+      });
+      let closed = false;
+      const close = async (): Promise<void> => {
+        if (closed) return;
+        closed = true;
+        await new Promise<void>(resolve => udsServer.close(() => resolve()));
+        try { rmSync(udsDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      };
+      try {
+        await new Promise<void>((resolve, reject) => {
+          udsServer.once('error', reject);
+          udsServer.listen(udsPath, () => resolve());
+        });
+        chmodSync(udsPath, 0o600);
+        const bridgedLaunch: Readonly<PrivateWorkerLaunch> = Object.freeze({
+          ...launch,
+          env: Object.freeze({
+            ...launch.env,
+            CODEX_OCTO_RELAY_UDS: udsPath,
+            CODEX_OCTO_RELAY_PORT: String(targetPort),
+          }),
+        });
+        return {
+          launch: bridgedLaunch,
+          udsPath,
+          close,
+        };
+      } catch (err) {
+        await close();
+        throw err;
+      }
+    }
+  }
+
+  return {
+    launch,
+    async close(): Promise<void> {},
+  };
+}

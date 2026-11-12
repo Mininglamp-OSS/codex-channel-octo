@@ -1,0 +1,10 @@
+=== RUN   TestXIN2795CurrentEndpointChunkAndRelayABI
+=== RUN   TestXIN2795CurrentEndpointChunkAndRelayABI/http
+    xin2795_endpoint_consumer_test.go:72: ENDPOINT_ABI_OK http 219145 complete-core-bytes
+=== RUN   TestXIN2795CurrentEndpointChunkAndRelayABI/stdio
+    xin2795_endpoint_consumer_test.go:72: ENDPOINT_ABI_OK stdio 219145 complete-core-bytes
+--- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI (2.78s)
+    --- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI/http (1.01s)
+    --- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI/stdio (1.48s)
+PASS
+ok  	github.com/Mininglamp-OSS/octo-cli/internal/mcp	4.030s

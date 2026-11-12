@@ -1,0 +1,63 @@
+{
+  "format": "endpoint-permission-host-handoff-v4",
+  "supersedes": "permission-endpoint-handoff-v3.json",
+  "status": "BLOCKED_VERSIONED_PACKAGE_PRODUCERS_AND_REAL_NATIVE_PHYSICAL_CONTAINMENT",
+  "base_sha": "5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34",
+  "previous_endpoint_head": "1486253fea86f3dfcfd25c0a0ed16ed3fc1ec31a",
+  "approved_amendment": {
+    "baseline": "XIN-2323/v42",
+    "authority_comment": "93eb4b93-a958-407d-8397-ace2fbf66a64",
+    "attachment_id": "01a1bfb4-aeef-7497-8f7f-268335e0b0fa",
+    "bytes": 70457,
+    "sha256": "f8bcf1af183fcb69b5c40575d26e21b8a37e7e8fb6720b53e4013924ad078725",
+    "map_sha256": "494fae43102a2061349efce8382d43546572b67cc88df533d7389f5d53e1aea5",
+    "source_ledger_sha256": "a9c10f6fdff0a81fd62739286b9514c08533f7733cf9716b057eca223e1aedbd",
+    "scope": "corrected package-v2/revision3 and exact bounds approved; v8/PRD2.1/v28 and independent gates retained; historical pending wording superseded only for this amendment"
+  },
+  "consumed": {
+    "cli_head": "c683c724f1b007a5396d0f10b49cdfda47867b23",
+    "cli_manifest": {"path": "docs/permission/contract-manifest-v4.json", "bytes": 2041, "sha256": "dddff79aa3438e31b66afb74ef4cb0f88f417577c95adc55a50903cb8f99e766"},
+    "unchanged_cli_endpoint_abi": {"path": "docs/permission/endpoint-abi-v1.json", "bytes": 3923, "sha256": "d0b055d6070545c749a08dfb49cabbd7d6fa15758328c111c20d1d881d20c835"},
+    "server_head": "d5ef4b38269b379bac4aa471a6cad06073c563c8",
+    "server_handoff": {"path": "pkg/permissionbundle/contracts/handoff-v3.json", "bytes": 2129, "sha256": "a2723a2c74665a77e443bf0ddedb479bb5bcc0ff0e3ed5144622deb0427b4091"}
+  },
+  "implemented_now": [
+    "catalogBootPin: closed explicit format/version/digest identity; immutable private snapshot",
+    "verifyCatalogBoot: bounded fd read of selected artifact/manifest, raw SHA-256, exact outer identity/revision/semantics, alias/write/UTF-8/BOM/depth checks; not a complete package verifier or support grant",
+    "private endpoint descriptor version2 requires catalog; version1 remains v1-only and rejects implicit v2",
+    "main factory preflight before native dependency recovery; repeated preflight immediately before coordinator process creation; path-only cache never supplies success",
+    "authenticated coordinator lifetime returns the selected pin to a frozen per-turn EndpointBinding; no catalog selection from model metadata",
+    "unchanged CLI flags/host configuration/Hello/eight methods/chunk carrier/relay negotiation; no shell tool, catalog business API or competing evaluator"
+  ],
+  "endpoint_private_descriptor_v2": {
+    "same_as_v1_plus": "version=2 and required catalog object",
+    "catalog": ["catalog_format", "catalog_version", "catalog_digest"],
+    "formats": ["permission-release-manifest-v1", "permission-catalog-package-v2"],
+    "host_binding": "existing hostConfig.release_path and release_sha256; expected digest must match; v2 currently names exact manifest bytes, with producer agreement still required",
+    "bounds": "v1 artifact 8388608; v2 manifest 65536; complete package/expansion constraints remain independently enforced by MCP/server before readiness",
+    "value_domains": "v1 inherited null/numeric/deep values and raw payload strings are not recursively constrained by new packaging fields; v2 preflight canonicalizes only its shallow manifest"
+  },
+  "minimum_producer_delivery": {
+    "XIN_2794": "versioned package boot contract: exact release_path/manifest interpretation, complete independently verified/allowlisted snapshot before existing ready publication, expected version/digest/format agreement with fresh P; actual v2 supported pin and semantic pair evidence; current ReadSupportedRelease remains v1-only and allowlist empty; docs provenance/search-count source decisions remain separate and unselected",
+    "XIN_2793": "versioned private catalog_format descriptor/schema and eligible manifest/listed-file reads with exact format/catalog_version/catalog_digest/space_id and inventory-only path; current handoff remains v3/v1, no delivered v2 discriminator/read binding",
+    "agreement": "endpoint owns identity preflight only; no synthetic readiness/support approval substitutes for independent complete MCP/server verification; no new Hello fields are guessed"
+  },
+  "retained_seams": {
+    "history": "native metadata/disclosure/body producer and distinct Header-reference to delivery-reference proof, without ingress replay tombstones",
+    "reuse": "approved prior-generation adoption and authenticated scope-incarnation/epoch on existing private admit/bind flow; current ABI creates fresh generations",
+    "physical": "actual model/input/native command/send/publication I-SEND ownership under shared accepted watermark; no check-then-launch/send substitution",
+    "native_recovery": "native recipient receipt/checkpoint/restore and actual current SQL writer plus independent acknowledged-state recovery",
+    "endpoint_owned": "dependent import/command/publication/reuse adapters and real supported-platform process/fs/FD/network containment remain incomplete; not transferred to sibling owners"
+  },
+  "verification": {
+    "regression": "136 files / 5431 tests passed; 79 focused permission tests",
+    "checks": "build, lint, production/permission/mention/recovery/continuity types and locked 0.163.0 runtime pass",
+    "new_cases": "explicit v1/v2 identity, mismatch/changed-file/duplicate/BOM/alias/bounds rejection, inherited/raw domain separation, both descriptor versions, immutable turn binding; red-to-green raw-byte control BOM rejection",
+    "actual_cli": "c683c724 actual Go host + HTTP/stdio executable execute/call_op: 219145-byte 256-Header core, renewal, two synthetic business writes per transport and closed-capsule rejection",
+    "browser": "fresh Chrome: 52 endpoint tests plus both actual CLI transport cases; screenshot visually inspected",
+    "evidence": ["docs/evidence/xin-2795-v42-smoke.png", "docs/evidence/xin-2795-v42-browser.json", "docs/evidence/xin-2795-v42-cli.log"],
+    "limits": "identity-only catalog fixtures are not complete/supported packages; real native/policy/business acceptance and OS containment NOT_RUN; no v2 fit/selector/semantic-migration ledger claimed"
+  },
+  "production_activation": "DISABLED_NO_REAL_BINDINGS_OR_SUPPORTED_PACKAGE",
+  "review_gate": "Draft only; independent review/deploy/test/ready/merge/Owner acceptance not released"
+}

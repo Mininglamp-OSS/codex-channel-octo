@@ -32,6 +32,7 @@ export class ExecutionScope implements ManagedExecution {
   constructor(
     private readonly launcher?: string,
     private readonly launcherMode: 'node' | 'executable' = 'node',
+    private readonly workingDirectory?: string,
   ) { chmodSync(this.directory, 0o700); }
 
   /** Called only for a supported proxy launch, never direct/Windows fallback. */
@@ -74,7 +75,8 @@ export class ExecutionScope implements ManagedExecution {
               // must execute directly. Both retain this gateway-owned PGID/handle.
               const executable = this.launcherMode === 'executable' ? launcher : process.execPath;
               const args = this.launcherMode === 'executable' ? frame.args : [launcher, ...frame.args];
-              const child = this.child = spawn(executable, args, { detached: true, env, stdio: ['pipe', 'pipe', 'pipe'] });
+              const child = this.child = spawn(executable, args, { detached: true, env,
+                ...(this.workingDirectory ? { cwd: this.workingDirectory } : {}), stdio: ['pipe', 'pipe', 'pipe'] });
               child.stdin.on('error', () => {});
               child.stdout.on('data', chunk => { if (!socket.destroyed && !send({ type: 'stdout', data: chunk.toString('base64') })) child.stdout.pause(); });
               child.stderr.on('data', chunk => { if (!socket.destroyed && !send({ type: 'stderr', data: chunk.toString('base64') })) child.stderr.pause(); });
