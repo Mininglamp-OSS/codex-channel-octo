@@ -1,7 +1,7 @@
 # Endpoint continuation — XIN-2795
 
-The current v49 continuation is [permission-v49-continuation.md](permission-v49-continuation.md)
-with [handoff v7](permission-endpoint-handoff-v7.json) (superseding [permission-v45-continuation.md](permission-v45-continuation.md) and [handoff v6](permission-endpoint-handoff-v6.json)). This document records the
+The current v50 continuation is [permission-v50-continuation.md](permission-v50-continuation.md)
+with [handoff v7](permission-endpoint-handoff-v7.json) (superseding [permission-v49-continuation.md](permission-v49-continuation.md), [permission-v45-continuation.md](permission-v45-continuation.md), and [handoff v6](permission-endpoint-handoff-v6.json)). This document records the
 preceding ABI integration; its catalog size/approval discussion is historical.
 The exact corrected v2 grammar/bounds are now approved, while supported package
 and native/physical/containment delivery remain incomplete.

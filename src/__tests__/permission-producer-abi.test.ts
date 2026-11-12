@@ -204,6 +204,11 @@ describe('private bootstrap and relay selection', () => {
       ...stdioWithTrust,
       tls: { ca_file: caFile, cert_sha256: 'f'.repeat(64), server_name: 'localhost' },
     }, trustBoot, 'stdio')).toThrow();
+    expect(() => checkedTurnRelay(
+      stdioWithTrust,
+      { ...trustBoot, hostConfig: { ...trustBoot.hostConfig, relay_ca_sha256: '0'.repeat(64) } },
+      'stdio',
+    )).toThrow('CA digest');
 
     const httpWithTrust = {
       transport: 'http',

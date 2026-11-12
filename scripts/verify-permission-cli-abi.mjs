@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 
 const source = process.argv[2];
 if (!source || !isAbsolute(source) || existsSync(join(source, '.git'))) throw new Error('Explicit task-local CLI source archive required');
-const revision = process.argv[3] ?? '29d81e09dc544b9928d94a9123736330d5d0174f';
+const revision = process.argv[3] ?? '3ef52206809ade6b10fcb6976e4c7ab7c8af69a7';
 const versions = {
   '14f9b53d3932c532d6424e8783bd94528e5f7fc6': {
     'internal/mcp/permission_relay.go': '864a57424f7076b157bbd596f88cce8f5d98245afdb546ea72ed706165d6519e',
@@ -42,6 +42,19 @@ const versions = {
     'docs/permission/cli-component-contract-v6.json': '16e924573297469c56c0346b8b6b023f06a68d5ed2f2e389de2ea1664326b4d5',
     'docs/permission/contract-manifest-v6.json': 'be8e31a1f19ab4314390fe7767c58a4fbbcf024cb5c76cb13e3fcac15120d83e',
     'docs/permission/response-budget-ledger-v6.json': 'b7c646f4c73fe62d00450a5fec10d4a0f852f227b1040c8b3c31cf94475c9263',
+    'docs/permission/catalog-package-v2/manifest.json': 'ecc56c2ab0a2c520ab7e5203d2abab06671daf90c28d69f88fe1de8d154109fc',
+    'docs/permission/source-slot-witness-v5.json.gz': '0c5da173bd0f53c64562a70a5c5feebc955ad111bbe84ed11f5588c08b4b9c0b',
+  },
+  '3ef52206809ade6b10fcb6976e4c7ab7c8af69a7': {
+    'internal/mcp/permission_relay.go': '0c2557ec51ec18fcb03e4c35fc2b6b9f48b4d01826db60db5f66b3e1bad5f7ad',
+    'internal/mcp/permission_host.go': 'f9ef0cc4ac84f7c4c712936af9fe5efe86a5fc7baeedd7bfcc011b467abf0e2b',
+    'internal/mcp/managed.go': '32eed0a7fcd50d0851d8ba2671705f9c754ce280cd40e015c1b8bf01c8b34239',
+    'internal/permission/coordinator.go': '6a5d7c78d76986d642c6cb2a732041a5868abbe18facb99a4dab1ca7dabf9b4e',
+    'internal/permission/runtime.go': '6357de6ac114fd7a641f45f5ad9c855654b710564b5c5c0ed4f69acf5e3130d0',
+    'docs/permission/endpoint-abi-v2.json': '785342476f15d3d21a9936d370117dfcf6df49aa040d04ebbb21b786453470f9',
+    'docs/permission/cli-component-contract-v6.json': 'aea8d2d11c419a70069c3c26f6f2f27c98e7d865164a178a1f991160ab4b2a3e',
+    'docs/permission/contract-manifest-v6.json': '37355c4f25f86b5fe438439a4cba0270ec6f0726b5254b6ab40fdb4b8db57e0d',
+    'docs/permission/response-budget-ledger-v6.json': '7c46334eacc9796c003c6929373033359e0428ed57d74a07244db84a7837e463',
     'docs/permission/catalog-package-v2/manifest.json': 'ecc56c2ab0a2c520ab7e5203d2abab06671daf90c28d69f88fe1de8d154109fc',
     'docs/permission/source-slot-witness-v5.json.gz': '0c5da173bd0f53c64562a70a5c5feebc955ad111bbe84ed11f5588c08b4b9c0b',
   },

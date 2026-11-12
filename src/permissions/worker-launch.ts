@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { request as httpsRequest } from 'node:https';
 import { isAbsolute, join, relative } from 'node:path';
-import { connect as tlsConnect } from 'node:tls';
+import { checkServerIdentity as tlsCheckServerIdentity, connect as tlsConnect } from 'node:tls';
 
 export interface TurnRelayTrust {
   readonly ca_file?: string;
@@ -735,5 +736,186 @@ export async function verifyHttpRelayTlsPin(
         finish(err instanceof Error ? err : new Error(String(err)));
       }
     });
+  });
+}
+
+const MAX_RELAY_RESPONSE_BUDGET_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Execute an MCP JSON-RPC POST request over the actual HTTP turn-relay TLS 1.3
+ * receiving connection, enforcing custom CA (`ca_sha256` / `ca_file`),
+ * `server_name`, leaf certificate DER SHA-256 (`cert_sha256` / `peer_sha256`)
+ * via `checkServerIdentity` before sending or receiving application bytes, and
+ * fail-closed response byte bounds (`X-Octo-Acquisition-Budget-Bytes` /
+ * `Content-Length` pre-check / bounded streaming read).
+ */
+export async function postHttpTurnRelay(
+  launch: Readonly<PrivateWorkerLaunch>,
+  bearerToken: string,
+  payload: unknown,
+  options?: {
+    readonly signal?: AbortSignal;
+    readonly maxResponseBytes?: number;
+  },
+): Promise<Record<string, unknown>> {
+  if (!launch.relayUrl) throw new Error('Turn relay URL unavailable');
+  if (!/^[0-9a-f]{64}$/.test(bearerToken)) throw new Error('Turn relay bearer invalid');
+  const signal = options?.signal;
+  signal?.throwIfAborted();
+  const parsed = new URL(launch.relayUrl);
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash) {
+    throw new Error('Turn relay URL unavailable');
+  }
+  const trust = launch.relayTls;
+  const expectedPeerSha256 = trust?.cert_sha256 ?? trust?.peer_sha256;
+  const expectedCaSha256 = trust?.ca_sha256;
+  const caPath = launch.relayCaPath ?? trust?.ca_file;
+  let caBytes: Buffer | undefined;
+  if (caPath) {
+    caBytes = readRelayCaFile(caPath);
+  }
+  if (expectedCaSha256) {
+    if (!caBytes) throw new Error('Turn relay CA bundle unavailable');
+    const actualCaSha256 = createHash('sha256').update(caBytes).digest('hex');
+    if (actualCaSha256 !== expectedCaSha256) {
+      throw new Error('Turn relay CA digest mismatch');
+    }
+  }
+  const host = parsed.hostname.startsWith('[') && parsed.hostname.endsWith(']')
+    ? parsed.hostname.slice(1, -1)
+    : parsed.hostname;
+  const port = parsed.port ? Number(parsed.port) : 443;
+  const servername = trust?.server_name ?? host;
+  const bodyBytes = Buffer.from(JSON.stringify(payload), 'utf8');
+  const callerBudget = options?.maxResponseBytes;
+  if (callerBudget !== undefined && (!Number.isInteger(callerBudget) || callerBudget < 1 || callerBudget > MAX_RELAY_RESPONSE_BUDGET_BYTES)) {
+    throw new Error('RELAY_TICKET_INVALID');
+  }
+
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    let settled = false;
+    const finish = (err?: Error, result?: Record<string, unknown>) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      clearTimeout(timer);
+      if (err) {
+        req.destroy();
+        reject(err);
+      } else {
+        resolve(result!);
+      }
+    };
+    const onAbort = () => finish(new Error('Turn relay request aborted'));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const timer = setTimeout(() => finish(new Error('Turn relay request timed out')), 15_000);
+
+    const req = httpsRequest({
+      host,
+      port,
+      path: `${parsed.pathname}${parsed.search}`,
+      method: 'POST',
+      servername,
+      ...(caBytes ? { ca: caBytes } : {}),
+      minVersion: 'TLSv1.3',
+      maxVersion: 'TLSv1.3',
+      rejectUnauthorized: true,
+      agent: false,
+      headers: {
+        Authorization: `Bearer ${bearerToken}`,
+        'Content-Type': 'application/json',
+        'Content-Length': String(bodyBytes.byteLength),
+      },
+      checkServerIdentity: (_hostname, cert) => {
+        const sniErr = tlsCheckServerIdentity(servername, cert);
+        if (sniErr) return sniErr;
+        if (!cert || !cert.raw || cert.raw.byteLength === 0) {
+          return new Error('Turn relay peer certificate unavailable');
+        }
+        if (expectedPeerSha256) {
+          const actualPeerSha256 = createHash('sha256').update(cert.raw).digest('hex');
+          if (actualPeerSha256 !== expectedPeerSha256) {
+            return new Error('Turn relay peer certificate digest mismatch');
+          }
+        }
+        return undefined;
+      },
+    }, (res) => {
+      let effectiveLimit = callerBudget ?? MAX_RELAY_RESPONSE_BUDGET_BYTES;
+      const headerBudgetRaw = res.headers['x-octo-acquisition-budget-bytes'];
+      const headerBudgetStr = Array.isArray(headerBudgetRaw) ? headerBudgetRaw[0] : headerBudgetRaw;
+      if (typeof headerBudgetStr === 'string' && headerBudgetStr.trim() !== '') {
+        const parsedHeaderBudget = Number.parseInt(headerBudgetStr.trim(), 10);
+        if (!Number.isSafeInteger(parsedHeaderBudget) || parsedHeaderBudget < 1 || parsedHeaderBudget > MAX_RELAY_RESPONSE_BUDGET_BYTES) {
+          res.resume();
+          finish(new Error('RELAY_RESPONSE_INVALID'));
+          return;
+        }
+        if (parsedHeaderBudget < effectiveLimit) {
+          effectiveLimit = parsedHeaderBudget;
+        }
+      }
+      const contentLengthHeader = res.headers['content-length'];
+      const contentLengthRaw = Array.isArray(contentLengthHeader) ? contentLengthHeader.join(',') : contentLengthHeader;
+      if (typeof contentLengthRaw === 'string' && contentLengthRaw.trim() !== '') {
+        let declared: number | undefined;
+        for (const part of contentLengthRaw.split(',')) {
+          const trimmed = part.trim();
+          if (!trimmed) continue;
+          if (!/^(0|[1-9][0-9]*)$/.test(trimmed)) {
+            res.resume();
+            finish(new Error('RELAY_UNAVAILABLE'));
+            return;
+          }
+          const num = Number.parseInt(trimmed, 10);
+          if (declared !== undefined && declared !== num) {
+            res.resume();
+            finish(new Error('RELAY_UNAVAILABLE'));
+            return;
+          }
+          declared = num;
+        }
+        if (declared !== undefined && declared > effectiveLimit) {
+          res.destroy();
+          finish(new Error('RESPONSE_BUDGET_EXCEEDED'));
+          return;
+        }
+      }
+      if (res.statusCode !== 200 && res.statusCode !== 202) {
+        res.resume();
+        finish(new Error('RELAY_UNAVAILABLE'));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let totalBytes = 0;
+      res.on('data', (chunk: Buffer) => {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        totalBytes += buf.byteLength;
+        if (totalBytes > effectiveLimit) {
+          res.destroy();
+          finish(new Error('RESPONSE_BUDGET_EXCEEDED'));
+          return;
+        }
+        chunks.push(buf);
+      });
+      res.on('error', (err) => finish(new Error(`Turn relay response failed: ${err.message}`)));
+      res.on('end', () => {
+        if (settled) return;
+        try {
+          const rawText = Buffer.concat(chunks, totalBytes).toString('utf8');
+          const parsedJson = JSON.parse(rawText);
+          if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
+            finish(new Error('RELAY_UNAVAILABLE'));
+            return;
+          }
+          finish(undefined, parsedJson as Record<string, unknown>);
+        } catch {
+          finish(new Error('RELAY_UNAVAILABLE'));
+        }
+      });
+    });
+
+    req.once('error', (err) => finish(new Error(`Turn relay TLS verification failed: ${err.message}`)));
+    req.end(bodyBytes);
   });
 }

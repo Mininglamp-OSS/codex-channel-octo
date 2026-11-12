@@ -1,0 +1,147 @@
+=== RUN   TestXIN2795CurrentEndpointChunkAndRelayABI
+=== RUN   TestXIN2795CurrentEndpointChunkAndRelayABI/http
+2026/11/12 08:15:05 http: TLS handshake error from 127.0.0.1:50091: EOF
+2026/11/12 08:15:05 http: TLS handshake error from 127.0.0.1:50092: EOF
+2026/11/12 08:15:05 http: TLS handshake error from 127.0.0.1:50093: EOF
+    xin2795_endpoint_consumer_test.go:211: ENDPOINT_ABI_OK http 218289 complete-core-bytes
+=== RUN   TestXIN2795CurrentEndpointChunkAndRelayABI/stdio
+2026/11/12 08:15:08 http: TLS handshake error from 127.0.0.1:50587: remote error: tls: bad certificate
+2026/11/12 08:15:08 http: TLS handshake error from 127.0.0.1:50588: remote error: tls: bad certificate
+    xin2795_endpoint_consumer_test.go:211: ENDPOINT_ABI_OK stdio 218289 complete-core-bytes
+=== RUN   TestXIN2795CurrentEndpointChunkAndRelayABI/https_tls
+2026/11/12 08:15:10 http: TLS handshake error from 127.0.0.1:51081: EOF
+2026/11/12 08:15:10 http: TLS handshake error from 127.0.0.1:51082: EOF
+2026/11/12 08:15:10 http: TLS handshake error from 127.0.0.1:51083: EOF
+    xin2795_endpoint_consumer_test.go:211: ENDPOINT_ABI_OK http 218289 complete-core-bytes
+--- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI (7.93s)
+    --- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI/http (2.32s)
+    --- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI/stdio (2.49s)
+    --- PASS: TestXIN2795CurrentEndpointChunkAndRelayABI/https_tls (2.17s)
+PASS
+ok  	github.com/Mininglamp-OSS/octo-cli/internal/mcp	11.163s
+=== RUN   TestXIN2794V45EndpointA3164dedRelayAndControlParity
+2026/11/12 08:15:15 http: TLS handshake error from 127.0.0.1:51579: remote error: tls: bad certificate
+--- PASS: TestXIN2794V45EndpointA3164dedRelayAndControlParity (1.92s)
+=== RUN   TestXIN2794V49ReviewFindingsTurnRelayBinaryAndRPCEnvelopeBudgets
+--- PASS: TestXIN2794V49ReviewFindingsTurnRelayBinaryAndRPCEnvelopeBudgets (0.33s)
+=== RUN   TestXIN2794V45ContractManifestAndResponseBudgetLedger
+--- PASS: TestXIN2794V45ContractManifestAndResponseBudgetLedger (0.00s)
+PASS
+ok  	github.com/Mininglamp-OSS/octo-cli/internal/mcp	2.496s
+=== RUN   TestContractManifestV4AndV5ByteAndHashIntegrity
+=== RUN   TestContractManifestV4AndV5ByteAndHashIntegrity/contract-manifest-v4.json
+=== RUN   TestContractManifestV4AndV5ByteAndHashIntegrity/contract-manifest-v5.json
+=== RUN   TestContractManifestV4AndV5ByteAndHashIntegrity/contract-manifest-v6.json
+=== RUN   TestContractManifestV4AndV5ByteAndHashIntegrity/contract-manifest-v7.json
+--- PASS: TestContractManifestV4AndV5ByteAndHashIntegrity (0.01s)
+    --- PASS: TestContractManifestV4AndV5ByteAndHashIntegrity/contract-manifest-v4.json (0.00s)
+    --- PASS: TestContractManifestV4AndV5ByteAndHashIntegrity/contract-manifest-v5.json (0.00s)
+    --- PASS: TestContractManifestV4AndV5ByteAndHashIntegrity/contract-manifest-v6.json (0.00s)
+    --- PASS: TestContractManifestV4AndV5ByteAndHashIntegrity/contract-manifest-v7.json (0.00s)
+=== RUN   TestContractFixturesAndWholeBundleLimits
+--- PASS: TestContractFixturesAndWholeBundleLimits (0.01s)
+=== RUN   TestCatalogPrivateManifestFileReadsAndEligibility
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /owner/catalog            --> github.com/Mininglamp-OSS/octo-lib/pkg/wkhttp.(*WKHttp).GET.(*WKHttp).handlersToGinHandleFuncs.(*WKHttp).WKHttpHandler.func1 (2 handlers)
+[GIN-debug] GET    /owner/catalog/file       --> github.com/Mininglamp-OSS/octo-lib/pkg/wkhttp.(*WKHttp).GET.(*WKHttp).handlersToGinHandleFuncs.(*WKHttp).WKHttpHandler.func1 (2 handlers)
+[GIN-debug] GET    /self/catalog             --> github.com/Mininglamp-OSS/octo-lib/pkg/wkhttp.(*WKHttp).GET.(*WKHttp).handlersToGinHandleFuncs.(*WKHttp).WKHttpHandler.func1 (2 handlers)
+[GIN-debug] GET    /self/catalog/file        --> github.com/Mininglamp-OSS/octo-lib/pkg/wkhttp.(*WKHttp).GET.(*WKHttp).handlersToGinHandleFuncs.(*WKHttp).WKHttpHandler.func1 (2 handlers)
+=== RUN   TestCatalogPrivateManifestFileReadsAndEligibility/unknown_selector
+=== RUN   TestCatalogPrivateManifestFileReadsAndEligibility/wrong_digest
+=== RUN   TestCatalogPrivateManifestFileReadsAndEligibility/escape
+=== RUN   TestCatalogPrivateManifestFileReadsAndEligibility/double_escape
+=== RUN   TestCatalogPrivateManifestFileReadsAndEligibility/unlisted
+=== RUN   TestCatalogPrivateManifestFileReadsAndEligibility/url
+=== RUN   TestCatalogPrivateManifestFileReadsAndEligibility/legacy_skew
+=== RUN   TestCatalogPrivateManifestFileReadsAndEligibility/duplicate
+--- PASS: TestCatalogPrivateManifestFileReadsAndEligibility (0.82s)
+    --- PASS: TestCatalogPrivateManifestFileReadsAndEligibility/unknown_selector (0.00s)
+    --- PASS: TestCatalogPrivateManifestFileReadsAndEligibility/wrong_digest (0.00s)
+    --- PASS: TestCatalogPrivateManifestFileReadsAndEligibility/escape (0.00s)
+    --- PASS: TestCatalogPrivateManifestFileReadsAndEligibility/double_escape (0.00s)
+    --- PASS: TestCatalogPrivateManifestFileReadsAndEligibility/unlisted (0.00s)
+    --- PASS: TestCatalogPrivateManifestFileReadsAndEligibility/url (0.00s)
+    --- PASS: TestCatalogPrivateManifestFileReadsAndEligibility/legacy_skew (0.00s)
+    --- PASS: TestCatalogPrivateManifestFileReadsAndEligibility/duplicate (0.00s)
+=== RUN   TestCatalogMigrationCASDenyRetentionReadbackAndRollback
+[GIN-debug] [WARNING] Running in "debug" mode. Switch to "release" mode in production.
+ - using env:	export GIN_MODE=release
+ - using code:	gin.SetMode(gin.ReleaseMode)
+
+[GIN-debug] GET    /catalog                  --> github.com/Mininglamp-OSS/octo-lib/pkg/wkhttp.(*WKHttp).GET.(*WKHttp).handlersToGinHandleFuncs.(*WKHttp).WKHttpHandler.func1 (2 handlers)
+--- PASS: TestCatalogMigrationCASDenyRetentionReadbackAndRollback (0.78s)
+=== RUN   TestCatalogTrustedStartupAndClosedReaderDelta
+--- PASS: TestCatalogTrustedStartupAndClosedReaderDelta (0.78s)
+=== RUN   TestCatalogRegistryAtomicSemanticPairsAndLegacyReader
+--- PASS: TestCatalogRegistryAtomicSemanticPairsAndLegacyReader (3.59s)
+=== RUN   TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles
+=== RUN   TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles/valid
+=== RUN   TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles/symlink
+=== RUN   TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles/hardlink
+=== RUN   TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles/extra_file
+=== RUN   TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles/empty_directory
+--- PASS: TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles (0.37s)
+    --- PASS: TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles/valid (0.34s)
+    --- PASS: TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles/symlink (0.00s)
+    --- PASS: TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles/hardlink (0.01s)
+    --- PASS: TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles/extra_file (0.00s)
+    --- PASS: TestCatalogDirectoryRejectsAliasesAndSnapshotsExactFiles/empty_directory (0.00s)
+=== RUN   TestCatalogValueDepthAndAggregateNodeBoundary
+--- PASS: TestCatalogValueDepthAndAggregateNodeBoundary (0.41s)
+=== RUN   TestCatalogRawJSONUsesRendererDomainWithoutMetadataFilters
+--- PASS: TestCatalogRawJSONUsesRendererDomainWithoutMetadataFilters (0.00s)
+=== RUN   TestCatalogRepeatedUseExpansionBoundaryBeforeAllocation
+--- PASS: TestCatalogRepeatedUseExpansionBoundaryBeforeAllocation (0.00s)
+=== RUN   TestCatalogNewIntegerDomainDoesNotReplaceInheritedDomain
+--- PASS: TestCatalogNewIntegerDomainDoesNotReplaceInheritedDomain (0.00s)
+=== RUN   TestCatalogTypedTruthDoesNotBecomeOpaqueAndSlotsDoNotNormalize
+--- PASS: TestCatalogTypedTruthDoesNotBecomeOpaqueAndSlotsDoNotNormalize (0.00s)
+=== RUN   TestCatalogPackageCompleteIndependentLedgers
+=== RUN   TestCatalogPackageCompleteIndependentLedgers/raw
+    package_test.go:106: synthetic only: {StoredBytes:1220366 MetadataNodes:37848 PreBytes:96539 PostBytes:96583 PreNodes:44144 PostNodes:44144 MaxDepth:10 Files:18 Parts:791 MaxPartsPerRoot:2 Roots:791 SharedRows:393 Content:1603 SchemaCells:56592 DiscoveryCells:156 StaticCells:1248} semantic=f4ad918b9acecac49d6711d7c0321cde301ce11ef7c8ee737dfe4d11a3415323
+=== RUN   TestCatalogPackageCompleteIndependentLedgers/slots
+    package_test.go:106: synthetic only: {StoredBytes:1220604 MetadataNodes:37858 PreBytes:96601 PostBytes:96673 PreNodes:44158 PostNodes:44159 MaxDepth:10 Files:18 Parts:791 MaxPartsPerRoot:2 Roots:791 SharedRows:393 Content:1603 SchemaCells:56592 DiscoveryCells:156 StaticCells:1248} semantic=3c1a9aba88afd877cb01c9c08aa64fbf62aa0e9d3b4194ce8c1f0a7aaf7bf899
+--- PASS: TestCatalogPackageCompleteIndependentLedgers (0.77s)
+    --- PASS: TestCatalogPackageCompleteIndependentLedgers/raw (0.27s)
+    --- PASS: TestCatalogPackageCompleteIndependentLedgers/slots (0.50s)
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/missing_file
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/extra_file
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/tampered_file
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/wrong_pin
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/duplicate_key
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/new_null_path
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/new_null_selector
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/missing_inherited_literal
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/identity_target
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/root_range
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/blob_padding
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/part_fraction
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/selector_gap
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/selector_overlap
+=== RUN   TestCatalogPackageRejectsCorruptAndPartialLoads/source_only_missing
+--- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads (0.58s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/missing_file (0.00s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/extra_file (0.00s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/tampered_file (0.00s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/wrong_pin (0.00s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/duplicate_key (0.00s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/new_null_path (0.00s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/new_null_selector (0.01s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/missing_inherited_literal (0.01s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/identity_target (0.01s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/root_range (0.06s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/blob_padding (0.06s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/part_fraction (0.06s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/selector_gap (0.16s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/selector_overlap (0.15s)
+    --- PASS: TestCatalogPackageRejectsCorruptAndPartialLoads/source_only_missing (0.06s)
+=== RUN   TestCatalogSlotAssignmentsValidatedBeforeRenderCache
+--- PASS: TestCatalogSlotAssignmentsValidatedBeforeRenderCache (0.00s)
+=== RUN   TestCatalogPackageNullRawDomainsAndSourceSlots
+--- PASS: TestCatalogPackageNullRawDomainsAndSourceSlots (0.41s)
+PASS
+ok  	github.com/Mininglamp-OSS/octo-server/pkg/permissionbundle	8.849s

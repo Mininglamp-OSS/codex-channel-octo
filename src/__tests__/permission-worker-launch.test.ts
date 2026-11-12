@@ -8,7 +8,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { createServer as createHttpsServer } from 'node:https';
 import { once } from 'node:events';
 import { promisify } from 'node:util';
-import { createIsolatingWorkerLauncher, preparePrivateWorker, verifyHttpRelayTlsPin } from '../permissions/worker-launch.js';
+import { createIsolatingWorkerLauncher, postHttpTurnRelay, preparePrivateWorker, verifyHttpRelayTlsPin } from '../permissions/worker-launch.js';
 import { queryAgentEvents } from '../agent-bridge.js';
 import type { ManagedExecution } from '../execution-scope.js';
 import type { Config } from '../config.js';
@@ -305,15 +305,51 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
       instructions: 'PIN_TEST',
     })).toThrow('CA digest mismatch');
 
+    let responseMode: 'ok' | 'overflow-cl' | 'overflow-stream' = 'ok';
     const httpsServer = createHttpsServer({ key: keyPem, cert: certPem, minVersion: 'TLSv1.3' }, (_req, res) => {
-      res.writeHead(200);
-      res.end('ok');
+      if (responseMode === 'overflow-cl') {
+        const big = JSON.stringify({ jsonrpc: '2.0', id: 1, result: { pad: 'x'.repeat(2048) } });
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'x-octo-acquisition-budget-bytes': '512',
+          'content-length': String(Buffer.byteLength(big)),
+        });
+        res.end(big);
+        return;
+      }
+      if (responseMode === 'overflow-stream') {
+        res.writeHead(200, {
+          'content-type': 'application/json',
+          'x-octo-acquisition-budget-bytes': '512',
+        });
+        res.write(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { pad: 'y'.repeat(1024) } }));
+        res.end();
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'x-octo-acquisition-budget-bytes': '512',
+      });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { ok: true } }));
     });
     httpsServer.listen(0, '127.0.0.1');
     await once(httpsServer, 'listening');
     const addr = httpsServer.address();
     if (!addr || typeof addr === 'string') throw new Error('No address');
     const relayUrl = `https://127.0.0.1:${addr.port}/mcp`;
+    const bearer = 'a'.repeat(64);
+
+    const otherKeyPath = join(root, 'other-ca-key.pem');
+    const otherCertPath = join(root, 'other-ca-cert.pem');
+    execFileSync('openssl', [
+      'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+      '-keyout', otherKeyPath, '-out', otherCertPath, '-days', '1',
+      '-subj', '/CN=other-ca', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1',
+    ], { stdio: 'ignore' });
+    chmodSync(otherKeyPath, 0o600);
+    chmodSync(otherCertPath, 0o600);
+    const otherCaBytes = readFileSync(otherCertPath);
+    const otherCaSha256 = createHash('sha256').update(otherCaBytes).digest('hex');
 
     try {
       const validLaunch = preparePrivateWorker({
@@ -323,7 +359,7 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
         relay: {
           transport: 'http',
           url: relayUrl,
-          handle: 'turn_pin_ok',
+          handle: bearer,
           caSha256,
           peerSha256,
           tls: { ca_file: certPath, ca_sha256: caSha256, cert_sha256: peerSha256, server_name: 'localhost' },
@@ -331,7 +367,11 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
         instructions: 'PIN_OK',
       });
       await expect(verifyHttpRelayTlsPin(validLaunch)).resolves.toBeUndefined();
+      // Actual receiving connection with custom CA + leaf pin succeeds
+      const rpcRes = await postHttpTurnRelay(validLaunch, bearer, { jsonrpc: '2.0', id: 1, method: 'ping' });
+      expect(rpcRes).toEqual({ jsonrpc: '2.0', id: 1, result: { ok: true } });
 
+      // Wrong leaf certificate pin on actual receiving connection fails closed
       const wrongPeerLaunch = preparePrivateWorker({
         root,
         launcher,
@@ -339,7 +379,7 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
         relay: {
           transport: 'http',
           url: relayUrl,
-          handle: 'turn_pin_wrong_peer',
+          handle: bearer,
           caSha256,
           peerSha256: 'e'.repeat(64),
           tls: { ca_file: certPath, ca_sha256: caSha256, cert_sha256: 'e'.repeat(64), server_name: 'localhost' },
@@ -347,6 +387,34 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
         instructions: 'PIN_WRONG_PEER',
       });
       await expect(verifyHttpRelayTlsPin(wrongPeerLaunch)).rejects.toThrow('peer certificate digest mismatch');
+      await expect(postHttpTurnRelay(wrongPeerLaunch, bearer, { jsonrpc: '2.0', id: 1, method: 'ping' }))
+        .rejects.toThrow('peer certificate digest mismatch');
+
+      // Wrong CA on actual receiving connection fails closed
+      const wrongCaLaunch = preparePrivateWorker({
+        root,
+        launcher,
+        launcherSha256: digest,
+        relay: {
+          transport: 'http',
+          url: relayUrl,
+          handle: bearer,
+          caSha256: otherCaSha256,
+          peerSha256,
+          tls: { ca_file: otherCertPath, ca_sha256: otherCaSha256, cert_sha256: peerSha256, server_name: 'localhost' },
+        },
+        instructions: 'PIN_WRONG_CA',
+      });
+      await expect(postHttpTurnRelay(wrongCaLaunch, bearer, { jsonrpc: '2.0', id: 1, method: 'ping' }))
+        .rejects.toThrow('Turn relay TLS verification failed');
+
+      // Acquisition budget overflow on actual receiving connection (Content-Length & streaming) fails closed
+      responseMode = 'overflow-cl';
+      await expect(postHttpTurnRelay(validLaunch, bearer, { jsonrpc: '2.0', id: 1, method: 'ping' }))
+        .rejects.toThrow('RESPONSE_BUDGET_EXCEEDED');
+      responseMode = 'overflow-stream';
+      await expect(postHttpTurnRelay(validLaunch, bearer, { jsonrpc: '2.0', id: 1, method: 'ping' }))
+        .rejects.toThrow('RESPONSE_BUDGET_EXCEEDED');
     } finally {
       httpsServer.closeAllConnections();
       await new Promise<void>(resolve => httpsServer.close(() => resolve()));

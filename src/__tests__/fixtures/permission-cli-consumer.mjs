@@ -13,7 +13,7 @@ const { PermissionControlClient, canonicalControl } = await import(pathToFileURL
 const { bindContextManifest } = await import(pathToFileURL(join(dist, 'permissions/context-manifest.js')));
 const { catalogBootPin, verifyCatalogBoot } = await import(pathToFileURL(join(dist, 'permissions/catalog-boot.js')));
 const { checkedTurnRelay } = await import(pathToFileURL(join(dist, 'permissions/endpoint-factory.js')));
-const { preparePrivateWorker, verifyHttpRelayTlsPin } = await import(pathToFileURL(join(dist, 'permissions/worker-launch.js')));
+const { preparePrivateWorker, verifyHttpRelayTlsPin, postHttpTurnRelay } = await import(pathToFileURL(join(dist, 'permissions/worker-launch.js')));
 if (fixture.catalogManifestPath) {
   const manifestBytes = readFileSync(fixture.catalogManifestPath);
   const manifestSha256 = createHash('sha256').update(manifestBytes).digest('hex');
@@ -34,6 +34,7 @@ control.call = async (method, payload) => {
   catch (cause) { throw new Error(`Synthetic CLI consumer stopped at ${method}`, { cause }); }
 };
 try {
+  // Turn 1 (Journey 1 + Complete contributor union):
   // Register only the invoking delivery_0 via register_ingress; resolve 253 unseen
   // contributor references via resolve_contributors (>32 batching) and 1 unseen
   // contributor reference via bind_context contributor_references, leaving delivery_255
@@ -121,11 +122,85 @@ try {
   if (worker.relayTls.ca_sha256 !== undefined) {
     assert.equal(worker.relayTls.ca_sha256, relayCaSha256);
   }
-  const requests = [{ jsonrpc: '2.0', id: 1, method: 'initialize', params: { capabilities: {} } },
-    ...['execute', 'call_op'].map((name, i) => ({ jsonrpc: '2.0', id: i + 2, method: 'tools/call',
-      params: { name, arguments: { operation_id: 'message.send', arguments: {
-        channel_id: 'target', channel_type: 2, payload: { text: 'synthetic' },
-      } } } }))];
+
+  const initReq = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { capabilities: {} } };
+  const positiveRequests = [
+    ...['execute', 'call_op'].map((name, i) => ({
+      jsonrpc: '2.0',
+      id: 10 + i,
+      method: 'tools/call',
+      params: {
+        name,
+        arguments: {
+          operation_id: 'message.send',
+          arguments: { channel_id: 'target', channel_type: 2, payload: { text: 'synthetic' } },
+        },
+      },
+    })),
+    ...['execute', 'call_op'].map((name, i) => ({
+      jsonrpc: '2.0',
+      id: 20 + i,
+      method: 'tools/call',
+      params: {
+        name,
+        arguments: {
+          operation_id: 'docs.scene.export',
+          arguments: { docId: 'doc_ok', format: 'png' },
+        },
+      },
+    })),
+  ];
+  const overflowExportRequests = [];
+  let reqSeq = 30;
+  for (const docId of ['doc_overflow_cl', 'doc_overflow_stream']) {
+    for (const name of ['execute', 'call_op']) {
+      overflowExportRequests.push({
+        jsonrpc: '2.0',
+        id: reqSeq++,
+        method: 'tools/call',
+        params: {
+          name,
+          arguments: {
+            operation_id: 'docs.scene.export',
+            arguments: { docId, format: 'png' },
+          },
+        },
+      });
+    }
+  }
+  const boundSearchRequests = ['execute', 'call_op'].map((name, i) => ({
+    jsonrpc: '2.0',
+    id: `${'id_'.repeat(58)}${i}`,
+    method: 'tools/call',
+    params: {
+      name,
+      arguments: {
+        operation_id: 'docs.search',
+        arguments: { q: 'bound' },
+      },
+    },
+  }));
+  const deniedSceneRequests = ['execute', 'call_op'].map((name, i) => ({
+    jsonrpc: '2.0',
+    id: 50 + i,
+    method: 'tools/call',
+    params: {
+      name,
+      arguments: {
+        operation_id: 'docs.scene.get',
+        arguments: { docId: 'board_1' },
+      },
+    },
+  }));
+  const allRequests = [
+    initReq,
+    ...positiveRequests,
+    ...overflowExportRequests,
+    ...boundSearchRequests,
+    ...deniedSceneRequests,
+  ];
+
+  let results;
   if (fixture.transport === 'stdio') {
     assert.equal(createHash('sha256').update(readFileSync(relay.executable)).digest('hex'), relay.executableSha256);
     const match = /"args"=\["--turn-relay","([A-Za-z0-9_-]+)"\]/.exec(worker.configOverrides[0]);
@@ -134,52 +209,112 @@ try {
     assert.equal(reboundTicket.ca_file, worker.relayCaPath);
     assert.equal(reboundTicket.cert_sha256, fixture.relayCertSha256);
     assert.equal(reboundTicket.server_name, fixture.relayServerName);
-    const child = spawnSync(relay.executable, ['--turn-relay', match[1]], {
-      input: requests.map(request => JSON.stringify(request) + '\n').join(''),
+
+    // Negative receiving-connection TLS checks: wrong CA and wrong leaf pin on actual stdio turn-relay connection.
+    const wrongCaTicket = Buffer.from(
+      JSON.stringify({ ...reboundTicket, ca_file: fixture.otherCaPath }),
+      'utf8',
+    ).toString('base64url');
+    const wrongCaChild = spawnSync(relay.executable, ['--turn-relay', wrongCaTicket], {
+      input: JSON.stringify(initReq) + '\n',
+      encoding: 'utf8',
+      env: { ...worker.env, SSL_CERT_FILE: fixture.otherCaPath, NODE_EXTRA_CA_CERTS: fixture.otherCaPath },
+      timeout: 10000,
+    });
+    assert.notEqual(wrongCaChild.status, 0, 'expected wrong-CA stdio turn-relay to fail closed');
+    assert.equal(wrongCaChild.stdout.trim(), '');
+
+    const wrongLeafTicket = Buffer.from(
+      JSON.stringify({ ...reboundTicket, cert_sha256: 'f'.repeat(64) }),
+      'utf8',
+    ).toString('base64url');
+    const wrongLeafChild = spawnSync(relay.executable, ['--turn-relay', wrongLeafTicket], {
+      input: JSON.stringify(initReq) + '\n',
       encoding: 'utf8',
       env: { ...worker.env },
-      timeout: 20000,
+      timeout: 10000,
+    });
+    assert.notEqual(wrongLeafChild.status, 0, 'expected wrong-leaf stdio turn-relay to fail closed');
+    assert.equal(wrongLeafChild.stdout.trim(), '');
+
+    const child = spawnSync(relay.executable, ['--turn-relay', match[1]], {
+      input: allRequests.map(request => JSON.stringify(request) + '\n').join(''),
+      encoding: 'utf8',
+      env: { ...worker.env },
+      timeout: 25000,
     });
     assert.equal(child.status, 0, child.stderr);
-    const results = child.stdout.trim().split('\n').map(line => JSON.parse(line));
-    assert.equal(results.length, 3);
-    for (const result of results.slice(1)) { assert(!result.error); assert(JSON.stringify(result).includes('synthetic-result')); }
+    results = child.stdout.trim().split('\n').map(line => JSON.parse(line));
   } else {
     await verifyHttpRelayTlsPin(worker);
-    const https = await import('node:https');
-    const ca = readFileSync(worker.relayCaPath);
-    const url = new URL(relay.url);
-    const post = (reqBody) => new Promise((resolve, reject) => {
-      const data = JSON.stringify(reqBody);
-      const r = https.request({
-        host: '127.0.0.1',
-        port: Number(url.port),
-        servername: worker.relayTls.server_name,
-        path: url.pathname,
-        method: 'POST',
-        ca,
-        minVersion: 'TLSv1.3',
-        agent: false,
-        headers: {
-          Authorization: `Bearer ${relay.handle}`,
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(data),
-        },
-      }, res => {
-        let out = '';
-        res.on('data', c => { out += c; });
-        res.on('end', () => resolve(JSON.parse(out)));
-      });
-      r.on('error', reject);
-      r.end(data);
-    });
-    for (const request of requests) {
-      const result = await post(request);
-      assert(!result.error);
-      if (request.id > 1) assert(JSON.stringify(result).includes('synthetic-result'));
+    const otherCaSha = createHash('sha256').update(readFileSync(fixture.otherCaPath)).digest('hex');
+    const wrongCaWorker = {
+      ...worker,
+      relayCaPath: fixture.otherCaPath,
+      relayTls: {
+        ...worker.relayTls,
+        ca_file: fixture.otherCaPath,
+        ca_sha256: otherCaSha,
+      },
+    };
+    await assert.rejects(
+      () => postHttpTurnRelay(wrongCaWorker, relay.handle, initReq),
+      /Turn relay TLS verification failed/,
+    );
+    const wrongLeafWorker = {
+      ...worker,
+      relayTls: {
+        ...worker.relayTls,
+        cert_sha256: 'f'.repeat(64),
+        peer_sha256: 'f'.repeat(64),
+      },
+    };
+    await assert.rejects(
+      () => postHttpTurnRelay(wrongLeafWorker, relay.handle, initReq),
+      /Turn relay peer certificate digest mismatch/,
+    );
+
+    results = [];
+    for (const request of allRequests) {
+      results.push(await postHttpTurnRelay(worker, relay.handle, request));
     }
   }
+
+  assert.equal(results.length, allRequests.length);
+  assert(!results[0].error);
+  // Positive message.send (2) and within-budget binary docs.scene.export (2)
+  for (const res of results.slice(1, 3)) {
+    assert(!res.error);
+    assert(JSON.stringify(res).includes('synthetic-result'));
+  }
+  for (const res of results.slice(3, 5)) {
+    assert(!res.error);
+    assert(JSON.stringify(res).includes('content_base64'));
+  }
+  // Binary export exceeding MaxAcquisitionBytes (Content-Length + chunked stream, execute + call_op)
+  for (const res of results.slice(5, 9)) {
+    assert(!res.error);
+    const text = JSON.stringify(res.result);
+    assert(text.includes('RESPONSE_BUDGET_EXCEEDED'), text);
+    assert(text.includes('acquisition_bytes'), text);
+  }
+  // Lower-boundary MaxSerializedRPCBytes (MinSerializedRPCBudgetBytes = 1024) replacement envelope
+  for (const res of results.slice(9, 11)) {
+    assert(!res.error);
+    const serialized = JSON.stringify(res);
+    assert(Buffer.byteLength(serialized, 'utf8') <= 1024, `replacement envelope exceeded 1024 bytes: ${serialized.length}`);
+    assert(serialized.includes('RESPONSE_BUDGET_EXCEEDED'), serialized);
+    assert(serialized.includes('serialized_rpc_bytes'), serialized);
+  }
+  // Journey 3: Denied capability during admitted turn with zero backend dispatch
+  for (const res of results.slice(11, 13)) {
+    assert(res.error, 'expected capability_denied JSON-RPC error');
+    assert.equal(res.error.code, -32007);
+    assert(JSON.stringify(res.error.data).includes('capability_denied'));
+  }
+
   await control.call('close', { capsule_id: admitted.capsule_id, reason: 'completed' });
+
   // Turn 2: verify same-generation context reuse via prior_generation under identical (key, scope_incarnation, context_epoch).
   const ingress2 = await control.call('register_ingress', {
     key: fixture.key,
@@ -198,6 +333,38 @@ try {
   const core2 = { context_id, context_generation: admitted2.generation, originals: fixture.headers };
   await bindContextManifest(control, admitted2.capsule_id, core2, AbortSignal.timeout(10000));
   await control.call('close', { capsule_id: admitted2.capsule_id, reason: 'completed' });
+
+  // Turn 3 (Journey 4): Revoke / Epoch-Rotation Reset invalidates prior_generation reuse.
+  const ingress3 = await control.call('register_ingress', {
+    key: fixture.key,
+    delivery_reference: 'delivery_epoch_reset',
+    stream: fixture.epochHeader.delivery,
+    payload_sha256: fixture.epochHeader.payload_sha256,
+  });
+  const admitted3 = await control.call('admit', {
+    ingress_id: ingress3.ingress_id,
+    proposed_context_id: context_id,
+    prior_generation: admitted.generation,
+  });
+  assert.equal(admitted3.context_epoch, '1');
+  assert.notEqual(admitted3.generation, admitted.generation);
+  await control.call('close', { capsule_id: admitted3.capsule_id, reason: 'completed' });
+
+  // Turn 4 (Journey 2): Stage 1 Admission Denied Before Model Work.
+  const ingressDenied = await control.call('register_ingress', {
+    key: fixture.key,
+    delivery_reference: 'delivery_denied',
+    stream: fixture.deniedHeader.delivery,
+    payload_sha256: fixture.deniedHeader.payload_sha256,
+  });
+  await assert.rejects(
+    control.call('admit', {
+      ingress_id: ingressDenied.ingress_id,
+      proposed_context_id: randomBytes(16).toString('hex'),
+    }),
+    (err) => err?.cause?.refusal?.reason === 'invocation_denied' || /invocation_denied|invocation denied|refused/i.test(String(err?.cause ?? err)),
+  );
   await assert.rejects(control.call('renew', { capsule_id: admitted.capsule_id, generation: admitted.generation, ingress_id: ingress.ingress_id }));
+
   console.log(`ENDPOINT_ABI_OK ${fixture.transport} ${bytes.length} complete-core-bytes`);
 } finally { control.close(); }

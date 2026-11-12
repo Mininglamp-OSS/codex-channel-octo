@@ -1,0 +1,34 @@
+{
+  "passed": true,
+  "endpointTestCount": 76,
+  "catalogBootTestCount": 12,
+  "totalPermissionTestCount": 88,
+  "fullRegressionFiles": 136,
+  "fullRegressionTests": 5440,
+  "actualCliTransportCases": 3,
+  "cliHead": "3ef52206809ade6b10fcb6976e4c7ab7c8af69a7",
+  "serverHead": "e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d",
+  "catalogPackageV2": {
+    "version": "octo-capabilities-v1-xin2748-v4",
+    "supportedCatalogDigest": null,
+    "manifestSha256": "ecc56c2ab0a2c520ab7e5203d2abab06671daf90c28d69f88fe1de8d154109fc",
+    "files": 30,
+    "storedBytes": 7823327,
+    "semanticDigest": "15c7ca2bf6df703979df529afbca6828f116b2463b1a818456edfad80bcad799"
+  },
+  "userJourneys": {
+    "journey1_allowed_call_and_read_reply": "PASS (Turn 1 register_ingress + admit + resolve_contributors 253 refs in <=32 batches + bind_context 218,289-byte 255-Header chunked core + contributor_references + renew + open_relay include_tls_trust + execute/call_op message.send & binary docs.scene.export across http, stdio, https_tls + owned reply publication)",
+    "journey2_admission_denied_before_model_work": "PASS (delivery_denied rejected at Stage 1 admit with invocation_denied before bind_context/open_relay/prepareInput/worker execution, publishing fixed refusal when original reply route is proven)",
+    "journey3_admitted_turn_denied_write_zero_refused_dispatch": "PASS (ungranted docs.scene.get rejected across execute & call_op with -32007 capability_denied and deniedDispatches === 0 across http, stdio, https_tls)",
+    "journey4_revoke_restart_replay": "PASS (epoch rotation to context_epoch='1' resets prior_generation reuse; WKSocket + ReplayJournal withhold RECVACK until handler completion and durable SQLite 'terminal' commit; uncertain/draining duplicates withhold ACK and do not re-enter worker; ordinary restart converts reserved rows to uncertain)"
+  },
+  "checks": [
+    "Latest 3-head tuple convergence: endpoint + octo-cli 3ef52206809ade6b10fcb6976e4c7ab7c8af69a7 (outcome 3293488e-4d14-4b75-a3a4-951c454b1eac) + octo-server e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d (outcome 9aad196b-2da3-451d-b0a8-a89260a955f9)",
+    "Actual receiving-connection custom-CA & leaf-pin enforcement: postHttpTurnRelay and stdio --turn-relay verify TLS 1.3 custom CA (ca_sha256/ca_file), servername, and leaf cert_sha256/peer_sha256 on the actual receiving connection, refusing wrong-CA and wrong-leaf connections before payload exchange",
+    "Binary/relay acquisition & replacement-envelope budgets (CLI 3ef52206): enforces X-Octo-Acquisition-Budget-Bytes / CheckHTTPResponseContentLength / ReadBoundedHTTPResponseBody / StreamBoundedHTTPResponseBody (Content-Length & streaming overflow -> RESPONSE_BUDGET_EXCEEDED acquisition_bytes without retry) and MinSerializedRPCBudgetBytes = 1024 replacement envelope",
+    "WKSocket + ReplayJournal + OctoGateway + EndpointPermissionHost: RECVACK withheld until handler completion and durable reservation.finish('terminal') SQLite commit; duplicate disposition only when existing.state === 'terminal'; draining/shutdown/abort returns 'uncertain' without ACK",
+    "worker-launch Linux bwrap isolation: adds '--unshare-net' to bwrap args when allowNetwork === false alongside --unshare-all, --die-with-parent, --new-session, and read-only mounts",
+    "createNativeEndpointDriver: consumes octo-server e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d v7 routes (/v1/bot/permission-facts/v1/bind-delivery?space_id=..., /v1/bot/permission-facts/v1?space_id=... with operation resolve/history_headers/history_disclosure, and /v1/bot/permission-facts/v1/fence?space_id=...) with zero octo-im/WukongIM modifications"
+  ],
+  "limits": "Zero octo-im/WukongIM changes or tasks. Zero external recovery/election/fence platform prerequisite. Original XIN-2830 memo 4831fa26 is delivered but unapproved; ordinary-SQL known restore / manual review, history/reference scope, and replay identity deltas await Owner decision. supported_catalog_digest remains null and CLI 1024 / 64 MiB guardrails are engineering bounds, not Owner-selected production defaults."
+}

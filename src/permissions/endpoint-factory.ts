@@ -733,6 +733,11 @@ function checkTurnRelayTrust(
       throw new Error('Relay TLS CA digest conflict');
     }
     out.ca_sha256 = caSha;
+  } else if (typeof hostConfig.relay_ca_sha256 === 'string' && hostConfig.relay_ca_sha256) {
+    if (!/^[0-9a-f]{64}$/.test(hostConfig.relay_ca_sha256)) throw new Error('Relay TLS trust invalid');
+    if (caBytes && createHash('sha256').update(caBytes).digest('hex') !== hostConfig.relay_ca_sha256) {
+      throw new Error('Relay TLS CA digest conflict');
+    }
   }
   const configuredPeerPin = typeof hostConfig.relay_cert_sha256 === 'string' && hostConfig.relay_cert_sha256
     ? hostConfig.relay_cert_sha256
