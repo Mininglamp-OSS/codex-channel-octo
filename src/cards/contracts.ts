@@ -195,7 +195,10 @@ export interface PolicySnapshot {
   readonly automatic: Readonly<{ state: CapabilityState; template?: PinnedTemplate; maxPayloadBytes: number }>;
   readonly display: Readonly<{
     state: CapabilityState; profile?: "octo/v1"; cardVersion?: CardVersion;
-    elements: ReadonlySet<string>; limits: Limits;
+    elements: ReadonlySet<string>;
+    /** Advertised local actions; a display card never carries any other action. */
+    actions: ReadonlySet<DisplayActionKind>;
+    limits: Limits;
   }>;
   readonly interaction: Readonly<{
     state: CapabilityState; profile?: "octo/v2"; cardVersion?: CardVersion;
@@ -363,7 +366,8 @@ export interface AcOpenUrlAction {
 
 export interface AcToggleTarget {
   readonly elementId: string;
-  readonly isVisible: boolean;
+  /** Omit to toggle; a boolean explicitly assigns visibility. */
+  readonly isVisible?: boolean;
 }
 
 export interface AcToggleVisibilityAction {
@@ -380,6 +384,7 @@ export interface AcCopyToClipboardAction {
 
 /** Local/navigation actions only; they never call back into the Bot. */
 export type AcLocalAction = AcOpenUrlAction | AcToggleVisibilityAction | AcCopyToClipboardAction;
+export type DisplayActionKind = AcLocalAction["type"];
 
 export interface AcSubmitAction {
   readonly type: "Action.Submit";
@@ -539,8 +544,8 @@ export type AutomaticStatus =
   | { readonly view: "active"; readonly state: "answering"; readonly reason: "answering"; readonly text: "Answering" }
   | { readonly view: "result"; readonly state: "completed"; readonly reason: "completed"; readonly text: "Completed" }
   | { readonly view: "error"; readonly state: "error"; readonly reason: "failed"; readonly text: "Failed" }
-  | { readonly view: "error"; readonly state: "error"; readonly reason: "interrupted"; readonly text: "Interrupted; outcome needs review" }
-  | { readonly view: "error"; readonly state: "error"; readonly reason: "timed_out"; readonly text: "Timed out; a later reply may still arrive" }
+  | { readonly view: "error"; readonly state: "error"; readonly reason: "interrupted"; readonly text: "Interrupted; needs review" }
+  | { readonly view: "error"; readonly state: "error"; readonly reason: "timed_out"; readonly text: "Timed out" }
   | { readonly view: "error"; readonly state: "error"; readonly reason: "expired"; readonly text: "Expired" }
   | { readonly view: "error"; readonly state: "error"; readonly reason: "policy_revoked"; readonly text: "Unavailable by policy" };
 

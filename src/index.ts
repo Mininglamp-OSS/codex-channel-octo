@@ -4,6 +4,15 @@ import { recordPrivateFailure } from './private-diagnostics.js';
 import { sendMessage as sendTurnMessage } from './octo/api.js';
 import { AgentFailure, TurnFailure, classifyFailure, failureReply, mergeExecutionRisk, type FailureStage, type FailureReport } from './agent-failure.js';
 import { safeNotice, type ReducedItemFacts } from './cards/redact.js';
+import { readDeliveryReport } from './cards/delivery-report.js';
+import type { ShutdownReason } from './cards/contracts.js';
+import type { AutomaticTurn } from './cards/lifecycle.js';
+import { classifyCardError, openCardRuntime, type CardRuntime } from './cards/runtime.js';
+import { bootstrapExcludedRoots, hasCodexAuthEnvMarker, registerGatewayExposure, type CardInjectionLaunch } from './cards/tool-host.js';
+import { isAuthenticCronFire } from './cron-fire-marker.js';
+import { getContinuation } from './cards/continuation.js';
+import { WS_IM_ORIGIN, deriveOutboundIdentity, deriveRouteFacts, type InboundOrigin, type OutboundIdentity } from './inbound-route-facts.js';
+import { performance } from 'node:perf_hooks';
 /**
  * codex-channel-octo — Entry point.
  * Bridge OpenAI Codex (via @openai/codex-sdk) to Octo IM.
@@ -20,7 +29,7 @@ import { SessionStore } from './session-store.js';
 import { OctoGateway } from './gateway.js';
 import { SessionRouter } from './session-router.js';
 import { GroupContext } from './group-context.js';
-import { queryAgentEvents } from './agent-bridge.js';
+import { createTurnObservation, queryAgentEvents, resolveSandbox } from './agent-bridge.js';
 import type { QueryAgentOptions } from './agent-bridge.js';
 import {
   OutputCollector,
@@ -168,6 +177,8 @@ export type BotStack = ManagedBot;
 export async function startBot(config: ReturnType<typeof loadConfig>, multi: boolean): Promise<BotStack> {
   const label = multi ? `[${config.botId}] ` : '';
   const cwdBase = config.cwdBase ?? config.cwd;
+  // The Bot's own send identity, from this Bot's merged config (explicit-card route facts).
+  const outboundIdentity = deriveOutboundIdentity(config);
   console.log(
     `[codex-channel-octo] ${label}Config loaded: apiUrl=${config.apiUrl}, cwdBase=${cwdBase}, ` +
     `dataDir=${config.dataDir}, sdk.model=${config.sdk.model ?? 'default'}, ` +
@@ -196,6 +207,8 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
   // interval for the surviving gateway's lifetime.
   const dbPath = join(config.dataDir, 'cc-octo.db');
   let storeForCleanup: SessionStore | undefined;
+  let cardRuntimeForCleanup: CardRuntime | undefined;
+  let releaseExposure: (() => void) | undefined;
 
   // Set right after gateway construction; releaseLock is nonce-guarded so it is
   // a no-op until register() actually acquires the lock, and the catch can call
@@ -217,6 +230,11 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       console.log(`[codex-channel-octo] ${label}Cleaned ${cleaned} expired session(s)`);
     }
 
+    // Every Bot's model-command exposure feeds the gateway-wide explicit-tool gate (G-d).
+    const codexHome = config.sdk.codexHome ?? config.sdk.env?.CODEX_HOME ?? process.env.CODEX_HOME;
+    releaseExposure = registerGatewayExposure({ sandboxMode: resolveSandbox(config.sdk), codexHome,
+      apiKeyConfigured: Boolean(config.sdk.codexApiKey), sdkEnvAuthMarkers: hasCodexAuthEnvMarker(config.sdk.env) });
+
     // --- Group context ---
     const groupContext = new GroupContext(adapter, config.context.maxContextChars);
     groupContext.loadAllFromDb();
@@ -231,6 +249,20 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // Phase 1: register over REST (gets botId) — does NOT open the socket yet, so
     // no message can arrive before the handler below is installed.
     await gateway.register();
+
+    // --- Card subsystem (automatic progress only). Inert unless this Bot was
+    // provisioned (WP-18) and its store opens ready; the ordinary path never
+    // depends on it. Opened only now that register() holds the per-Bot lock:
+    // migration, backup and ledger/restart recovery are durable effects that a
+    // competing instance must never perform. ---
+    const cardRuntime = config.cards?.disable !== true
+      ? await openCardRuntime({ adapter, dataDir: config.dataDir, apiUrl: config.apiUrl, botToken: config.botToken,
+        bootstrapExcludedRoots: bootstrapExcludedRoots({ cwdBase: config.cwdBase ?? config.cwd,
+          additionalDirectories: config.sdk.additionalDirectories, codexHome }) })
+      : undefined;
+    cardRuntimeForCleanup = cardRuntime;
+    if (cardRuntime) console.log(`[codex-channel-octo] ${label}Card runtime ready (automatic progress)`);
+
     store.recoverInterruptedTurns();
     console.log(`[codex-channel-octo] quarantined sessions=${store.quarantinedTurnCount()}`);
     console.log(`[codex-channel-octo] ${label}Bot registered: id=${gateway.botId}`);
@@ -259,6 +291,9 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
 
     // --- Session router ---
     const router = new SessionRouter(config, gateway.botId, () => gateway.ownerUid, store);
+    if (cardRuntime) router.setDispatchObserver(cardRuntime);
+    router.setContinuationHandler(message => handleMessage(message, config, store, router, groupContext, streamRelay,
+      gateway.botId, () => gateway.ownerUid, cardRuntime));
     console.warn('[codex-channel-octo] Online reconciliation requires the exact registered owner_uid. The Bot API provides no scoped-alias binding; rewritten owner UIDs require the offline maintenance procedure.');
 
     // --- Active handler tracking (Q6: in-flight drain on shutdown) ---
@@ -274,7 +309,7 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       // authored as this bot must reach the router to invalidate its cache.
       if (msg.from_uid === gateway.botId && msg.payload.event?.type !== 'mention_pref_updated'
         && !isConversationMdEvent(msg.payload.event?.type)) return;
-      const p = handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId, () => gateway.ownerUid)
+      const p = handleMessage(msg, config, store, router, groupContext, streamRelay, gateway.botId, () => gateway.ownerUid, cardRuntime, WS_IM_ORIGIN, outboundIdentity)
         .catch((err) => {
           console.error(`[codex-channel-octo] ${label}Unhandled message handler error:`, summarizeAgentError(err));
         })
@@ -293,9 +328,12 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
       console.log(`[codex-channel-octo] ${label}Bot connected: id=${gateway.botId}`);
     };
 
-    const shutdown = async (): Promise<void> => {
+    const shutdown = async (reason: ShutdownReason = 'shutdown'): Promise<void> => {
       clearInterval(cwdCleanupTimer);
       await router.stopTurns();
+      // Card resources drain after turns stop and before handlers drain and the DB closes.
+      if (cardRuntime) await cardRuntime.close(reason);
+      releaseExposure?.();
       await gateway.stop(activeHandlers);
       store.close();
     };
@@ -307,6 +345,14 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
     // Release the durable resources acquired above so a failed bot doesn't leak
     // them in multi-bot mode (the surviving bots keep the process alive).
     clearInterval(cwdCleanupTimer);
+    // Card resources drain while the lock is still held, as in shutdown(); a
+    // close failure must not keep the lock or mask the startup error.
+    try {
+      await cardRuntimeForCleanup?.close('shutdown');
+    } catch {
+      /* best effort */
+    }
+    releaseExposure?.();
     // register() releases its own lock when IT fails; this covers the window
     // where register() succeeded (lock held) but a later step threw.
     releaseGatewayLock?.();
@@ -323,7 +369,8 @@ export async function startBot(config: ReturnType<typeof loadConfig>, multi: boo
 /**
  * Process a single inbound message through the full pipeline: route → context →
  * agent query → stream → persist. Exported so tests can drive the real pipeline
- * (not a replica) — `main()` is the only production caller.
+ * (not a replica) — `main()` is the only production caller. `origin` is passed
+ * only by the WS IM handler; without it both explicit-card route facts stay unknown.
  */
 export async function handleMessage(
   msg: BotMessage,
@@ -334,6 +381,9 @@ export async function handleMessage(
   streamRelay: StreamRelay,
   botId: string,
   currentOwner: () => string = () => '',
+  cardRuntime?: CardRuntime,
+  origin?: InboundOrigin,
+  outboundIdentity: OutboundIdentity = 'unknown',
 ): Promise<void> {
   const channelId = msg.channel_id ?? '';
   const channelType = msg.channel_type ?? ChannelType.DM;
@@ -364,6 +414,8 @@ export async function handleMessage(
     const eligibleForMemory = canLoadPrivateMemory(config, msg, ownerUid);
     const sessionKey = config.privateMemory?.enabled === true
       ? privateMemorySessionKey(result.sessionKey, eligibleForMemory) : result.sessionKey;
+    const continuation = getContinuation(msg);
+    if (continuation && (!continuation.current() || continuation.turn.sessionKey !== sessionKey)) return;
     const turnStore = turn.guard(store);
     const turnGroupContext = turn.guard(groupContext);
     const sendMessage = (params: Parameters<typeof import('./octo/api.js').sendMessage>[0]) => {
@@ -376,6 +428,32 @@ export async function handleMessage(
     let resume: string | undefined;
     let sessionMode: 'start' | 'resume' | undefined;
     let suppressHistory = false;
+    // Automatic progress card of this turn; absent → the ordinary path is byte-identical to card-off.
+    let cardTurn: AutomaticTurn | undefined;
+    // Explicit-card launch; only present when every gate holds (never at WP-08: the op table is empty).
+    let cardInjection: CardInjectionLaunch | undefined;
+    let observation: ReturnType<typeof createTurnObservation> | undefined;
+    try {
+      observation = createTurnObservation({ emit: receipt => {
+        console.info('[codex-channel-octo] turn boundary', JSON.stringify(receipt));
+      } });
+      observation.route(channelType === 1 ? 'dm' : channelType === 2 ? 'group' : channelType === 5 ? 'topic' : 'unknown');
+    } catch { /* Observation cannot affect the handler, even at construction. */ }
+    let turnSettled = false;
+    const settleTurn = async (): Promise<void> => {
+      if (turnSettled) return;
+      turnSettled = true;
+      observation?.settling();
+      cardTurn?.settle();
+      const coordinator = cardTurn;
+      if (coordinator?.drain !== undefined && !turn.signal.aborted) {
+        const remainingDeadlineMs = Number.isFinite(turn.deadline)
+          ? Math.max(0, Math.floor(turn.deadline - performance.now()))
+          : undefined;
+        try { await coordinator.drain(remainingDeadlineMs); } catch { /* bounded drain never throws */ }
+      }
+      observation?.finish(coordinator ? () => coordinator.inspect() : undefined);
+    };
 
     try {
       // --- Session ---
@@ -438,6 +516,25 @@ export async function handleMessage(
           content:'旧模型线程已确认无法继续使用，本条新消息将建立新线程；不会重新执行上次失败任务，也不会载入旧线程历史。'}); } catch { /* A notice must not replay or prevent this new task. */ }
       }
 
+      // Commands never create cards. The context comes from router-verified fields only.
+      if (cardRuntime && (config.sdk.toolProgress === true || continuation !== undefined)) {
+        const barrier = store.getResetBarrier(sessionKey);
+        const begun = cardRuntime.beginTurn({
+          dispatchId: turn.turnId, sessionKey, channelId, channelType, requesterUid: msg.from_uid,
+          resetEpoch: typeof barrier === 'number' ? barrier : 0, cron: isAuthenticCronFire(msg.payload),
+          // Facts only: proven false solely for the WS IM origin with this Bot's own identity; every other gate still applies.
+          ...deriveRouteFacts({ origin, payload: msg.payload, outboundIdentity }),
+          ...(continuation !== undefined ? { continuation, obo: false, docTask: false } : {}),
+          deadlineMono: turn.deadline, sessionCwd: () => resolveSessionCwd(config.cwdBase ?? config.cwd, sessionCtx),
+          currentResetEpoch: () => { const b = store.getResetBarrier(sessionKey); return typeof b === 'number' ? b : 0; },
+        });
+        cardTurn = begun?.coordinator;
+        cardInjection = begun?.injection;
+      }
+      observation?.admission(!cardRuntime ? 'runtime_unavailable'
+        : config.sdk.toolProgress !== true && continuation === undefined ? 'progress_disabled'
+        : cardTurn ? 'coordinator_available' : 'coordinator_unavailable');
+
       // --- Group context: refresh members + compute the unseen delta ---
       // B4 (group context) now rides in the USER message, not the system prompt
       // (frozen-prompt: the system block must not change per turn). We inject only
@@ -457,7 +554,7 @@ export async function handleMessage(
         }
         // Cache the current message AFTER reading the delta so it is not echoed in
         // the group-context block this turn.
-        const contextSummary = renderMessageForContext(msg, config.apiUrl);
+        const contextSummary = continuation === undefined ? renderMessageForContext(msg, config.apiUrl) : undefined;
         if (contextSummary) {
           turnGroupContext.pushMessage(
             channelId,
@@ -681,7 +778,8 @@ export async function handleMessage(
         }
       }
 
-      turnStore.appendUser(sessionKey, userContent, msg.message_seq, msg.from_name ?? msg.from_uid);
+      // Callback values are turn-local: the durable admission retains only their digest.
+      if (continuation === undefined) turnStore.appendUser(sessionKey, userContent, msg.message_seq, msg.from_name ?? msg.from_uid);
 
       // --- Session resume + first-turn history injection ---
       // The SDK session is the source of truth for conversation history: on every
@@ -745,6 +843,7 @@ export async function handleMessage(
         const MAX_TOOL_NOTICES = 10;
         onSafeItem = (facts: ReducedItemFacts): void => {
           turn.assertPublishable();
+          if (cardTurn?.claimsNotices(facts)) return; // the automatic card replaces the notices
           const label = safeNotice(facts);
           if (!label) return;
           if (label === lastNotice) return; // collapse exact repeats
@@ -780,15 +879,25 @@ export async function handleMessage(
         onExecutionRisk: risk => { turn.executionRisk = mergeExecutionRisk(turn.executionRisk, risk); },
         senderContext: buildSenderContext(msg, router.getOwnerUid(), botId),
         ...(resume ? { resume } : {}),
-        onSessionId: (id: string, prompt: string) => {
+        ...(resume && config.sdk.runtime === 'app-server' ? { threadToolsetDigest: turnStore.getThreadToolsetDigest(sessionKey) } : {}),
+        ...(cardTurn ? { itemStates: true } : {}),
+        ...(observation ? {
+          onNativeCommand: observation.nativeCommand,
+          onRuntime: observation.runtime,
+          onPreProjectionItem: observation.preItem,
+          onProjectedItem: observation.projectedItem,
+        } : {}),
+        ...(cardInjection ? { cardInjection } : {}),
+        onSessionId: (id: string, prompt: string, toolsetDigest?: string | null) => {
           turn.assertPublishable();
-          turnStore.setSdkSessionId(sessionKey, id);
+          turnStore.setSdkSessionId(sessionKey, id, toolsetDigest);
           if (serverMd && ((serverMd.context && prompt.includes(serverMd.context))
             || (serverMd.retryContext && prompt.includes(serverMd.retryContext)))) {
             serverMd.commit(id);
           }
         },
       };
+      observation?.itemStates(sessionOpts.itemStates === true);
 
       // A stream can fail after the model has already executed tools. In that
       // case replaying userContentForLLM is unsafe, but abandoning the thread
@@ -796,9 +905,9 @@ export async function handleMessage(
       // by onSessionId so the bounded continuation below can resume it.
       let activeResume = resume;
       const originalOnSessionId = sessionOpts.onSessionId;
-      sessionOpts.onSessionId = (id: string, prompt: string): void => {
+      sessionOpts.onSessionId = (id: string, prompt: string, toolsetDigest?: string | null): void => {
         activeResume = id;
-        originalOnSessionId?.(id, prompt);
+        originalOnSessionId?.(id, prompt, toolsetDigest);
       };
 
       // GROUP.md: inject operator-provided per-group instructions (from
@@ -832,6 +941,8 @@ export async function handleMessage(
             const agentEvents = queryAgentEvents(prompt, config, sessionCtx, undefined, options, onSafeItem);
             for await (const ev of agentEvents) {
               turn.assertPublishable();
+              // Card-only progress facts: observed before, and never pushed to, the collector.
+              if (ev.kind === 'item_state') { cardTurn?.observe(ev); continue; }
               if (ev.kind === 'attempt_start') {
                 modelAttempts++;
                 // Keep evidence from a failed earlier execution. A continuation
@@ -842,6 +953,9 @@ export async function handleMessage(
                 turn.executionRisk = mergeExecutionRisk(turn.executionRisk, 'effects_observed');
               }
               collector.push(ev);
+              // Bodies stay with the collector; the card sees the message phase only.
+              cardTurn?.observe(ev.kind === 'message'
+                ? { kind: 'message_phase', attempt: ev.attempt, itemId: ev.itemId, seq: ev.seq, phase: ev.phase } : ev);
             }
             selected = collector.select({ mode: outputMode, maxChars: config.maxResponseChars ?? DEFAULT_MAX_RESPONSE_CHARS });
             console.log(describeSelection(selected, outputMode, collector.attemptCount));
@@ -850,6 +964,7 @@ export async function handleMessage(
               stage = 'history_commit'; turn.stage = stage;
               turnStore.saveTurnOutput(turn.turnId, sessionKey, selected.text, msg.message_seq, botId);
               stage = 'delivery'; turn.stage = stage;
+              cardTurn?.signal({ t: 'delivery_start' });
               yield selected.text;
             }
             return;
@@ -864,7 +979,11 @@ export async function handleMessage(
             continuationUsed = true;
             console.warn('[codex-channel-octo] stream interrupted; continuing the existing thread once');
             prompt = continuationPrompt;
-            options = { ...options, resume: activeResume };
+            options = {
+              ...options,
+              resume: activeResume,
+              ...(config.sdk.runtime === 'app-server' ? { threadToolsetDigest: turnStore.getThreadToolsetDigest(sessionKey) } : {}),
+            };
           }
         }
       }
@@ -902,6 +1021,15 @@ export async function handleMessage(
         stage = 'history_commit'; turn.stage = stage;
         turn.assertPublishable();
         turnStore.commitTurnOutput(turn.turnId);
+        // D-A (R1 C3): the normal-return report of this exact turn.
+        const okReport = readDeliveryReport(store, turn.turnId, { emptyNotice: false });
+        cardTurn?.signal({ t: 'delivery_report', report: okReport });
+        observation?.delivery({
+          attempted: okReport.expected,
+          acked: okReport.acked,
+          failed: okReport.failed,
+          outcome: okReport.expected > 0 && okReport.failed === 0 && okReport.acked === okReport.expected ? 'acked' : 'failed',
+        });
         turn.interruptionPresented = !!result.interruptedTurn;
         // G10: mark this message_seq as the last one we replied to. Next turn's
         // segmented history will treat messages with seq <= this as [answered].
@@ -920,10 +1048,38 @@ export async function handleMessage(
           channelType,
           content: '[No response generated. Please try rephrasing your question.]',
         });
+        // R1 C2: the only `emptyNotice: true`, after the notice resolved.
+        const emptyReport = readDeliveryReport(store, turn.turnId, { emptyNotice: true });
+        cardTurn?.signal({ t: 'delivery_report', report: emptyReport });
+        observation?.delivery({
+          attempted: emptyReport.expected,
+          acked: emptyReport.acked,
+          failed: emptyReport.failed,
+          outcome: 'empty_notice',
+        });
       }
 
     } catch (err) {
-      if (turn.signal.aborted) return; // Router owns timeout/shutdown feedback.
+      const errReport = readDeliveryReport(store, turn.turnId, { emptyNotice: false });
+      observation?.delivery({
+        attempted: errReport.expected,
+        acked: errReport.acked,
+        failed: errReport.failed,
+        outcome: errReport.expected === 0
+          ? 'unattempted'
+          : errReport.failed === 0 && errReport.acked === errReport.expected
+            ? 'acked'
+            : 'failed',
+      });
+      if (cardTurn) {
+        // Every catch path reports with `emptyNotice: false` and is Error; an aborted turn is a timeout or shutdown.
+        cardTurn.signal({ t: 'delivery_report', report: errReport });
+        cardTurn.signal(!turn.signal.aborted ? { t: 'handler_error', category: classifyCardError(err) }
+          : turn.interruption === 'timed_out' || performance.now() >= turn.deadline ? { t: 'dispatch_timeout' } : { t: 'shutdown' });
+        cardTurn.settle();
+      }
+      observation?.settling();
+      if (turn.signal.aborted) return; // Router owns timeout/shutdown feedback; finally drains & emits receipt.
       turn.interruption = 'failed';
       turn.assertPublishable();
       const raw = errorDetails(err);
@@ -952,9 +1108,13 @@ export async function handleMessage(
           channelType,
           content,
         });
+        observation?.delivery({ errorReply: 'acked' });
       } catch {
+        observation?.delivery({ errorReply: 'failed' });
         /* swallow — don't crash on reply failure */
       }
+    } finally {
+      await settleTurn();
     }
   });
 

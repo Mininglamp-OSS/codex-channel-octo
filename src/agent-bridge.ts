@@ -1,5 +1,6 @@
 import { attachErrorDetails } from './error-details.js';
 import { nativeErrorMessage } from './native-error.js';
+import { randomUUID } from 'node:crypto';
 import { types as utilTypes } from 'node:util';
 import { rememberSdkFailure, inheritSdkDiagnostic, type SdkDiagnosticRun } from './private-diagnostics.js';
 import { recover, type RecoveryConfig } from './agent-recovery.js';
@@ -7,6 +8,10 @@ import { AgentFailure, classifyFailure, type ExecutionRisk } from './agent-failu
 import { ExecutionScope, type ManagedExecution } from './execution-scope.js';
 import type { InterruptedTurn } from './turn-context.js';
 import { reduceItem, type ReducedItemFacts } from './cards/redact.js';
+import type { ItemState } from './cards/contracts.js';
+import { APP_SERVER_TOOLSET_VERSION, appServerToolset, type AppServerReplyPort, type AttemptHandle, type CardInjectionLaunch } from './cards/tool-host.js';
+import { prepareAppServerLaunch } from './app-server/spawn.js';
+import { startAppServerAttempt } from './app-server/runner.js';
 /**
  * Agent Bridge — OpenAI Codex invocation via @openai/codex-sdk.
  * Outputs typed AgentOutputEvents (queryAgentEvents) or, for legacy callers,
@@ -25,7 +30,7 @@ import { reduceItem, type ReducedItemFacts } from './cards/redact.js';
  */
 
 import { Codex } from '@openai/codex-sdk';
-import type { ThreadEvent, ThreadItem, ThreadOptions } from '@openai/codex-sdk';
+import type { CodexOptions, ThreadEvent, ThreadItem, ThreadOptions } from '@openai/codex-sdk';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join as pathJoin } from 'node:path';
 import { OutputCollector, DEFAULT_OUTPUT_SELECTION_MODE, DEFAULT_MAX_RESPONSE_CHARS, type OutputSelectionMode } from './output-selection.js';
@@ -38,6 +43,404 @@ import { resolveSessionCwd } from './cwd-resolver.js';
 import type { SessionCtx } from './cwd-resolver.js';
 import { trustedText, escapeSectionMarkers, safeSenderMetadata, CURRENT_MESSAGE_ANCHOR, CURRENT_SENDER_ANCHOR, PREVIOUS_TASK_ANCHOR } from './prompt-safety.js';
 import type { SafeText } from './prompt-safety.js';
+
+type CommandSource = 'sdk' | 'projected_app_server';
+type CommandPhase = 'started' | 'completed';
+type TurnAdmission = 'unknown' | 'runtime_unavailable' | 'progress_disabled'
+  | 'coordinator_available' | 'coordinator_unavailable';
+type ObservedCoordinator = Readonly<{
+  mode: 'unknown' | 'undecided' | 'card' | 'notice';
+  opened: boolean | 'unknown';
+  reason: 'unobserved' | 'snapshot' | 'snapshot_unavailable';
+}>;
+
+export type ObservedRuntimeMode = 'exec' | 'app-server' | 'unknown';
+export type ObservedRouteKind = 'dm' | 'group' | 'topic' | 'unknown';
+export type ObservedItemCategory =
+  | 'command'
+  | 'file'
+  | 'tool'
+  | 'search'
+  | 'reasoning'
+  | 'plan'
+  | 'message'
+  | 'unknown';
+export type ObservedPolicyOutcome =
+  | 'unknown'
+  | 'unattempted'
+  | 'allowed'
+  | 'denied'
+  | 'unavailable'
+  | 'suspended';
+export type ObservedReservationState =
+  | 'unknown'
+  | 'unattempted'
+  | 'reserved'
+  | 'duplicate'
+  | 'store_failed';
+export type ObservedReservationReason =
+  | 'hook_unavailable'
+  | 'none'
+  | 'no_displayable_row'
+  | 'policy_not_allowed'
+  | 'open_refused'
+  | 'settled_before_send'
+  | 'cancelled_before_send'
+  | 'closing_before_send'
+  | 'policy_denied'
+  | 'suspended'
+  | 'contract_rejected'
+  | 'duplicate'
+  | 'store_failed';
+export type ObservedCardInitialOutcome =
+  | 'unknown'
+  | 'unattempted'
+  | 'skipped'
+  | 'inflight'
+  | 'acked'
+  | 'retryable'
+  | 'rate_limited'
+  | 'policy'
+  | 'contract'
+  | 'gone'
+  | 'ambiguous'
+  | 'suspended'
+  | 'cancelled'
+  | 'unresolved'
+  | 'store_failed'
+  | 'retry_exhausted';
+export type ObservedCardTerminalOutcome =
+  | 'unknown'
+  | 'unattempted'
+  | 'skipped'
+  | 'pending'
+  | 'acked'
+  | 'retryable'
+  | 'rate_limited'
+  | 'policy'
+  | 'contract'
+  | 'gone'
+  | 'ambiguous'
+  | 'suspended'
+  | 'cancelled'
+  | 'unresolved'
+  | 'store_failed'
+  | 'retry_exhausted';
+export type ObservedDeliveryOutcome =
+  | 'unknown'
+  | 'unattempted'
+  | 'acked'
+  | 'failed'
+  | 'empty_notice';
+export type ObservedErrorReplyOutcome =
+  | 'unknown'
+  | 'unattempted'
+  | 'acked'
+  | 'failed';
+
+export interface ObservedCoordinatorSnapshot {
+  readonly mode: string;
+  readonly opened: boolean;
+  readonly policy?: unknown;
+  readonly firstReservation?: {
+    readonly state?: unknown;
+    readonly atMs?: unknown;
+    readonly reason?: unknown;
+  };
+  readonly card?: {
+    readonly initial?: unknown;
+    readonly terminal?: unknown;
+  };
+}
+
+/** Content-free observations, not evidence of execution, authorization or send. */
+export interface TurnBoundaryReceipt {
+  readonly version: 1;
+  /** Random, turn-local alias; never derived from transport/session/native IDs. */
+  readonly turnAlias: string;
+  readonly runtime: ObservedRuntimeMode;
+  readonly route: ObservedRouteKind;
+  readonly command: Readonly<{
+    sdk: Readonly<Record<CommandPhase, number>>;
+    projectedAppServer: Readonly<Record<CommandPhase, number>>;
+    presence: 'OBSERVED' | 'UNOBSERVED';
+    firstArrivalMs: number | null;
+  }>;
+  readonly items: Readonly<{
+    pre: Readonly<Record<ObservedItemCategory, number>>;
+    projected: Readonly<Record<ObservedItemCategory, number>>;
+  }>;
+  readonly admission: TurnAdmission;
+  readonly itemStates: boolean | 'unknown';
+  readonly coordinator: ObservedCoordinator;
+  readonly policy: ObservedPolicyOutcome;
+  readonly settlementMs: number | null;
+  readonly firstReservation: Readonly<{
+    state: ObservedReservationState;
+    atMs: number | null;
+    reason: ObservedReservationReason;
+  }>;
+  readonly card: Readonly<{
+    initial: ObservedCardInitialOutcome;
+    terminal: ObservedCardTerminalOutcome;
+  }>;
+  readonly delivery: Readonly<{
+    attempted: number;
+    acked: number;
+    failed: number;
+    outcome: ObservedDeliveryOutcome;
+    errorReply: ObservedErrorReplyOutcome;
+  }>;
+  readonly limited: boolean;
+}
+
+const VALID_ITEM_CATEGORIES: ReadonlySet<ObservedItemCategory> = new Set([
+  'command', 'file', 'tool', 'search', 'reasoning', 'plan', 'message', 'unknown',
+]);
+const VALID_POLICIES: ReadonlySet<ObservedPolicyOutcome> = new Set([
+  'unattempted', 'allowed', 'denied', 'unavailable', 'suspended',
+]);
+const VALID_RESERVATION_STATES: ReadonlySet<ObservedReservationState> = new Set([
+  'unattempted', 'reserved', 'duplicate', 'store_failed',
+]);
+const VALID_RESERVATION_REASONS: ReadonlySet<ObservedReservationReason> = new Set([
+  'none', 'no_displayable_row', 'policy_not_allowed', 'open_refused',
+  'settled_before_send', 'cancelled_before_send', 'closing_before_send',
+  'policy_denied', 'suspended', 'contract_rejected', 'duplicate', 'store_failed',
+]);
+const VALID_CARD_INITIAL: ReadonlySet<ObservedCardInitialOutcome> = new Set([
+  'unattempted', 'skipped', 'inflight', 'acked', 'retryable', 'rate_limited',
+  'policy', 'contract', 'gone', 'ambiguous', 'suspended', 'cancelled',
+  'unresolved', 'store_failed', 'retry_exhausted',
+]);
+const VALID_CARD_TERMINAL: ReadonlySet<ObservedCardTerminalOutcome> = new Set([
+  'unattempted', 'skipped', 'pending', 'acked', 'retryable', 'rate_limited',
+  'policy', 'contract', 'gone', 'ambiguous', 'suspended', 'cancelled',
+  'unresolved', 'store_failed', 'retry_exhausted',
+]);
+const MAX_OBSERVED_ITEM_IDS = 512;
+
+function emptyItemCounts(): Record<ObservedItemCategory, number> {
+  return {
+    command: 0,
+    file: 0,
+    tool: 0,
+    search: 0,
+    reasoning: 0,
+    plan: 0,
+    message: 0,
+    unknown: 0,
+  };
+}
+
+/**
+ * One fixed-size receipt per finite handler turn. No item map, history, timers,
+ * raw event references or asynchronous sink work. Counts saturate at 65,535;
+ * monotonic offsets saturate at 2^31-1 ms; serialized receipt stays below 1 KiB.
+ * Every observer operation is best-effort and cannot replace a turn failure.
+ */
+export function createTurnObservation(options: {
+  clock?: () => number;
+  emit?: (receipt: TurnBoundaryReceipt) => void;
+} = {}) {
+  const turnAlias = randomUUID();
+  const clock = options.clock ?? (() => performance.now());
+  const readClock = (): number | undefined => {
+    try { const value = clock(); return Number.isFinite(value) && value >= 0 ? value : undefined; }
+    catch { return undefined; }
+  };
+  const origin = readClock();
+  let highWater = 0;
+  let limited = false;
+  const offset = (): number | null => {
+    const value = readClock();
+    if (origin === undefined || value === undefined) return null;
+    const elapsed = Math.max(highWater, Math.floor(value - origin), 0);
+    if (elapsed > 2_147_483_647) limited = true;
+    return highWater = Math.min(elapsed, 2_147_483_647);
+  };
+  let runtime: ObservedRuntimeMode = 'unknown';
+  let route: ObservedRouteKind = 'unknown';
+  const sdk = { started: 0, completed: 0 };
+  const projectedAppServer = { started: 0, completed: 0 };
+  const preItems = emptyItemCounts();
+  const projectedItems = emptyItemCounts();
+  const seenPreIds = new Set<string>();
+  const seenProjectedIds = new Set<string>();
+  let firstSeen = false;
+  let firstArrivalMs: number | null = null;
+  let admission: TurnAdmission = 'unknown';
+  let itemStates: boolean | 'unknown' = 'unknown';
+  let settlementMs: number | null = null;
+  let settling = false;
+  let deliveryAttempted = 0;
+  let deliveryAcked = 0;
+  let deliveryFailed = 0;
+  let deliveryOutcome: ObservedDeliveryOutcome = 'unattempted';
+  let errorReplyOutcome: ObservedErrorReplyOutcome = 'unattempted';
+  let finished = false;
+
+  const bumpItem = (
+    counts: Record<ObservedItemCategory, number>,
+    seen: Set<string>,
+    category: ObservedItemCategory,
+    id?: string,
+  ): void => {
+    if (finished || !VALID_ITEM_CATEGORIES.has(category)) return;
+    if (typeof id === 'string' && id.length > 0) {
+      if (seen.has(id)) return;
+      if (seen.size < MAX_OBSERVED_ITEM_IDS) seen.add(id);
+      else limited = true;
+    }
+    if (counts[category] === 65_535) limited = true;
+    else counts[category]++;
+  };
+
+  const clampCount = (n: unknown): number => {
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return 0;
+    const int = Math.floor(n);
+    if (int > 65_535) {
+      limited = true;
+      return 65_535;
+    }
+    return int;
+  };
+
+  return Object.freeze({
+    runtime(value: ObservedRuntimeMode): void {
+      if (!finished && (value === 'exec' || value === 'app-server')) runtime = value;
+    },
+    route(value: ObservedRouteKind): void {
+      if (!finished && (value === 'dm' || value === 'group' || value === 'topic')) route = value;
+    },
+    nativeCommand(source: CommandSource, phase: CommandPhase): void {
+      if (finished || (source !== 'sdk' && source !== 'projected_app_server')
+        || (phase !== 'started' && phase !== 'completed')) return;
+      if (!firstSeen) { firstSeen = true; firstArrivalMs = offset(); }
+      const counts = source === 'sdk' ? sdk : projectedAppServer;
+      if (counts[phase] === 65_535) limited = true;
+      else counts[phase]++;
+    },
+    preItem(category: ObservedItemCategory, id?: string): void {
+      bumpItem(preItems, seenPreIds, category, id);
+    },
+    projectedItem(category: ObservedItemCategory, id?: string): void {
+      bumpItem(projectedItems, seenProjectedIds, category, id);
+    },
+    admission(value: TurnAdmission): void {
+      if (!finished && (value === 'runtime_unavailable' || value === 'progress_disabled'
+        || value === 'coordinator_available' || value === 'coordinator_unavailable')) admission = value;
+    },
+    itemStates(value: boolean): void { if (!finished && typeof value === 'boolean') itemStates = value; },
+    delivery(report: {
+      attempted?: number;
+      acked?: number;
+      failed?: number;
+      outcome?: ObservedDeliveryOutcome;
+      errorReply?: ObservedErrorReplyOutcome;
+    }): void {
+      if (finished || report === null || typeof report !== 'object') return;
+      if (report.attempted !== undefined) deliveryAttempted = clampCount(report.attempted);
+      if (report.acked !== undefined) deliveryAcked = clampCount(report.acked);
+      if (report.failed !== undefined) deliveryFailed = clampCount(report.failed);
+      if (report.outcome === 'unattempted' || report.outcome === 'acked'
+        || report.outcome === 'failed' || report.outcome === 'empty_notice') {
+        deliveryOutcome = report.outcome;
+      }
+      if (report.errorReply === 'unattempted' || report.errorReply === 'acked' || report.errorReply === 'failed') {
+        errorReplyOutcome = report.errorReply;
+      }
+    },
+    settling(): void { if (!finished && !settling) { settling = true; settlementMs = offset(); } },
+    finish(inspect?: () => ObservedCoordinatorSnapshot): void {
+      if (finished) return;
+      finished = true;
+      try {
+        let coordinator: ObservedCoordinator = Object.freeze({ mode: 'unknown', opened: 'unknown', reason: 'unobserved' });
+        let policy: ObservedPolicyOutcome = 'unknown';
+        let firstReservation: TurnBoundaryReceipt['firstReservation'] = Object.freeze({
+          state: 'unknown',
+          atMs: null,
+          reason: 'hook_unavailable',
+        });
+        let card: TurnBoundaryReceipt['card'] = Object.freeze({
+          initial: 'unknown',
+          terminal: 'unknown',
+        });
+        if (inspect !== undefined) {
+          coordinator = Object.freeze({ mode: 'unknown', opened: 'unknown', reason: 'snapshot_unavailable' });
+          try {
+            const state = inspect();
+            const mode = state.mode, opened = state.opened;
+            if ((mode === 'undecided' || mode === 'card' || mode === 'notice') && typeof opened === 'boolean') {
+              coordinator = Object.freeze({ mode, opened, reason: 'snapshot' });
+              if (typeof state.policy === 'string' && VALID_POLICIES.has(state.policy as ObservedPolicyOutcome)) {
+                policy = state.policy as ObservedPolicyOutcome;
+              }
+              const res = state.firstReservation;
+              if (res !== null && typeof res === 'object'
+                && typeof res.state === 'string' && VALID_RESERVATION_STATES.has(res.state as ObservedReservationState)
+                && typeof res.reason === 'string' && VALID_RESERVATION_REASONS.has(res.reason as ObservedReservationReason)) {
+                let atMs: number | null = null;
+                if (typeof res.atMs === 'number' && Number.isFinite(res.atMs) && res.atMs >= 0) {
+                  const intAt = Math.floor(res.atMs);
+                  if (intAt > 2_147_483_647) limited = true;
+                  atMs = Math.min(intAt, 2_147_483_647);
+                }
+                firstReservation = Object.freeze({
+                  state: res.state as ObservedReservationState,
+                  atMs,
+                  reason: res.reason as ObservedReservationReason,
+                });
+              }
+              const c = state.card;
+              if (c !== null && typeof c === 'object'
+                && typeof c.initial === 'string' && VALID_CARD_INITIAL.has(c.initial as ObservedCardInitialOutcome)
+                && typeof c.terminal === 'string' && VALID_CARD_TERMINAL.has(c.terminal as ObservedCardTerminalOutcome)) {
+                card = Object.freeze({
+                  initial: c.initial as ObservedCardInitialOutcome,
+                  terminal: c.terminal as ObservedCardTerminalOutcome,
+                });
+              }
+            }
+          } catch { /* Unknown, never inferred from startup readiness or absence of rows. */ }
+        }
+        const receipt: TurnBoundaryReceipt = Object.freeze({
+          version: 1,
+          turnAlias,
+          runtime,
+          route,
+          command: Object.freeze({
+            sdk: Object.freeze({ ...sdk }),
+            projectedAppServer: Object.freeze({ ...projectedAppServer }),
+            presence: firstSeen ? 'OBSERVED' : 'UNOBSERVED',
+            firstArrivalMs,
+          }),
+          items: Object.freeze({
+            pre: Object.freeze({ ...preItems }),
+            projected: Object.freeze({ ...projectedItems }),
+          }),
+          admission,
+          itemStates,
+          coordinator,
+          policy,
+          settlementMs,
+          firstReservation,
+          card,
+          delivery: Object.freeze({
+            attempted: deliveryAttempted,
+            acked: deliveryAcked,
+            failed: deliveryFailed,
+            outcome: deliveryOutcome,
+            errorReply: errorReplyOutcome,
+          }),
+          limited,
+        });
+        options.emit?.(receipt);
+      } catch { /* Observation must not affect completion, notices, delivery or errors. */ }
+    },
+  });
+}
 
 /**
  * Build the Codex subprocess env overlay. The SDK's `env` option REPLACES the
@@ -311,12 +714,18 @@ export type MessagePhase = 'commentary' | 'partial_answer' | 'final_answer' | 'u
  * - `attempt_start`/`attempt_end` bracket each Codex run. The current bridge
  *   emits `continues: null` only: it never resumes/replays an uncertain turn.
  *   `terminal` is `completed` only when `turn.completed` was seen.
+ * - `item_state` (only with the `itemStates` opt-in): automatic-progress facts
+ *   for command/file/MCP/search and reasoning/todo items, reduced here by
+ *   `redact.reduceItem`. Work items reuse their first-sight seq; reasoning and
+ *   todo items take no selection position (`seq: -1`). It carries no text and
+ *   is ignored by `OutputCollector`.
  */
 export type AgentOutputEvent =
   | { kind: 'attempt_start'; attempt: number; reason: 'initial' | 'request_retry'; continues: number | null }
   | { kind: 'message'; attempt: number; itemId: string; seq: number; text: string; phase: MessagePhase }
   | { kind: 'work'; attempt: number; itemId: string; seq: number; itemType: string }
-  | { kind: 'attempt_end'; attempt: number; terminal: 'completed' | 'no_terminal' };
+  | { kind: 'attempt_end'; attempt: number; terminal: 'completed' | 'no_terminal' }
+  | ItemState;
 
 /**
  * Session options for a query — the single canonical options contract shared
@@ -328,7 +737,14 @@ export type AgentOutputEvent =
 export interface QueryAgentOptions {
   privateMemoryContext?: SafeText;
   resume?: string;
-  onSessionId?: (id: string, prompt: string) => void;
+  /**
+   * Called with the thread id and the actual prompt for this attempt. On the
+   * app-server runtime a third argument carries the thread's explicit-card
+   * toolset digest (null = none), to be stored next to the id (T0).
+   */
+  onSessionId?: (id: string, prompt: string, toolsetDigest?: string | null) => void;
+  /** App-server runtime: toolset digest stored with the `resume` thread (T0); absent = none. */
+  threadToolsetDigest?: string | null;
   groupInstructions?: string;
   senderContext?: SafeText;
   signal?: AbortSignal;
@@ -338,6 +754,60 @@ export interface QueryAgentOptions {
   onExecutionRisk?: (risk: ExecutionRisk) => void;
   onManagedExecution?: (execution: ManagedExecution) => void;
   interruptedTurn?: InterruptedTurn;
+  /** Opt in to `item_state` events for the automatic progress card; absent → the baseline stream. */
+  itemStates?: boolean;
+  /** Content-free ingress observation; no IDs, commands, arguments or output. */
+  onNativeCommand?: (source: CommandSource, phase: CommandPhase) => void;
+  /** Content-free runtime mode observation ('exec' | 'app-server'). */
+  onRuntime?: (mode: ObservedRuntimeMode) => void;
+  /** Content-free pre-projection native item category observation. */
+  onPreProjectionItem?: (category: ObservedItemCategory, id?: string) => void;
+  /** Content-free projected/consumer item category observation. */
+  onProjectedItem?: (category: ObservedItemCategory, id?: string) => void;
+  /**
+   * Trusted explicit-card launch for this turn (WP-08). Each attempt gets a
+   * fresh `Codex` with only its authority-free `mcp_servers.<serverId>` entry
+   * merged, and the attempt registration is closed when the attempt ends.
+   */
+  cardInjection?: CardInjectionLaunch;
+}
+
+type CodexConfigValue = NonNullable<CodexOptions['config']>[string];
+
+/**
+ * App-server runtime: the model-visible explicit-card availability line
+ * (T5/R1, §4.2). Undefined when there are no cards and the thread has none,
+ * so a card-off conversation gets no extra instructions. Old threads keep
+ * their history without tools until a reset or a new session.
+ */
+export function cardAvailability(cardsOffered: boolean, resumed: boolean, storedToolset: string | null): string | undefined {
+  const current = appServerToolset().digest;
+  const threadHasTools = resumed ? storedToolset === current : cardsOffered;
+  if (resumed && cardsOffered && !threadHasTools) {
+    console.warn(`[codex-channel-octo] explicit cards unavailable: thread predates toolset v${APP_SERVER_TOOLSET_VERSION}`);
+    return 'Explicit card tools are not available in this conversation because it was started before the current card toolset. Reply in plain text.';
+  }
+  if (!threadHasTools && storedToolset === null) return undefined;
+  if (!cardsOffered) return 'Explicit card tools are disabled for this bot right now. Reply in plain text; any card tool call will be refused.';
+  return 'Explicit card tools (display, interactive) are available in this conversation. The gateway may still refuse a call; never retry a card whose send outcome is unknown.';
+}
+
+/**
+ * D3: model-visible notice for a resumed thread without the current card
+ * toolset (the R1 branch of {@link cardAvailability}). R1 covers a NULL digest
+ * (thread started while cards were off or unprovisioned) and an older digest
+ * (thread started with an earlier toolset), so the text states only the
+ * current state, never how the thread began. Sent as its own
+ * `turn/start` input item, because 0.163.0 drops `developerInstructions` on
+ * a cold resume. It is never part of the framed prompt or gateway history.
+ */
+export const LEGACY_TOOLSET_NOTICE = '[Card tools notice — gateway, not user text]\n'
+  + 'This resumed conversation does not have the current explicit card tools, so none are available in it. '
+  + 'Reply through ordinary messages. A new or reset conversation may offer card tools if the current Bot policy permits.';
+
+/** The D3 turn notice, set exactly when R1 applies: cards offered on a resumed thread without the current toolset. */
+export function legacyToolsetNotice(cardsOffered: boolean, resumed: boolean, storedToolset: string | null): string | undefined {
+  return resumed && cardsOffered && storedToolset !== appServerToolset().digest ? LEGACY_TOOLSET_NOTICE : undefined;
 }
 
 /** Closed runtime metadata, never a previous user prompt or raw tool/error text. */
@@ -359,9 +829,33 @@ export function interruptionContext(turn?: InterruptedTurn): string {
 /** Item types that never form a work boundary. */
 const NON_WORK_ITEM_TYPES = new Set(['agent_message', 'reasoning', 'todo_list', 'error']);
 
+/** Item types that carry automatic-progress state. */
+const ITEM_STATE_TYPES: ReadonlySet<string> = new Set<ItemState['itemType']>(
+  ['command_execution', 'file_change', 'mcp_tool_call', 'web_search', 'reasoning', 'todo_list'],
+);
+
+/** Closed status literal, read defensively; anything else is omitted. */
+function readItemStatus(item: ThreadItem): ItemState['status'] {
+  const status = (item as { status?: unknown }).status;
+  return status === 'in_progress' || status === 'completed' || status === 'failed' ? status : undefined;
+}
+
 function readPhase(item: ThreadItem): MessagePhase {
   const phase = (item as { phase?: unknown }).phase;
   return phase === 'commentary' || phase === 'partial_answer' || phase === 'final_answer' ? phase : 'unknown';
+}
+
+function classifyProjectedItemCategory(rawType: unknown): ObservedItemCategory {
+  switch (rawType) {
+    case 'command_execution': return 'command';
+    case 'file_change': return 'file';
+    case 'mcp_tool_call': return 'tool';
+    case 'web_search': return 'search';
+    case 'reasoning': return 'reasoning';
+    case 'todo_list': return 'plan';
+    case 'agent_message': return 'message';
+    default: return 'unknown';
+  }
 }
 
 /**
@@ -469,6 +963,9 @@ export async function* queryAgentEvents(
     throw error;
   }
   const threadOpts = buildThreadOptions(config, cwd);
+  // Experimental runtime: managed turns only; the SDK exec path is unchanged otherwise.
+  const appServer = config.sdk.runtime === 'app-server' && opts?.onManagedExecution !== undefined;
+  try { opts?.onRuntime?.(appServer ? 'app-server' : 'exec'); } catch { /* observation only */ }
   // Do not execute with stale instructions or silently re-enable a sandbox
   // the operator explicitly disabled (which may be unavailable in a container).
   if (!agentsMdOk && threadOpts.sandboxMode === 'danger-full-access') {
@@ -526,25 +1023,70 @@ export async function* queryAgentEvents(
   ): AsyncIterable<AgentOutputEvent> {
     const attempt = attemptCount++;
     diagnosticRun = {mode:resumeId ? 'resume' : 'start', attempt, resumeId};
-    const scope = opts?.onManagedExecution ? new ExecutionScope(testExecutable, testExecutable ? 'executable' : 'node') : undefined;
-    attemptScope = scope;
-    if (scope) opts?.onManagedExecution?.(scope);
-    const baseEnv = { ...(env ?? Object.fromEntries(Object.entries(process.env).filter((pair): pair is [string,string] => pair[1] !== undefined))) };
-    delete baseEnv.CODEX_CHANNEL_EXECUTION_DIR; delete baseEnv.CODEX_CHANNEL_EXECUTION_TOKEN;
-    const managedProxy = scope && codexOptions.codexPathOverride && process.platform !== 'win32';
-    if (managedProxy) await scope.prepare();
-    // Direct launch has no gateway-owned process handle. Never send it control
-    // fields or infer stopped from a file it could write itself.
-    const client = codex ?? new Codex({ ...codexOptions, env: managedProxy ? scope!.environment(baseEnv) : baseEnv });
-    yield { kind: 'attempt_start', attempt, reason: attemptCtx.reason, continues: attemptCtx.continues };
-    const thread = resumeId
-      ? client.resumeThread(resumeId, threadOpts)
-      : client.startThread(threadOpts);
-    opts?.signal?.throwIfAborted();
-    opts?.assertPublishable?.();
-    risk = 'unknown'; opts?.onExecutionRisk?.(risk);
-    scope?.expectLaunch();
-    const { events } = await thread.runStreamed(prompt, { signal: opts?.signal });
+    let events: AsyncIterable<ThreadEvent>;
+    let attemptToolset: string | null = null;
+    // The bridge never holds the authority: only the launch's per-attempt entry is merged.
+    const injection = appServer ? undefined : opts?.cardInjection;
+    let cardAttempt: AttemptHandle | undefined;
+    if (appServer) {
+      // Pre-spawn: every refusal here is a prepare-stage failure with risk still proven_not_started.
+      const launch = await prepareAppServerLaunch({
+        codexHome: config.sdk.codexHome, sdkEnv: config.sdk.env, baseUrl: config.sdk.codexBaseUrl, threadOpts,
+      });
+      const apiKey = config.sdk.codexApiKey;
+      if (!apiKey) throw new AgentFailure({ stage: 'prepare', category: 'auth', source: 'local', evidence: 'structured' });
+      yield { kind: 'attempt_start', attempt, reason: attemptCtx.reason, continues: attemptCtx.continues };
+      opts?.signal?.throwIfAborted();
+      opts?.assertPublishable?.();
+      risk = 'unknown'; opts?.onExecutionRisk?.(risk);
+      const cards = opts?.cardInjection;
+      const storedToolset = resumeId ? (opts?.threadToolsetDigest ?? null) : null;
+      const availability = cardAvailability(cards !== undefined, resumeId !== undefined, storedToolset);
+      const turnNotice = legacyToolsetNotice(cards !== undefined, resumeId !== undefined, storedToolset);
+      events = startAppServerAttempt({
+        launch, apiKey, resumeId, prompt, signal: opts?.signal,
+        ...(cards ? { cards: (port: AppServerReplyPort) => cards.prepareAppServerAttempt(port) } : {}),
+        threadToolsetDigest: storedToolset,
+        onThreadToolset: (digest) => { attemptToolset = digest; },
+        ...(availability ? { developerInstructions: availability } : {}),
+        ...(turnNotice ? { turnNotice } : {}),
+        thread: { cwd, model: threadOpts.model, sandbox: threadOpts.sandboxMode ?? 'read-only', approvalPolicy: threadOpts.approvalPolicy ?? 'never' },
+        onExecution: (execution) => opts?.onManagedExecution?.(execution),
+        onCardEffect: () => { sideEffect.seen = true; risk = 'effects_observed'; opts?.onExecutionRisk?.(risk); },
+        onPreProjectionItem: (pre) => {
+          try {
+            opts?.onPreProjectionItem?.(pre.category, pre.id ? `${attempt}:${pre.id}` : undefined);
+          } catch { /* observation only */ }
+        },
+      });
+    } else {
+      const scope = opts?.onManagedExecution ? new ExecutionScope(testExecutable, testExecutable ? 'executable' : 'node') : undefined;
+      attemptScope = scope;
+      if (scope) opts?.onManagedExecution?.(scope);
+      const baseEnv = { ...(env ?? Object.fromEntries(Object.entries(process.env).filter((pair): pair is [string,string] => pair[1] !== undefined))) };
+      delete baseEnv.CODEX_CHANNEL_EXECUTION_DIR; delete baseEnv.CODEX_CHANNEL_EXECUTION_TOKEN;
+      const managedProxy = scope && codexOptions.codexPathOverride && process.platform !== 'win32';
+      if (managedProxy) await scope.prepare();
+      // Direct launch has no gateway-owned process handle. Never send it control
+      // fields or infer stopped from a file it could write itself.
+      const attemptOptions = codex ? codexOptions : { ...codexOptions, env: managedProxy ? scope!.environment(baseEnv) : baseEnv };
+      if (injection) {
+        try { cardAttempt = await injection.prepareAttempt(); } catch { cardAttempt = undefined; }
+        currentCardAttempt = cardAttempt;
+      }
+      const client = cardAttempt && injection
+        ? new Codex({ ...attemptOptions, config: { mcp_servers: { [injection.serverId]: cardAttempt.mcpEntry as CodexConfigValue } } })
+        : codex ?? new Codex(attemptOptions);
+      yield { kind: 'attempt_start', attempt, reason: attemptCtx.reason, continues: attemptCtx.continues };
+      const thread = resumeId
+        ? client.resumeThread(resumeId, threadOpts)
+        : client.startThread(threadOpts);
+      opts?.signal?.throwIfAborted();
+      opts?.assertPublishable?.();
+      risk = 'unknown'; opts?.onExecutionRisk?.(risk);
+      scope?.expectLaunch();
+      ({ events } = await thread.runStreamed(prompt, { signal: opts?.signal }));
+    }
 
     let reportedSessionId = false;
     let completed = false;
@@ -591,7 +1133,8 @@ export async function* queryAgentEvents(
           }
           if (!reportedSessionId && opts?.onSessionId && ev.thread_id) {
             reportedSessionId = true;
-            opts.onSessionId(ev.thread_id, prompt);
+            if (appServer) opts.onSessionId(ev.thread_id, prompt, attemptToolset);
+            else opts.onSessionId(ev.thread_id, prompt);
           }
           break;
         }
@@ -605,6 +1148,20 @@ export async function* queryAgentEvents(
         case 'item.updated':
         case 'item.completed': {
           const item = ev.item;
+          try {
+            // Inspect own data only: the observer must add no SDK getter/proxy effects.
+            if (!utilTypes.isProxy(item)) {
+              const rawType = Object.getOwnPropertyDescriptor(item, 'type')?.value;
+              const rawId = Object.getOwnPropertyDescriptor(item, 'id')?.value;
+              if (rawType === 'command_execution' && (eventType === 'item.started' || eventType === 'item.completed')) {
+                opts?.onNativeCommand?.(appServer ? 'projected_app_server' : 'sdk', eventType === 'item.started' ? 'started' : 'completed');
+              }
+              const cat = classifyProjectedItemCategory(rawType);
+              const scopedId = typeof rawId === 'string' && rawId.length > 0 ? `${attempt}:${rawId}` : undefined;
+              if (!appServer) opts?.onPreProjectionItem?.(cat, scopedId);
+              opts?.onProjectedItem?.(cat, scopedId);
+            }
+          } catch { /* Observation only; preserve the event stream and error. */ }
           // Use the existing start/completion notice cadence, with no raw data
           // passed to the channel callback. Item-state/lifecycle integration is separate.
           if (onSafeItem && (eventType === 'item.started' || eventType === 'item.completed')
@@ -620,6 +1177,22 @@ export async function* queryAgentEvents(
               const event: AgentOutputEvent = { kind: 'work', attempt, itemId: item.id, seq: s.seq, itemType: item.type };
               reply.push(event); yield event;
             }
+          }
+          if (opts?.itemStates === true && ITEM_STATE_TYPES.has(item.type)) {
+            // Reduced here: only closed facts leave the bridge. The phase comes from the single-read event type.
+            const itemType = item.type as ItemState['itemType'];
+            const status = readItemStatus(item);
+            const reduced = reduceItem(item);
+            // Only a trusted match (stable server id + live registration) marks the injected server.
+            const safe = item.type === 'mcp_tool_call' && injection && cardAttempt?.isTrustedServer(item.server)
+              ? { ...reduced, mcpServerId: injection.serverId } : reduced;
+            const event: AgentOutputEvent = {
+              kind: 'item_state', attempt, itemId: item.id,
+              seq: itemType === 'reasoning' || itemType === 'todo_list' ? -1 : sight(item.id).seq,
+              itemType, phase: eventType === 'item.started' ? 'started' : eventType === 'item.updated' ? 'updated' : 'completed',
+              ...(status !== undefined ? { status } : {}), safe,
+            };
+            yield event;
           }
           if (isSideEffectItem(item.type)) {
             sideEffect.seen = true; risk = 'effects_observed'; opts?.onExecutionRisk?.(risk);
@@ -726,6 +1299,8 @@ export async function* queryAgentEvents(
   let risk: ExecutionRisk = 'proven_not_started';
   const sideEffect = { seen: false };
   let starts = 0;
+  /** The explicit-card registration of the running attempt; closed when that attempt ends. */
+  let currentCardAttempt: AttemptHandle | undefined;
   async function* attempt(): AsyncIterable<AgentOutputEvent> {
     if (starts++ > 0) attemptCtx = { reason: 'request_retry', continues: null };
     try { yield* runOnce(opts?.resume, promptText, sideEffect); }
@@ -751,6 +1326,10 @@ export async function* queryAgentEvents(
         risk = 'proven_not_started'; opts?.onExecutionRisk?.(risk);
       }
       throw error;
+    } finally {
+      // Attempt end, success or failure: the registration's listener and authority close.
+      currentCardAttempt?.close();
+      currentCardAttempt = undefined;
     }
   }
   yield* recover(attempt, { config: config.sdk.recovery as RecoveryConfig | undefined,

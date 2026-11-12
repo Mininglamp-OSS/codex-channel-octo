@@ -37,7 +37,7 @@ function sameBot(a: BotRef, b: BotRef): boolean {
 function fingerprint(p: NormalizedProfile): string {
   // Hash normalized allowlisted facts only. No raw profile or compatibility extensions.
   return createHash("sha256").update(JSON.stringify({ automatic: p.automatic,
-    display: { ...p.display, elements: [...p.display.elements].sort() },
+    display: { ...p.display, elements: [...p.display.elements].sort(), actions: [...p.display.actions].sort() },
     interaction: { ...p.interaction, inputs: [...p.interaction.inputs].sort() }, reasons: p.reasons })).digest("hex");
 }
 function resolvedFailure(error: unknown): NormalizedProfile | undefined {
@@ -134,8 +134,13 @@ export function createPolicy(options: PolicyOptions): CardPolicy {
     },
     authorize(op, ctx, pinned): Authorization {
       const at = now();
-      if (!sameBot(ctx.botRef, botRef) || at === undefined || !cached || !fresh(cached, at)
-        || cached[op].state !== "enabled" || (pinned && (!owned(pinned, op) || pinned[op].state !== "enabled"))) {
+      if (!sameBot(ctx.botRef, botRef) || at === undefined) {
+        return Object.freeze({ allowed: false, reason: "policy_revoked" });
+      }
+      if (!cached || !fresh(cached, at)) {
+        return Object.freeze({ allowed: false, reason: "profile_unavailable" });
+      }
+      if (cached[op].state !== "enabled" || (pinned && (!owned(pinned, op) || pinned[op].state !== "enabled"))) {
         return Object.freeze({ allowed: false, reason: "policy_revoked" });
       }
       if (op === "automatic" && pinned && (cached.automatic.template?.id !== pinned.automatic.template?.id
