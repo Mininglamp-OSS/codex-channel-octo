@@ -247,6 +247,86 @@ describe('private bootstrap and relay selection', () => {
       handle: Buffer.from(cli29d8Ticket).toString('base64url'),
     }, trustBoot, 'stdio').transport).toBe('stdio');
 
+    // [A-B4] octo-cli 30a8991c budgeted stdio ticket with max_response_bytes (both JSON integer and decimal string)
+    const caShaHex = createHash('sha256').update(readFileSync(caFile)).digest('hex');
+    const cli30a8NumberTicket = JSON.stringify({
+      ca_sha256: caShaHex,
+      endpoint: 'https://synthetic.invalid/mcp',
+      max_response_bytes: 2097152,
+      peer_sha256: certSha256,
+      server_name: 'localhost',
+      token: 'b'.repeat(64),
+    });
+    expect(checkedTurnRelay({
+      transport: 'stdio',
+      executable: boot.executable,
+      executableSha256: boot.executableSha256,
+      handle: Buffer.from(cli30a8NumberTicket).toString('base64url'),
+    }, trustBoot, 'stdio').transport).toBe('stdio');
+
+    const cli30a8DecimalStringTicket = JSON.stringify({
+      ca_sha256: caShaHex,
+      endpoint: 'https://synthetic.invalid/mcp',
+      max_response_bytes: '2097152',
+      peer_sha256: certSha256,
+      server_name: 'localhost',
+      token: 'b'.repeat(64),
+    });
+    expect(checkedTurnRelay({
+      transport: 'stdio',
+      executable: boot.executable,
+      executableSha256: boot.executableSha256,
+      handle: Buffer.from(cli30a8DecimalStringTicket).toString('base64url'),
+    }, trustBoot, 'stdio').transport).toBe('stdio');
+
+    const invalidBudgetTicket = JSON.stringify({
+      ca_sha256: caShaHex,
+      endpoint: 'https://synthetic.invalid/mcp',
+      max_response_bytes: 0,
+      peer_sha256: certSha256,
+      token: 'b'.repeat(64),
+    });
+    expect(() => checkedTurnRelay({
+      transport: 'stdio',
+      executable: boot.executable,
+      executableSha256: boot.executableSha256,
+      handle: Buffer.from(invalidBudgetTicket).toString('base64url'),
+    }, trustBoot, 'stdio')).toThrow('Relay ticket invalid');
+
+    // [A-B7] HTTP open_relay reply omitting optional tls / ca_sha256 / peer_sha256 still propagates and enforces hostConfig pins
+    const httpMinimalReply = {
+      transport: 'http',
+      url: 'https://synthetic.invalid/mcp',
+      handle: 'b'.repeat(64),
+    };
+    const trustBootWithCaSha = {
+      ...trustBoot,
+      hostConfig: {
+        ...trustBoot.hostConfig,
+        relay_ca_sha256: caShaHex,
+      },
+    };
+    expect(checkedTurnRelay(httpMinimalReply, trustBootWithCaSha, 'http')).toMatchObject({
+      transport: 'http',
+      url: 'https://synthetic.invalid/mcp',
+      handle: 'b'.repeat(64),
+      caSha256: caShaHex,
+      peerSha256: certSha256,
+      tls: {
+        ca_file: caFile,
+        ca_sha256: caShaHex,
+        cert_sha256: certSha256,
+        server_name: 'localhost',
+      },
+    });
+    expect(() => checkedTurnRelay(httpMinimalReply, {
+      ...trustBoot,
+      hostConfig: {
+        ...trustBoot.hostConfig,
+        relay_ca_sha256: '0'.repeat(64),
+      },
+    }, 'http')).toThrow('CA digest');
+
     expect(() => checkedTurnRelay({ ...relay, handle: handle(undefined, 'bf_synthetic') }, boot, 'stdio')).toThrow();
     expect(() => checkedTurnRelay({ ...relay, handle: handle('https://different.invalid') }, boot, 'stdio')).toThrow();
     expect(() => checkedTurnRelay({ ...relay, credential: 'extra' }, boot, 'stdio')).toThrow();
@@ -318,6 +398,7 @@ describe('private bootstrap and relay selection', () => {
     let proveOriginalVisibility = false;
     let replySendAllowed = true;
     let admitVersionExact = true;
+    let overridePermit: string | null = null;
     const msgUnknownVis: BotMessage = {
       message_id: '776', message_seq: 10, from_uid: 'alice', channel_id: 'alice@bot',
       channel_type: ChannelType.DM, timestamp: 1, payload: { type: 1, content: 'UNKNOWN_ORIGINAL_VISIBILITY' },
@@ -476,11 +557,15 @@ describe('private bootstrap and relay selection', () => {
             authorities,
             results: reqRefs.map(r => {
               const target = r.header_reference === header776.header_reference ? header776 : header;
+              // octo-server f3cf3a13 ServerMessageFactProvider.permit emits a 43-char base64url HMAC-SHA256 token matching #/$defs/Token (^[A-Za-z0-9_-]{1,512}$)
+              const rawPermit = overridePermit ?? createHash('sha256')
+                .update(`${responseKey.bot_uid}:${responseKey.space_id}:${String(parsed.context_id)}:${String(parsed.context_epoch)}:${target.header_reference}:${target.payload_sha256}`)
+                .digest('base64url');
               return proveOriginalVisibility
                 ? {
                     reference: target.header_reference,
                     status: 'resolved',
-                    permit: `pmt1-${'1'.repeat(64)}`,
+                    permit: rawPermit,
                     header_reference: target.header_reference,
                     context_id: parsed.context_id,
                     context_epoch: parsed.context_epoch,
@@ -849,6 +934,17 @@ let mcpStatus = 'NO_MCP';
         },
         new AbortController().signal,
       )).rejects.toThrow('PERMISSION_NATIVE_HISTORY_BODY_CONSUMER_UNAVAILABLE');
+
+      // Invalid permit token violating #/$defs/Token (^[A-Za-z0-9_-]{1,512}$) fails closed
+      overridePermit = 'invalid permit!';
+      await expect(realNative.prepareInput(
+        {
+          ...binding777,
+          contributors: [],
+        },
+        new AbortController().signal,
+      )).rejects.toThrow('Native history_disclosure permit binding mismatch');
+      overridePermit = null;
     } finally {
       await endpoint?.stop();
       db.close();

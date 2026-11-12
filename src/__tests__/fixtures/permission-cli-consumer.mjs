@@ -124,6 +124,7 @@ try {
   }
 
   const initReq = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { capabilities: {} } };
+  const initializedNotif = { jsonrpc: '2.0', method: 'notifications/initialized' };
   const positiveRequests = [
     ...['execute', 'call_op'].map((name, i) => ({
       jsonrpc: '2.0',
@@ -217,6 +218,14 @@ try {
     ...boundSearchRequests,
     ...deniedSceneRequests,
   ];
+  const allWireMessages = [
+    initReq,
+    initializedNotif,
+    ...positiveRequests,
+    ...overflowExportRequests,
+    ...boundSearchRequests,
+    ...deniedSceneRequests,
+  ];
 
   let results;
   if (fixture.transport === 'stdio') {
@@ -224,13 +233,23 @@ try {
     const match = /"args"=\["--turn-relay","([A-Za-z0-9_-]+)"\]/.exec(worker.configOverrides[0]);
     assert(match, 'expected rebound stdio turn-relay handle in worker configOverrides[0]');
     const reboundTicket = JSON.parse(Buffer.from(match[1], 'base64url').toString('utf8'));
-    assert.equal(reboundTicket.ca_file, worker.relayCaPath);
-    assert.equal(reboundTicket.cert_sha256, fixture.relayCertSha256);
+    if (reboundTicket.ca_file !== undefined) {
+      assert.equal(reboundTicket.ca_file, worker.relayCaPath);
+    } else {
+      assert.equal(reboundTicket.ca_sha256, relayCaSha256);
+    }
+    assert.equal(reboundTicket.cert_sha256 ?? reboundTicket.peer_sha256, fixture.relayCertSha256);
     assert.equal(reboundTicket.server_name, fixture.relayServerName);
+    if (reboundTicket.max_response_bytes !== undefined) {
+      assert.equal(Number(reboundTicket.max_response_bytes), 1024);
+    }
 
     // Negative receiving-connection TLS checks: wrong CA and wrong leaf pin on actual stdio turn-relay connection.
     const wrongCaTicket = Buffer.from(
-      JSON.stringify({ ...reboundTicket, ca_file: fixture.otherCaPath }),
+      JSON.stringify({
+        ...reboundTicket,
+        ...(reboundTicket.ca_file !== undefined ? { ca_file: fixture.otherCaPath } : {}),
+      }),
       'utf8',
     ).toString('base64url');
     const wrongCaChild = spawnSync(relay.executable, ['--turn-relay', wrongCaTicket], {
@@ -256,7 +275,7 @@ try {
     assert.equal(wrongLeafChild.stdout.trim(), '');
 
     const child = spawnSync(relay.executable, ['--turn-relay', match[1]], {
-      input: allRequests.map(request => JSON.stringify(request) + '\n').join(''),
+      input: allWireMessages.map(request => JSON.stringify(request) + '\n').join(''),
       encoding: 'utf8',
       env: { ...worker.env },
       timeout: 25000,
@@ -297,7 +316,7 @@ try {
       assert(bridge.url, 'expected HTTP turn-relay bridge URL');
       assert(bridge.launch.configOverrides[0].includes(bridge.url));
       results = [];
-      for (const request of allRequests) {
+      for (const request of allWireMessages) {
         const resp = await fetch(bridge.url, {
           method: 'POST',
           headers: {
@@ -307,8 +326,13 @@ try {
           },
           body: JSON.stringify(request),
         });
-        assert.equal(resp.status, 200);
-        results.push(await resp.json());
+        if (request.id === undefined) {
+          assert.equal(resp.status, 202);
+          assert.equal(await resp.text(), '');
+        } else {
+          assert.equal(resp.status, 200);
+          results.push(await resp.json());
+        }
       }
     } finally {
       await bridge.close();

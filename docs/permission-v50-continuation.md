@@ -1,121 +1,66 @@
-# V50 / V52 endpoint continuation — latest 3-head tuple convergence, A-B1/A-B2/A-B3 blocking repairs, receiving-connection TLS & budget evidence, and residual classification
+# V50 / V52 Round 2 endpoint continuation — A-B4/A-B5/A-B6/A-B7 blocking repairs, Server `f3cf3a13` & CLI `30a8991c` ABI alignment, and residual classification
 
-This continuation implements the `ACTIVE v50` (`Owner2120905444695117824`, comment `e98ac4b3-105a-420f-81f0-a20177c61f57`) and `ACTIVE v52` (`Owner2120917153384140800`, Charter comment `32e49395-62f6-4aea-bd5b-4b583797d2a3`, independent review `XIN-2834` verdict `9a49c03b-542a-4223-9ac3-3513fb717752`, trigger comment `f3b841df-c529-43d9-96b7-4f02551a3613`) slices on
-`XIN-2795` (`2f4a34e9-2be3-48ac-99f0-38a30f077acd`) under parent charter
-`XIN-2323` (`17e81670-5b49-461d-9509-7c22ca127939`). It closes the cross-repository version
-skew and repairs the three endpoint blocking review findings (`A-B1`, `A-B2`, `A-B3`) plus shutdown drain order against the exact 3-head tuple:
+This continuation implements the `ACTIVE v50` (`Owner2120905444695117824`), `ACTIVE v52` (`Owner2120917153384140800`), and `ACTIVE 12:51 alignment — CURRENT ROUND 2 ONLY` (`Owner2120982929117974528` / `Owner2120953081876090880`, independent review `XIN-2834` verdict `7827f70f-94e7-4efc-b5b7-da7b7496f2db`, trigger comment `a25ee2e2-6960-4da7-b561-c38541da62ee`) slices on `XIN-2795` (`2f4a34e9-2be3-48ac-99f0-38a30f077acd`) under parent charter `XIN-2323` (`17e81670-5b49-461d-9509-7c22ca127939`).
+
+It repairs the four Round 2 endpoint blocking review findings (`[A-B4]`, `[A-B5]`, `[A-B6]`, `[A-B7]`) on top of the Round 1 repairs (`[A-B1]`, `[A-B2]`, `[A-B3]`, shutdown drain order):
 - **Endpoint (`XIN-2795` = `2f4a34e9-2be3-48ac-99f0-38a30f077acd`, Draft #102):**
-  builds on `131dc9c38bfe6813a0a0e9f207398fa06112cb9e` (backed up locally at
-  `backup/xin-2795-v52-131dc9c`) and `afd3241073c880319703a8a27daf66ff7507682e`.
-- **CLI (`XIN-2794` = `229ad215-8526-4a04-8f5b-36f073f81a16`, Draft #234):**
-  `3ef52206809ade6b10fcb6976e4c7ab7c8af69a7` (source outcome
-  `3293488e-4d14-4b75-a3a4-951c454b1eac`).
+  builds on `6830c4050ccb7a299114933b7eb6afbea990abb2` (`ploy-elison:xin-2795-admission-context-replay`).
 - **Server (`XIN-2793` = `6a92a547-cb82-4c3d-ac6c-8f5529028ba4`, Draft #951):**
-  `e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d` (outcome
-  `9aad196b-2da3-451d-b0a8-a89260a955f9`).
+  `f3cf3a13a29c3f85be14e4b794d1a0836b54a9dc` (Server Round 2 delivered, advancing from `5c04569dd9bb562629c0cd44c367bab15bafc84f` with `handoff-v9.json` and `contract-manifest-v9.json`).
+- **CLI (`XIN-2794` = `229ad215-8526-4a04-8f5b-36f073f81a16`, Draft #234):**
+  tested against live head `30a8991c0bbbdfd42399e07dadbb60c74b26c3b4` while `XIN-2794` Round 2 repair (`C-B1r2`/`C-B3`) proceeds on Draft #234.
 
-Draft #102 remains on the `ploy-elison` fork targeting `main` (historical base
-`5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34`; verified clean merge-tree against
-live upstream `main` `2f4d0521bcae9e15c008c29e290427de5813e8d2`). No sibling
-repository or task is modified.
+Draft #102 remains on the `ploy-elison` fork targeting `main` (historical base `5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34`; verified clean merge-tree against live upstream `main` `2f4d0521bcae9e15c008c29e290427de5813e8d2`). No sibling repository or task is modified.
 
-## Binding v50 alignment constraints (`HOLD` & `RESIDUAL CORRECTION`)
+## Round 2 blocking repairs (`[A-B4]`, `[A-B5]`, `[A-B6]`, `[A-B7]`)
 
-1. **Zero `octo-im` / WukongIM modifications or tasks.**
-   `octo-im` / WukongIM is an external open-source project. No wire, API, code,
-   configuration, schema, or service change is requested or required from
-   `octo-im`. `createNativeEndpointDriver` resolves authoritative delivery
-   bindings, permission facts, disclosure tokens, and replay fences through
-   `octo-server` (`e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d`) using existing
-   `WKSocket` transport fields.
-2. **Zero external recovery/election/consensus/fence platform prerequisite.**
-   Single-active Bot deployment uses existing `octo-server` + endpoint local
-   durability (`ReplayJournal` FULL-sync SQLite with `PRAGMA locking_mode =
-   EXCLUSIVE`). Prior wording that could make "shared SQL+IM durable-fence" look
-   like an `octo-im` dependency or external platform mandate is explicitly
-   retired.
-3. **Original `XIN-2830` memo `4831fa26-b5de-4dc0-a3dc-79477c891f91` is already
-   delivered but unapproved.**
-   Together with `XIN-2830` (`2fd1cf39-ab4d-4da5-aaa0-75161eb9ae52`) report
-   `edd9ad84-f10b-4e1e-9161-19a598bbb153` and overriding addendum
-   `28585cc5-4cc3-47e0-b3a5-17f81ac55b75`, ordinary-SQL known restore / manual
-   review semantics, historical original-visibility & untagged legacy DM
-   history/reference scope (`remaining-producers-v5.json`), and replay identity
-   deltas await Owner product decision rather than unapproved code substitution.
-4. **`supported_catalog_digest` remains `null` and production allowlist remains
-   empty.**
-   Candidate semantic digest
-   `15c7ca2bf6df703979df529afbca6828f116b2463b1a818456edfad80bcad799` is verified
-   across both `octo-cli` (`3ef52206809ade6b10fcb6976e4c7ab7c8af69a7`) and
-   `octo-server` (`e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d`), while
-   `MinSerializedRPCBudgetBytes = 1024` and `MaxResponseBudgetBytes = 64 MiB`
-   (`67108864`) in `octo-cli` are engineering validation guardrails, not
-   Owner-selected production defaults.
-
-## V50 / V52 endpoint updates and latest-tuple verification (`COVERAGE`)
-
-1. **`[A-B1]` Actual worker consuming MCP HTTP path routed through `startTurnRelayBridge` -> `postHttpTurnRelay`.**
-   - `startTurnRelayBridge` (`src/permissions/worker-launch.ts`) and `createContainedWorkerDriver.execute` (`src/permissions/endpoint-factory.ts`) start a host-owned per-turn local bridge and rebind `mcp_servers.octo.url` (`http://127.0.0.1:<bridgePort>/mcp` with a per-turn 256-bit bearer token) so every actual MCP HTTP call made by the spawned Codex worker traverses `postHttpTurnRelay`.
-   - `postHttpTurnRelay` enforces the staged custom CA (`ca_sha256`/`ca_file`), `servername` (`server_name` SNI/SAN override on `https://127.0.0.1:<port>/mcp`), `checkServerIdentity` leaf certificate DER SHA-256 pin (`cert_sha256`/`peer_sha256`), and client-side `X-Octo-Acquisition-Budget-Bytes` (`Content-Length` pre-check and streaming byte cap, returning a bounded `<= 1024 B` JSON-RPC `-32007` `response_budget_exceeded` replacement error envelope on overflow) on every actual worker request.
-2. **`[A-B3]` Linux `bwrap --unshare-net` UDS turn-relay bridge (`bwrap-netns-bridge.cjs`).**
-   - `createIsolatingWorkerLauncher` (`src/permissions/worker-launch.ts`) preserves `--unshare-net` when `allowNetwork: false` (`descriptor.worker.provider === null`).
-   - When `startTurnRelayBridge` is active, it exposes a private mode-`0600` Unix domain socket (`r.sock`) for both HTTP MCP and `octo --turn-relay` stdio transports, bind-mounts the UDS directory into the `bwrap` sandbox, and starts `bwrap-netns-bridge.cjs` inside the isolated network namespace to forward `127.0.0.1:<relayPort>` over `CODEX_OCTO_RELAY_UDS` while stripping `CODEX_OCTO_RELAY_UDS` and `CODEX_OCTO_RELAY_PORT` before `exec`ing the worker.
-3. **`[A-B2]` `createNativeEndpointDriver` aligned with `octo-server` v7 wire envelopes, boolean predicate maps, decimal-string epochs, and `resolve`/`reply`/`reference` shapes.**
-   - Validates `octo-server` v7 response envelopes (`schema_version: 1`, `profile_version: 1`, `key`, `request_id`, `read_id`, `observed_at`, 2-element `authorities` array `[{ authority_id, kind: 'sql'|'im', incarnation, position, read_nonce, consistency: 'ack_before_read_start', started_at, completed_at }]`, and `authority_refs`).
-   - Requires `message_seq > 0` in `inspect` and parses `binding.proven_predicates` as `octo-server`'s boolean map (`Record<string, boolean>`).
-   - Preserves mandatory `bot_original_visible === true` and `caller_original_visible === true` checks in `prepareInput` (refusing when either is in `unknown_predicates` or `false`), formats `context_epoch` as a decimal string, validates `octo-server` v7's `HistoryDisclosureResponse` (`status: 'resolved'`, `permit: 'pmt1-...'`, `payload_sha256`), extracts the invoking turn's input from the bound delivered `WKSocket` frame, and fails closed (`PERMISSION_NATIVE_HISTORY_BODY_CONSUMER_UNAVAILABLE`) if additional historical contributors return metadata-only permits without body content.
-   - Uses `operation: 'resolve', purpose: 'admit'` in `revalidateOriginal` with mandatory all-`true` `result.predicates` checks (`verifyResolvedPredicates`).
-   - Matches `resolved.reference === deliveryReference` in `publish` and `refuse` and verifies all `reply` predicates are `=== true` (refusing before `sendMessage` whenever any reply predicate such as `bot_current_send` or `dm_bot_to_human_send_relation` is `false`).
-   - Removes the unmounted `/v1/bot/permission-facts/v1/fence` call and keeps `recover` explicitly fail-closed (`PERMISSION_NATIVE_RECOVERY_FENCE_UNAVAILABLE`) until Owner decision on `XIN-2830` Decision 1.
-4. **Non-blocking shutdown drain order (`src/index.ts:321-327`).**
-   - `shutdown` drains `await router.stopTurns()` and `await gateway.stop(activeHandlers)` before `await permissionEndpoint?.stop()`.
-5. **Latest CLI `3ef52206809ade6b10fcb6976e4c7ab7c8af69a7` binary/relay
-   acquisition, replacement-envelope budget behavior, and denied read/write Journey 3.**
-   - Verified against `octo-cli` `3ef52206809ade6b10fcb6976e4c7ab7c8af69a7` with
-     `ResponseBudgets` (`MaxAcquisitionBytes: 512`, `MaxPageItems: 10`,
-     `MaxPages: 2`, `MaxCumulativeBytes: 1024`,
-     `MaxSerializedRPCBytes: MinSerializedRPCBudgetBytes = 1024`).
-   - **Journey 3 (Admitted turn denied read + write with zero refused-attempt dispatch):**
-     ungranted read (`docs.scene.get`) and write (`docs.scene.edit`) during an admitted turn are rejected across both `execute` and `call_op` with JSON-RPC error `-32007` (`capability_denied`) and `deniedDispatches === 0` at the backend.
+1. **`[A-B4]` `stdio` relay ticket `max_response_bytes` acceptance and preservation (`src/permissions/endpoint-factory.ts:966-1020`, `src/permissions/worker-launch.ts:498-531, 569, 596-617, 686-717`).**
+   - `checkedTurnRelay` (`src/permissions/endpoint-factory.ts:1006`) includes `'max_response_bytes'` in `allowedTicketKeys` in Go `json.Marshal` lexicographic key order between `'endpoint'` and `'peer_sha256'`, validated by `validRelayMaxResponseBytes` (`1..67108864`, accepting both positive integer `number` and positive integer decimal `string` `/^[1-9][0-9]{0,18}$/`).
+   - `preparePrivateWorker` and `encodeGoRelayTicket` (`src/permissions/worker-launch.ts:498-531, 569, 596-617, 686-717`) preserve `max_response_bytes` across staged-CA (`ca_file`) and digest (`ca_sha256`) ticket re-encoding so `octo --turn-relay` retains the per-turn response cap.
+2. **`[A-B5]` HTTP `202 Accepted` zero-byte notification acknowledgements (`src/permissions/worker-launch.ts:857, 892-904, 1001-1004, 1107-1113`).**
+   - `postHttpTurnRelay` (`src/permissions/worker-launch.ts:1001-1004`) resolves `undefined` when `res.statusCode === 202 && totalBytes === 0` (such as Streamable HTTP `notifications/initialized`).
+   - `startTurnRelayBridge` (`src/permissions/worker-launch.ts:1107-1113`) responds with `HTTP 202 Accepted` and `Content-Length: 0` when `postHttpTurnRelay` resolves `undefined`.
+3. **`[A-B6]` `history_disclosure` permit validation aligned with `octo-server` `#/$defs/Token` schema (`src/permissions/endpoint-factory.ts:576-581`).**
+   - `createNativeEndpointDriver.disclose` (`src/permissions/endpoint-factory.ts:576`) validates `primary.permit` against `octo-server`'s real `#/$defs/Token` pattern (`!/^[A-Za-z0-9_-]{1,512}$/.test(primary.permit)` in `pkg/permissionbundle/contracts/permission-native-facts-v1.schema.json`), accepting `octo-server` `f3cf3a13`'s 43-character base64url HMAC-SHA256 permit without requiring an invented `pmt1-` prefix.
+4. **`[A-B7]` Linux `bwrap --unshare-pid` isolation and configured HTTP relay pin propagation (`src/permissions/worker-launch.ts:268-276`, `src/permissions/endpoint-factory.ts:1063-1142`).**
+   - `bwrapBaseArgs` in `createIsolatingWorkerLauncher` (`src/permissions/worker-launch.ts:268-276`) includes `'--unshare-pid'`.
+   - `checkedTurnRelay` (`src/permissions/endpoint-factory.ts:1063-1142`) propagates and enforces configured `boot.hostConfig` `relay_ca`/`peer_ca`, `relay_ca_sha256`, `relay_cert_sha256`/`relay_peer_sha256`, and `relay_server_name` on HTTP `TurnRelay` (`tls`, `caSha256`, `peerSha256`) even when optional `open_relay` reply fields (`tls`, `ca_sha256`, `peer_sha256`) are omitted, and fails closed if any reply pin conflicts with configured host pins.
 
 ## Consumed sibling revisions and exact byte/hash inventory
 
+### Server (`XIN-2793` = `6a92a547-cb82-4c3d-ac6c-8f5529028ba4`, Draft #951)
+Head: `f3cf3a13a29c3f85be14e4b794d1a0836b54a9dc` (Server Round 2 delivered)
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `pkg/permissionbundle/contracts/handoff-v9.json` | 15,865 | `4aeec7c60356e98dddafb320652c8c680aa919a306856e9b5215e67751a107d9` |
+| `pkg/permissionbundle/contracts/contract-manifest-v9.json` | 3,497 | `73a27422b116a0d8ac54a10fb90510d49c86e7bd66eb3422fc95a975b8cef0a3` |
+| `pkg/permissionbundle/contracts/remaining-producers-v7.json` | 4,673 | `15db201703b72e9e8f1afcbc6524d02d6edca019410f99cd2aaa20e8831d0bd3` |
+| `pkg/permissionbundle/contracts/permission-native-facts-v1.schema.json` | 30,549 | `bf08d33e87ad1a4726116c97171b008394e6896bba4babf03762914b5ad0e643` |
+| `pkg/permissionbundle/native_facts_adapter.go` | 42,518 | `7d00d22a82d73bf73eda1c9b739cff8dcff52e5ede46f16e21cf4a50abc7808a` |
+| `pkg/permissionbundle/server_message_facts.go` | 35,536 | `0e51194de11806a47e5df07e28a1ebb5fa93e14ae6be5d816b06ef5f06858d08` |
+| `docs/permission-server-convergence-v52-r2.md` | 7,858 | `4c639e81f2d6b04eeaa06948944a504780a79766627123c4e16a5ee7ff8c7f13` |
+
 ### CLI (`XIN-2794` = `229ad215-8526-4a04-8f5b-36f073f81a16`, Draft #234)
-Head: `3ef52206809ade6b10fcb6976e4c7ab7c8af69a7` (outcome `3293488e-4d14-4b75-a3a4-951c454b1eac`)
+Tested live head: `30a8991c0bbbdfd42399e07dadbb60c74b26c3b4` (`XIN-2794` Round 2 repair `C-B1r2`/`C-B3` remains in progress)
 
 | File | Bytes | SHA-256 |
 | --- | ---: | --- |
 | `docs/permission/endpoint-abi-v1.json` | 3,923 | `d0b055d6070545c749a08dfb49cabbd7d6fa15758328c111c20d1d881d20c835` |
-| `docs/permission/endpoint-abi-v2.json` | 10,811 | `785342476f15d3d21a9936d370117dfcf6df49aa040d04ebbb21b786453470f9` |
-| `docs/permission/cli-component-contract-v6.json` | 11,991 | `aea8d2d11c419a70069c3c26f6f2f27c98e7d865164a178a1f991160ab4b2a3e` |
-| `docs/permission/contract-manifest-v6.json` | 2,903 | `37355c4f25f86b5fe438439a4cba0270ec6f0726b5254b6ab40fdb4b8db57e0d` |
-| `docs/permission/response-budget-ledger-v6.json` | 8,331 | `7c46334eacc9796c003c6929373033359e0428ed57d74a07244db84a7837e463` |
-| `internal/mcp/permission_host.go` | 39,773 | `f9ef0cc4ac84f7c4c712936af9fe5efe86a5fc7baeedd7bfcc011b467abf0e2b` |
-| `internal/mcp/permission_relay.go` | 11,359 | `0c2557ec51ec18fcb03e4c35fc2b6b9f48b4d01826db60db5f66b3e1bad5f7ad` |
-| `internal/mcp/managed.go` | 13,937 | `32eed0a7fcd50d0851d8ba2671705f9c754ce280cd40e015c1b8bf01c8b34239` |
-| `internal/permission/coordinator.go` | 17,862 | `6a5d7c78d76986d642c6cb2a732041a5868abbe18facb99a4dab1ca7dabf9b4e` |
-| `internal/permission/runtime.go` | 19,963 | `6357de6ac114fd7a641f45f5ad9c855654b710564b5c5c0ed4f69acf5e3130d0` |
+| `docs/permission/contract-manifest-v5.json` | 2,097 | `d54a11eac89263c9a5ddd3279af03c750ccc1775d2832cbe647eab9d089b411a` |
+| `internal/mcp/permission_host.go` | 39,857 | `680b6848baf38014a0a2a837b124f5d66b744e6d3dad549bab746dd02919cb5f` |
+| `internal/mcp/permission_relay.go` | 12,893 | `07e67533a5ed670fbf28c37a0021e81981b2912444659d66648d3f801cedb2cf` |
 | `docs/permission/catalog-package-v2/manifest.json` | 4,934 | `ecc56c2ab0a2c520ab7e5203d2abab06671daf90c28d69f88fe1de8d154109fc` |
 | `docs/permission/source-slot-witness-v5.json.gz` | 12,562 | `0c5da173bd0f53c64562a70a5c5feebc955ad111bbe84ed11f5588c08b4b9c0b` |
 
-### Server (`XIN-2793` = `6a92a547-cb82-4c3d-ac6c-8f5529028ba4`, Draft #951)
-Head: `e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d` (outcome `9aad196b-2da3-451d-b0a8-a89260a955f9`)
-
-| File | Bytes | SHA-256 |
-| --- | ---: | --- |
-| `pkg/permissionbundle/contracts/contract-manifest-v7.json` | 2,127 | `8ae92962d775c09cac86bf617399a950ef6416e80de23f18de33e29df27948f2` |
-| `pkg/permissionbundle/contracts/handoff-v7.json` | 15,815 | `0bb6754dbd6de0f66c25bfa02ff5973ff477c64443a84aad7f5bde1b454fc454` |
-| `pkg/permissionbundle/contracts/remaining-producers-v5.json` | 4,044 | `31f28c62f96451dc4f8eeed0c61e6c1b952cbaff073e2fd982a26c3047d19bbb` |
-| `docs/permission-server-convergence-v46.md` | 8,162 | `986a03f698c3ba223d3bc6d8bad702887b4ef52defa1b9a8470a9ea0c5579c54` |
-| `pkg/permissionbundle/package_witness.go` | 10,340 | `c19f42f042bccb763aa435123649adde6f795b1bda0e95c1a373384cf4499be4` |
-
 ## Residual classification (`DELIVER`)
 
-1. **`code defect`:** None open on the converged 3-head tuple (`XIN-2795` Draft #102 + `XIN-2794` `3ef52206809ade6b10fcb6976e4c7ab7c8af69a7` + `XIN-2793` `e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d`).
-2. **`independent review`:** Independent current-head review gate on `XIN-2795` Draft #102, `XIN-2794` Draft #234 (`3ef52206809ade6b10fcb6976e4c7ab7c8af69a7`), and `XIN-2793` Draft #951 (`e708d0235f0d0ecb2b2fd3966db9ccf9e0a8054d`).
-3. **`product decision`:**
-   - Owner decision under `XIN-2323` (`17e81670-5b49-461d-9509-7c22ca127939`) / `XIN-2830` (`2fd1cf39-ab4d-4da5-aaa0-75161eb9ae52`) on the already-delivered unapproved memo `4831fa26-b5de-4dc0-a3dc-79477c891f91` (plus report `edd9ad84-f10b-4e1e-9161-19a598bbb153` and overriding addendum `28585cc5-4cc3-47e0-b3a5-17f81ac55b75`): ordinary-SQL known restore / manual review handling, historical group/thread `bot_original_visible`/`caller_original_visible` and legacy untagged DM `space_id` history/reference scope (`remaining-producers-v5.json`), and replay identity deltas (with zero `octo-im`/WukongIM changes and zero external consensus/election/fence platform).
-   - Owner decision under `XIN-2323` (`17e81670-5b49-461d-9509-7c22ca127939`) / `XIN-2794` (`229ad215-8526-4a04-8f5b-36f073f81a16`) on A1 production `ResponseBudgets` default values (`response-budget-ledger-v6.json`; CLI `1024 B` / `64 MiB` guardrails are engineering validation bounds, not Owner-selected production defaults), A2/A3 status, and pinning candidate semantic digest `15c7ca2bf6df703979df529afbca6828f116b2463b1a818456edfad80bcad799` into `supported_catalog_digest`.
-4. **`later deployment or tester gate`:**
+1. **`code defect`:** None open on `XIN-2795` (`[A-B1]`–`[A-B7]` closed).
+2. **`sibling synchronization`:** `octo-cli` (`XIN-2794` = `229ad215-8526-4a04-8f5b-36f073f81a16`, Draft #234) Round 2 repair (`C-B1r2`/`C-B3`) is in progress; endpoint Round 2 repair is verified against live `octo-cli` `30a8991c0bbbdfd42399e07dadbb60c74b26c3b4` (accepting both positive decimal-string and positive integer `max_response_bytes` in `stdio` tickets) and `octo-server` Round 2 head `f3cf3a13a29c3f85be14e4b794d1a0836b54a9dc`.
+3. **`independent review`:** Independent Round 2 re-review (`XIN-2834` = `46d23689-0cb4-4d33-b488-8d430ae854c3`) on `XIN-2795` Draft #102, `XIN-2794` Draft #234, and `XIN-2793` Draft #951 (`f3cf3a13a29c3f85be14e4b794d1a0836b54a9dc`).
+4. **`product decision`:**
+   - Owner decision under `XIN-2323` (`17e81670-5b49-461d-9509-7c22ca127939`) / `XIN-2830` (`2fd1cf39-ab4d-4da5-aaa0-75161eb9ae52`) on the already-delivered unapproved memo `4831fa26-b5de-4dc0-a3dc-79477c891f91` (plus report `edd9ad84-f10b-4e1e-9161-19a598bbb153` and overriding addendum `28585cc5-4cc3-47e0-b3a5-17f81ac55b75`).
+   - Owner decision under `XIN-2323` (`17e81670-5b49-461d-9509-7c22ca127939`) / `XIN-2794` (`229ad215-8526-4a04-8f5b-36f073f81a16`) on A1 production `ResponseBudgets` default values, A2/A3 status, and pinning candidate semantic digest `15c7ca2bf6df703979df529afbca6828f116b2463b1a818456edfad80bcad799` into `supported_catalog_digest`.
+5. **`later deployment or tester gate`:**
    - `octo-server` (`XIN-2793` = `6a92a547-cb82-4c3d-ac6c-8f5529028ba4`) production `ServedCatalogs` startup activation (`RegisterBotPermissionRoutesFromEnv` / `LoadVerifiedCatalogRegistryFromEnv` remain fail-closed `503` until an Owner-approved `supported_catalog_digest` is pinned and configured).
    - Post-approval multi-service staging/deployment and tester gates (`V-A`–`V-E` / `V-D2`).

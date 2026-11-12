@@ -573,11 +573,11 @@ export function createNativeEndpointDriver(options: NativeEndpointDriverOptions)
         || primary.context_id !== binding.contextId
         || primary.context_epoch !== contextEpoch
         || primary.payload_sha256 !== binding.header.payload_sha256
-        || typeof primary.permit !== 'string' || !/^pmt1-[A-Za-z0-9_-]{1,507}$/.test(primary.permit)) {
+        || typeof primary.permit !== 'string' || !/^[A-Za-z0-9_-]{1,512}$/.test(primary.permit)) {
         throw new Error('Native history_disclosure permit binding mismatch');
       }
       if (reply.results.length > 1 || requestedHeaders.length > 1) {
-        // octo-server v7 history_disclosure issues metadata-only permits (pmt1-...)
+        // octo-server history_disclosure issues metadata-only permits (#/$defs/Token)
         // and does not mount an HTTP body consumer route for historical contributors.
         // A metadata-only disclosure permit is NOT body content; fail closed.
         throw new Error('PERMISSION_NATIVE_HISTORY_BODY_CONSUMER_UNAVAILABLE: metadata-only disclosure permit is not body content');
@@ -962,6 +962,19 @@ function checkTurnRelayTrust(
   return Object.freeze(out);
 }
 
+const MAX_RELAY_RESPONSE_BUDGET_BYTES = 64 * 1024 * 1024;
+
+function validRelayMaxResponseBytes(value: unknown): value is number | string {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 1 && value <= MAX_RELAY_RESPONSE_BUDGET_BYTES;
+  }
+  if (typeof value === 'string' && /^[1-9][0-9]{0,18}$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= MAX_RELAY_RESPONSE_BUDGET_BYTES;
+  }
+  return false;
+}
+
 /** Exact closed relay reply. Pin the stdio executable to the selected CLI, not
  * merely to a digest supplied by another reply field. HTTP stays HTTPS. */
 export function checkedTurnRelay(
@@ -989,13 +1002,14 @@ export function checkedTurnRelay(
     const bytes = Buffer.from(handle, 'base64url');
     if (bytes.toString('base64url') !== handle) throw new Error('Relay ticket invalid');
     const rawTicket = object(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
-    const allowedTicketKeys = ['ca_file', 'ca_sha256', 'cert_sha256', 'endpoint', 'peer_sha256', 'server_name', 'token'];
+    const allowedTicketKeys = ['ca_file', 'ca_sha256', 'cert_sha256', 'endpoint', 'max_response_bytes', 'peer_sha256', 'server_name', 'token'];
     const presentTicketKeys = Object.keys(rawTicket);
     if (!Object.hasOwn(rawTicket, 'endpoint') || !Object.hasOwn(rawTicket, 'token')
-      || presentTicketKeys.some(k => !allowedTicketKeys.includes(k))) {
+      || presentTicketKeys.some(k => !allowedTicketKeys.includes(k))
+      || (Object.hasOwn(rawTicket, 'max_response_bytes') && !validRelayMaxResponseBytes(rawTicket.max_response_bytes))) {
       throw new Error('Relay ticket invalid');
     }
-    // The producer uses Go json.Marshal(map[string]string) for this ticket
+    // The producer uses Go json.Marshal(map[string]any) for this ticket
     // (sorted keys plus HTML and line-separator escapes).
     const orderedTicket: Record<string, unknown> = {};
     for (const k of allowedTicketKeys) {
@@ -1045,17 +1059,50 @@ export function checkedTurnRelay(
   ];
   const relay = object(value, expectedHttpKeys);
   if (relay.url !== boot.hostConfig.relay_url || !/^[0-9a-f]{64}$/.test(text(relay.handle))) throw new Error('Relay binding conflict');
+  const configuredCaFile = typeof boot.hostConfig.relay_ca === 'string' && boot.hostConfig.relay_ca
+    ? boot.hostConfig.relay_ca
+    : typeof boot.hostConfig.peer_ca === 'string' && boot.hostConfig.peer_ca
+      ? boot.hostConfig.peer_ca
+      : undefined;
+  const configuredCaSha = typeof boot.hostConfig.relay_ca_sha256 === 'string' && boot.hostConfig.relay_ca_sha256
+    ? boot.hostConfig.relay_ca_sha256
+    : undefined;
+  if (configuredCaSha !== undefined && !/^[0-9a-f]{64}$/.test(configuredCaSha)) {
+    throw new Error('Relay TLS trust invalid');
+  }
+  const configuredPeerPin = typeof boot.hostConfig.relay_cert_sha256 === 'string' && boot.hostConfig.relay_cert_sha256
+    ? boot.hostConfig.relay_cert_sha256
+    : typeof boot.hostConfig.relay_peer_sha256 === 'string' && boot.hostConfig.relay_peer_sha256
+      ? boot.hostConfig.relay_peer_sha256
+      : undefined;
+  if (configuredPeerPin !== undefined && !/^[0-9a-f]{64}$/.test(configuredPeerPin)) {
+    throw new Error('Relay TLS trust invalid');
+  }
+  const configuredServerName = typeof boot.hostConfig.relay_server_name === 'string' && boot.hostConfig.relay_server_name
+    ? boot.hostConfig.relay_server_name
+    : undefined;
+  if (configuredServerName !== undefined && !validRelayServerName(configuredServerName)) {
+    throw new Error('Relay TLS trust invalid');
+  }
+  const caBytesToCheck = replyTls?.ca_pem
+    ? Buffer.from(replyTls.ca_pem, 'utf8')
+    : replyTls?.ca_file && existsSync(replyTls.ca_file)
+      ? readFileSync(replyTls.ca_file)
+      : fallbackCaBytes;
+  if (configuredCaSha !== undefined) {
+    if (!caBytesToCheck || createHash('sha256').update(caBytesToCheck).digest('hex') !== configuredCaSha) {
+      throw new Error('Relay TLS CA digest conflict');
+    }
+  }
   if (hasHttpPin) {
     const caSha = text(relay.ca_sha256);
     const peerSha = text(relay.peer_sha256);
     if (!/^[0-9a-f]{64}$/.test(caSha) || !/^[0-9a-f]{64}$/.test(peerSha)) {
       throw new Error('Relay binding conflict');
     }
-    const configuredPeerPin = typeof boot.hostConfig.relay_cert_sha256 === 'string' && boot.hostConfig.relay_cert_sha256
-      ? boot.hostConfig.relay_cert_sha256
-      : typeof boot.hostConfig.relay_peer_sha256 === 'string' && boot.hostConfig.relay_peer_sha256
-        ? boot.hostConfig.relay_peer_sha256
-        : undefined;
+    if (configuredCaSha && caSha !== configuredCaSha) {
+      throw new Error('Relay TLS CA digest conflict');
+    }
     if (configuredPeerPin && peerSha !== configuredPeerPin) {
       throw new Error('Relay TLS certificate pin conflict');
     }
@@ -1066,14 +1113,32 @@ export function checkedTurnRelay(
     if (replyPeer && replyPeer !== peerSha) {
       throw new Error('Relay TLS certificate pin conflict');
     }
-    const caBytesToCheck = replyTls?.ca_pem
-      ? Buffer.from(replyTls.ca_pem, 'utf8')
-      : replyTls?.ca_file && existsSync(replyTls.ca_file)
-        ? readFileSync(replyTls.ca_file)
-        : fallbackCaBytes;
     if (caBytesToCheck && createHash('sha256').update(caBytesToCheck).digest('hex') !== caSha) {
       throw new Error('Relay TLS CA digest conflict');
     }
+  }
+  const effectiveCaSha = hasHttpPin ? text(relay.ca_sha256) : (replyTls?.ca_sha256 ?? configuredCaSha);
+  const effectivePeerSha = hasHttpPin
+    ? text(relay.peer_sha256)
+    : (replyTls?.cert_sha256 ?? replyTls?.peer_sha256 ?? configuredPeerPin);
+  let effectiveHttpTls: Readonly<TurnRelayTrust> | undefined = replyTls;
+  if (!effectiveHttpTls && (configuredCaSha || configuredPeerPin || (typeof boot.hostConfig.relay_ca === 'string' && boot.hostConfig.relay_ca) || configuredServerName)) {
+    const rawFallbackTls: Record<string, unknown> = {
+      ...(configuredCaFile ? { ca_file: configuredCaFile } : {}),
+      ...(configuredCaSha ? { ca_sha256: configuredCaSha } : {}),
+      ...(typeof boot.hostConfig.relay_peer_sha256 === 'string' && boot.hostConfig.relay_peer_sha256 ? { peer_sha256: boot.hostConfig.relay_peer_sha256 } : {}),
+      ...(typeof boot.hostConfig.relay_cert_sha256 === 'string' && boot.hostConfig.relay_cert_sha256 ? { cert_sha256: boot.hostConfig.relay_cert_sha256 } : {}),
+      ...(configuredServerName ? { server_name: configuredServerName } : {}),
+    };
+    effectiveHttpTls = checkTurnRelayTrust(rawFallbackTls, boot.hostConfig, fallbackCaBytes);
+  } else if (effectiveHttpTls && (configuredCaSha || configuredPeerPin || configuredServerName || configuredCaFile)) {
+    effectiveHttpTls = Object.freeze({
+      ...(configuredCaFile && !effectiveHttpTls.ca_file ? { ca_file: configuredCaFile } : {}),
+      ...effectiveHttpTls,
+      ...(configuredCaSha && !effectiveHttpTls.ca_sha256 ? { ca_sha256: configuredCaSha } : {}),
+      ...(configuredPeerPin && !effectiveHttpTls.cert_sha256 && !effectiveHttpTls.peer_sha256 ? { cert_sha256: configuredPeerPin, peer_sha256: configuredPeerPin } : {}),
+      ...(configuredServerName && !effectiveHttpTls.server_name ? { server_name: configuredServerName } : {}),
+    });
   }
   const url = new URL(text(relay.url));
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Relay URL invalid');
@@ -1081,8 +1146,9 @@ export function checkedTurnRelay(
     transport,
     url: text(relay.url),
     handle: text(relay.handle),
-    ...(replyTls ? { tls: replyTls } : {}),
-    ...(hasHttpPin ? { caSha256: text(relay.ca_sha256), peerSha256: text(relay.peer_sha256) } : {}),
+    ...(effectiveHttpTls ? { tls: effectiveHttpTls } : {}),
+    ...(effectiveCaSha ? { caSha256: effectiveCaSha } : {}),
+    ...(effectivePeerSha ? { peerSha256: effectivePeerSha } : {}),
   };
 }
 

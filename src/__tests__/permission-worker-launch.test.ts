@@ -258,6 +258,7 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
     });
     expect(noNet.backend).toBe('linux-bwrap');
     const noNetWrapper = readFileSync(noNet.launcher, 'utf8');
+    expect(noNetWrapper).toContain('"--unshare-pid"');
     expect(noNetWrapper).toContain('"--unshare-net"');
 
     const withNet = createIsolatingWorkerLauncher({
@@ -270,6 +271,7 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
       sandboxExecutable: fakeBwrap,
     });
     const withNetWrapper = readFileSync(withNet.launcher, 'utf8');
+    expect(withNetWrapper).toContain('"--unshare-pid"');
     expect(withNetWrapper).not.toContain('"--unshare-net"');
   });
 
@@ -309,7 +311,16 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
     const httpsServer = createHttpsServer({ key: keyPem, cert: certPem, minVersion: 'TLSv1.3' }, async (req, res) => {
       let body = '';
       for await (const chunk of req) body += String(chunk);
-      const parsed = body ? JSON.parse(body) as { id?: unknown } : {};
+      const parsed = body ? JSON.parse(body) as { id?: unknown; method?: string } : {};
+      if (parsed.id === undefined) {
+        // [A-B5] MCP Streamable HTTP notification acknowledgement (HTTP 202 Accepted with 0-byte body)
+        res.writeHead(202, {
+          'content-type': 'application/json',
+          'x-octo-acquisition-budget-bytes': '512',
+        });
+        res.end();
+        return;
+      }
       const id = parsed.id ?? 1;
       if (responseMode === 'overflow-cl') {
         const big = JSON.stringify({ jsonrpc: '2.0', id, result: { pad: 'x'.repeat(2048) } });
@@ -375,6 +386,83 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
       const rpcRes = await postHttpTurnRelay(validLaunch, bearer, { jsonrpc: '2.0', id: 1, method: 'ping' });
       expect(rpcRes).toEqual({ jsonrpc: '2.0', id: 1, result: { ok: true } });
 
+      // [A-B5] Empty-body HTTP 202 Accepted notification acknowledgement resolves cleanly
+      const notifRes = await postHttpTurnRelay(validLaunch, bearer, { jsonrpc: '2.0', method: 'notifications/initialized' });
+      expect(notifRes).toBeUndefined();
+
+      // [A-B4] Budgeted stdio relay ticket preserves max_response_bytes across preparePrivateWorker re-encoding
+      const stdioBudgetTicket = Buffer.from(JSON.stringify({
+        ca_sha256: caSha256,
+        endpoint: relayUrl,
+        max_response_bytes: 65536,
+        peer_sha256: peerSha256,
+        server_name: 'localhost',
+        token: bearer,
+      }), 'utf8').toString('base64url');
+      const stdioBudgetLaunch = preparePrivateWorker({
+        root,
+        launcher,
+        launcherSha256: digest,
+        relay: {
+          transport: 'stdio',
+          executable: launcher,
+          executableSha256: digest,
+          handle: stdioBudgetTicket,
+          caCert: certPem,
+          caSha256,
+          peerSha256,
+          tls: { ca_file: certPath, ca_sha256: caSha256, cert_sha256: peerSha256, server_name: 'localhost' },
+        },
+        instructions: 'STDIO_BUDGET_OK',
+      });
+      const reboundMatch = stdioBudgetLaunch.configOverrides[0]?.match(/"args"=\["--turn-relay","([A-Za-z0-9_-]+)"\]/);
+      expect(reboundMatch).toBeTruthy();
+      const reboundDecoded = JSON.parse(Buffer.from(reboundMatch![1], 'base64url').toString('utf8')) as Record<string, unknown>;
+      expect(reboundDecoded).toMatchObject({
+        ca_file: stdioBudgetLaunch.relayCaPath,
+        cert_sha256: peerSha256,
+        endpoint: relayUrl,
+        max_response_bytes: 65536,
+        server_name: 'localhost',
+        token: bearer,
+      });
+
+      const stdioDecimalBudgetTicket = Buffer.from(JSON.stringify({
+        ca_sha256: caSha256,
+        endpoint: relayUrl,
+        max_response_bytes: '65536',
+        peer_sha256: peerSha256,
+        server_name: 'localhost',
+        token: bearer,
+      }), 'utf8').toString('base64url');
+      const stdioDecimalBudgetLaunch = preparePrivateWorker({
+        root,
+        launcher,
+        launcherSha256: digest,
+        relay: {
+          transport: 'stdio',
+          executable: launcher,
+          executableSha256: digest,
+          handle: stdioDecimalBudgetTicket,
+          caCert: certPem,
+          caSha256,
+          peerSha256,
+          tls: { ca_file: certPath, ca_sha256: caSha256, cert_sha256: peerSha256, server_name: 'localhost' },
+        },
+        instructions: 'STDIO_DECIMAL_BUDGET_OK',
+      });
+      const reboundDecimalMatch = stdioDecimalBudgetLaunch.configOverrides[0]?.match(/"args"=\["--turn-relay","([A-Za-z0-9_-]+)"\]/);
+      expect(reboundDecimalMatch).toBeTruthy();
+      const reboundDecimalDecoded = JSON.parse(Buffer.from(reboundDecimalMatch![1], 'base64url').toString('utf8')) as Record<string, unknown>;
+      expect(reboundDecimalDecoded).toMatchObject({
+        ca_file: stdioDecimalBudgetLaunch.relayCaPath,
+        cert_sha256: peerSha256,
+        endpoint: relayUrl,
+        max_response_bytes: '65536',
+        server_name: 'localhost',
+        token: bearer,
+      });
+
       // Wrong leaf certificate pin on actual receiving connection fails closed
       const wrongPeerLaunch = preparePrivateWorker({
         root,
@@ -439,6 +527,19 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, c
         });
         expect(okResp.status).toBe(200);
         expect(await okResp.json()).toEqual({ jsonrpc: '2.0', id: 101, result: { ok: true } });
+
+        // [A-B5] MCP Streamable HTTP notification (notifications/initialized) returns HTTP 202 Accepted with Content-Length: 0
+        const notifBridgeResp = await fetch(bridge.url!, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${bridge.bridgeBearerToken}`,
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+        });
+        expect(notifBridgeResp.status).toBe(202);
+        expect(notifBridgeResp.headers.get('content-length')).toBe('0');
+        expect(await notifBridgeResp.text()).toBe('');
 
         // Wrong bearer token is rejected at the local bridge before upstream dispatch
         const unauthResp = await fetch(bridge.url!, {

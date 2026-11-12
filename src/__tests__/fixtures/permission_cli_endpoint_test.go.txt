@@ -78,7 +78,7 @@ func TestXIN2795CurrentEndpointChunkAndRelayABI(t *testing.T) {
         )
         if err != nil { t.Fatal(err) }
         budgets := permission.ResponseBudgets{
-            MaxAcquisitionBytes:   512,
+            MaxAcquisitionBytes:   1024,
             MaxPageItems:          10,
             MaxPages:              2,
             MaxCumulativeBytes:    1024,

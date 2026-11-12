@@ -269,6 +269,7 @@ child.on('error', () => process.exit(78));
       '--ro-bind', '/', '/',
       '--dev', '/dev',
       '--proc', '/proc',
+      '--unshare-pid',
       '--unshare-ipc',
       ...(options.allowNetwork === false ? ['--unshare-net'] : []),
       '--die-with-parent',
@@ -494,20 +495,33 @@ function validateTurnRelayTrust(tls: TurnRelayTrust | undefined): {
   return { trust: Object.freeze(out), ...(caBytes ? { caBytes } : {}) };
 }
 
+function validRelayMaxResponseBytes(value: unknown): value is number | string {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 1 && value <= 64 * 1024 * 1024;
+  }
+  if (typeof value === 'string' && /^[1-9][0-9]{0,18}$/.test(value)) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 64 * 1024 * 1024;
+  }
+  return false;
+}
+
 function encodeGoRelayTicket(ticket: {
   ca_file?: string;
   ca_sha256?: string;
   cert_sha256?: string;
   endpoint: string;
+  max_response_bytes?: number | string;
   peer_sha256?: string;
   server_name?: string;
   token: string;
 }): string {
-  const ordered: Record<string, string> = {};
+  const ordered: Record<string, number | string> = {};
   if (ticket.ca_file) ordered.ca_file = ticket.ca_file;
   if (ticket.ca_sha256) ordered.ca_sha256 = ticket.ca_sha256;
   if (ticket.cert_sha256) ordered.cert_sha256 = ticket.cert_sha256;
   ordered.endpoint = ticket.endpoint;
+  if (ticket.max_response_bytes !== undefined) ordered.max_response_bytes = ticket.max_response_bytes;
   if (ticket.peer_sha256) ordered.peer_sha256 = ticket.peer_sha256;
   if (ticket.server_name) ordered.server_name = ticket.server_name;
   ordered.token = ticket.token;
@@ -551,6 +565,7 @@ export function preparePrivateWorker(options: {
     peer_sha256?: string;
     cert_sha256?: string;
     server_name?: string;
+    max_response_bytes?: number | string;
   } | undefined;
   if (options.relay.caCert !== undefined && relayCaBytes === undefined) {
     relayCaBytes = typeof options.relay.caCert === 'string'
@@ -577,6 +592,9 @@ export function preparePrivateWorker(options: {
         const decoded = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(rawBytes)) as Record<string, unknown>;
         if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)
           && typeof decoded.endpoint === 'string' && typeof decoded.token === 'string') {
+          if (Object.hasOwn(decoded, 'max_response_bytes') && !validRelayMaxResponseBytes(decoded.max_response_bytes)) {
+            throw new Error('Turn relay max_response_bytes unavailable');
+          }
           const ticketTrust = validateTurnRelayTrust({
             ...(typeof decoded.ca_file === 'string' ? { ca_file: decoded.ca_file } : {}),
             ...(typeof decoded.ca_sha256 === 'string' ? { ca_sha256: decoded.ca_sha256 } : {}),
@@ -595,6 +613,7 @@ export function preparePrivateWorker(options: {
             ...(ticketTrust.trust?.peer_sha256 ? { peer_sha256: ticketTrust.trust.peer_sha256 } : {}),
             ...(ticketTrust.trust?.cert_sha256 ? { cert_sha256: ticketTrust.trust.cert_sha256 } : {}),
             ...(ticketTrust.trust?.server_name ? { server_name: ticketTrust.trust.server_name } : {}),
+            ...(validRelayMaxResponseBytes(decoded.max_response_bytes) ? { max_response_bytes: decoded.max_response_bytes } : {}),
           };
         }
       }
@@ -663,12 +682,14 @@ export function preparePrivateWorker(options: {
     }
   }
   const serverName = validatedTls.trust?.server_name ?? parsedStdioTicket?.server_name;
-  if (options.relay.transport === 'stdio' && parsedStdioTicket && (relayCaPath || caSha256 || certSha256 || serverName)) {
+  const maxResponseBytes = parsedStdioTicket?.max_response_bytes;
+  if (options.relay.transport === 'stdio' && parsedStdioTicket && (relayCaPath || caSha256 || certSha256 || serverName || maxResponseBytes !== undefined)) {
     const withStagedCaAndDigest = encodeGoRelayTicket({
       ...(relayCaPath ? { ca_file: relayCaPath } : {}),
       ...(caSha256 ? { ca_sha256: caSha256 } : {}),
       ...(certSha256 ? { cert_sha256: certSha256 } : {}),
       endpoint: parsedStdioTicket.endpoint,
+      ...(maxResponseBytes !== undefined ? { max_response_bytes: maxResponseBytes } : {}),
       ...(serverName ? { server_name: serverName } : {}),
       token: parsedStdioTicket.token,
     });
@@ -676,6 +697,7 @@ export function preparePrivateWorker(options: {
       ...(relayCaPath ? { ca_file: relayCaPath } : {}),
       ...(certSha256 ? { cert_sha256: certSha256 } : {}),
       endpoint: parsedStdioTicket.endpoint,
+      ...(maxResponseBytes !== undefined ? { max_response_bytes: maxResponseBytes } : {}),
       ...(serverName ? { server_name: serverName } : {}),
       token: parsedStdioTicket.token,
     });
@@ -687,6 +709,7 @@ export function preparePrivateWorker(options: {
             ...(caSha256 ? { ca_sha256: caSha256 } : {}),
             ...(certSha256 ? { cert_sha256: certSha256 } : {}),
             endpoint: parsedStdioTicket.endpoint,
+            ...(maxResponseBytes !== undefined ? { max_response_bytes: maxResponseBytes } : {}),
             ...(serverName ? { server_name: serverName } : {}),
             token: parsedStdioTicket.token,
           });
@@ -830,7 +853,7 @@ export async function postHttpTurnRelay(
     readonly signal?: AbortSignal;
     readonly maxResponseBytes?: number;
   },
-): Promise<Record<string, unknown>> {
+): Promise<Record<string, unknown> | undefined> {
   if (!launch.relayUrl) throw new Error('Turn relay URL unavailable');
   if (!/^[0-9a-f]{64}$/.test(bearerToken)) throw new Error('Turn relay bearer invalid');
   const signal = options?.signal;
@@ -865,7 +888,7 @@ export async function postHttpTurnRelay(
     throw new Error('RELAY_TICKET_INVALID');
   }
 
-  return new Promise<Record<string, unknown>>((resolve, reject) => {
+  return new Promise<Record<string, unknown> | undefined>((resolve, reject) => {
     let settled = false;
     const finish = (err?: Error, result?: Record<string, unknown>) => {
       if (settled) return;
@@ -876,7 +899,7 @@ export async function postHttpTurnRelay(
         req.destroy();
         reject(err);
       } else {
-        resolve(result!);
+        resolve(result);
       }
     };
     const onAbort = () => finish(new Error('Turn relay request aborted'));
@@ -974,6 +997,10 @@ export async function postHttpTurnRelay(
       res.on('error', (err) => finish(new Error(`Turn relay response failed: ${err.message}`)));
       res.on('end', () => {
         if (settled) return;
+        if (res.statusCode === 202 && totalBytes === 0) {
+          finish(undefined, undefined);
+          return;
+        }
         try {
           const rawText = Buffer.concat(chunks, totalBytes).toString('utf8');
           const parsedJson = JSON.parse(rawText);
@@ -1076,6 +1103,13 @@ export async function startTurnRelayBridge(
             signal,
             maxResponseBytes: options?.maxResponseBytes,
           });
+          if (rpcResult === undefined) {
+            res.writeHead(202, {
+              'Content-Length': '0',
+            });
+            res.end();
+            return;
+          }
           const body = JSON.stringify(rpcResult);
           res.writeHead(200, {
             'Content-Type': 'application/json',
