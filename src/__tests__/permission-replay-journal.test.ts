@@ -148,4 +148,25 @@ describe('file-backed FULL-sync replay journal', () => {
     expect(db.prepare('SELECT count(*) AS n FROM permission_replay').get()).toEqual({ n: 5 });
     expect(readFileSync(file).includes(Buffer.from(delivery.origin))).toBe(false);
   });
+
+  it('enforces exclusive database lock ownership when exclusive mode is enabled', async () => {
+    const db1 = open();
+    const primary = new ReplayJournal(db1, key, '1', { provision: true, exclusive: true });
+    expect((db1.prepare('PRAGMA locking_mode').get() as { locking_mode: string }).locking_mode).toBe('exclusive');
+    expect(primary.reserve(delivery).disposition).toBe('reserved');
+
+    const { default: Database } = await import('better-sqlite3');
+    expect(() => {
+      const raw2 = new Database(file, { timeout: 10 });
+      try { raw2.exec('BEGIN IMMEDIATE'); } finally { raw2.close(); }
+    }).toThrow('locked');
+    db1.close();
+    adapters = [];
+
+    const db3 = open();
+    const recovered = new ReplayJournal(db3, key, '1', { exclusive: true });
+    recovered.recoverInterrupted();
+    expect(recovered.reserve(delivery).disposition).toBe('duplicate');
+    expect(db3.prepare('SELECT state FROM permission_replay').get()).toEqual({ state: 'uncertain' });
+  });
 });

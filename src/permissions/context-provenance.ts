@@ -118,6 +118,11 @@ export class ContextProvenance {
     });
   }
 
+  invalidate(): void {
+    this.reset('');
+    this.owner = undefined;
+  }
+
   private reset(identity: string): void {
     this.identity = identity;
     this.generation = randomBytes(16).toString('hex');

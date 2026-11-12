@@ -8,18 +8,28 @@ import { createHash } from 'node:crypto';
 
 const source = process.argv[2];
 if (!source || !isAbsolute(source) || existsSync(join(source, '.git'))) throw new Error('Explicit task-local CLI source archive required');
-const revision = process.argv[3] ?? '14f9b53d3932c532d6424e8783bd94528e5f7fc6';
+const revision = process.argv[3] ?? '27b387f1b767a6e0cc200b8e23d074ad3bd28cc1';
 const versions = {
-  '14f9b53d3932c532d6424e8783bd94528e5f7fc6': { 'internal/mcp/permission_host.go': '490004b2d39784d17e3b966203f6a4ec223eff76b5c9d0fabd10cbcd231a13e0' },
+  '14f9b53d3932c532d6424e8783bd94528e5f7fc6': {
+    'internal/mcp/permission_relay.go': '864a57424f7076b157bbd596f88cce8f5d98245afdb546ea72ed706165d6519e',
+    'internal/mcp/permission_host.go': '490004b2d39784d17e3b966203f6a4ec223eff76b5c9d0fabd10cbcd231a13e0',
+  },
   'c683c724f1b007a5396d0f10b49cdfda47867b23': {
+    'internal/mcp/permission_relay.go': '864a57424f7076b157bbd596f88cce8f5d98245afdb546ea72ed706165d6519e',
     'internal/mcp/permission_host.go': '794ef2eaaa17067af772660a4ee0cf64462086ed4c47bafd455f5f58c801bb3b',
     'docs/permission/contract-manifest-v4.json': 'dddff79aa3438e31b66afb74ef4cb0f88f417577c95adc55a50903cb8f99e766',
+  },
+  '27b387f1b767a6e0cc200b8e23d074ad3bd28cc1': {
+    'internal/mcp/permission_relay.go': 'b7799d7d97fbfe579fa43ccde05612e0d313471ba4b07cd237b51bca7a08795a',
+    'internal/mcp/permission_host.go': '794ef2eaaa17067af772660a4ee0cf64462086ed4c47bafd455f5f58c801bb3b',
+    'docs/permission/contract-manifest-v5.json': 'd54a11eac89263c9a5ddd3279af03c750ccc1775d2832cbe647eab9d089b411a',
+    'docs/permission/catalog-package-v2/manifest.json': 'ecc56c2ab0a2c520ab7e5203d2abab06671daf90c28d69f88fe1de8d154109fc',
+    'docs/permission/source-slot-witness-v5.json.gz': '0c5da173bd0f53c64562a70a5c5feebc955ad111bbe84ed11f5588c08b4b9c0b',
   },
 };
 if (!Object.hasOwn(versions, revision)) throw new Error('Explicit supported fixture source revision required');
 for (const [path, hash] of Object.entries({
   'docs/permission/endpoint-abi-v1.json': 'd0b055d6070545c749a08dfb49cabbd7d6fa15758328c111c20d1d881d20c835',
-  'internal/mcp/permission_relay.go': '864a57424f7076b157bbd596f88cce8f5d98245afdb546ea72ed706165d6519e',
   ...versions[revision],
 })) {
   if (createHash('sha256').update(readFileSync(join(source, path))).digest('hex') !== hash) throw new Error('CLI ABI source pin mismatch');

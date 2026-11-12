@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash, X509Certificate } from 'node:crypto';
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ChannelType, type BotMessage } from '../octo/types.js';
 import { bindContextManifest } from '../permissions/context-manifest.js';
 import { canonicalControl, PermissionRefusal } from '../permissions/control-client.js';
 import { TurnLease } from '../permissions/turn-lease.js';
@@ -230,5 +233,208 @@ describe('private bootstrap and relay selection', () => {
       expect(worker.execute).not.toHaveBeenCalled();
     } finally { await endpoint?.stop(); db.close(); }
     expect(native.stop).toHaveBeenCalledTimes(1); expect(worker.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('composes default NativeEndpointDriver and ContainedWorkerDriver with OS-sandboxed launcher when native recovery and facts endpoints are served', async () => {
+    const boot = bootFixture();
+    const sentMessages: Array<Record<string, unknown>> = [];
+    const factsOps: string[] = [];
+    const msg: BotMessage = {
+      message_id: '777', message_seq: 11, from_uid: 'alice', channel_id: 'alice@bot',
+      channel_type: ChannelType.DM, timestamp: 1, payload: { type: 1, content: 'HELLO_CONTAINED_DEFAULT' },
+    };
+    const payloadSha256 = createHash('sha256').update(JSON.stringify(msg.payload)).digest('hex');
+    const header = {
+      header_version: 1 as const,
+      header_reference: 'native_hdr_777',
+      message_id: '777',
+      source: { kind: 'dm' as const, id: 'alice@bot' },
+      parent_group: null,
+      space_id: 'space',
+      author_uid: 'alice',
+      author_kind: 'human' as const,
+      recipient_bot_uid: 'bot',
+      native_message_version: 'v1',
+      payload_sha256: payloadSha256,
+      delivery: { stream_id: 'stream-1', stream_incarnation: 'a'.repeat(32), sequence: '11' },
+    };
+
+    const nativeServer = createServer(async (req, res) => {
+      let body = '';
+      for await (const chunk of req) body += String(chunk);
+      const parsed = body ? JSON.parse(body) as Record<string, unknown> : {};
+      if (req.url === '/v1/bot/permission-facts/v1') {
+        const op = String(parsed.op);
+        factsOps.push(op);
+        res.setHeader('Content-Type', 'application/json');
+        if (op === 'recover_fence') {
+          res.end(JSON.stringify({
+            ok: true,
+            key: { origin: apiUrl, bot_uid: 'bot', space_id: 'space' },
+            fence_through_v1: { stream_id: 'stream-1', stream_incarnation: 'a'.repeat(32), sequence: '10' },
+          }));
+          return;
+        }
+        if (op === 'inspect_delivery') {
+          res.end(JSON.stringify({ deliveryReference: 'deliv_777', header }));
+          return;
+        }
+        if (op === 'prepare_disclosure') {
+          res.end(JSON.stringify({ input: 'DISCLOSED_PROMPT_777', originals: [header] }));
+          return;
+        }
+        if (op === 'revalidate_original') {
+          res.end(JSON.stringify({ verdict: 'allow' }));
+          return;
+        }
+        if (op === 'check_reply_route' || op === 'check_refusal_route') {
+          res.end(JSON.stringify({ allow: true }));
+          return;
+        }
+      }
+      if (req.url === '/v1/bot/sendMessage') {
+        sentMessages.push(parsed);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ message_id: '888', client_msg_no: 'c1', message_seq: 12 }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+    nativeServer.listen(0, '127.0.0.1');
+    await once(nativeServer, 'listening');
+    const addr = nativeServer.address();
+    if (!addr || typeof addr === 'string') throw new Error('No address');
+    const apiUrl = `http://127.0.0.1:${addr.port}`;
+
+    // Coordinator script that handles register_ingress, admit, bind_context, renew, open_relay, close
+    const coordExec = join(root, 'full-coordinator');
+    const coordSource = `#!${process.execPath}
+import tls from 'node:tls';
+import { readFileSync, openSync, writeFileSync, fsyncSync, closeSync } from 'node:fs';
+const cfg = JSON.parse(readFileSync(process.argv[process.argv.indexOf('--permission-config') + 1], 'utf8'));
+const id = 'a'.repeat(32);
+const canonical = v => v === null || typeof v !== 'object' ? JSON.stringify(v) : Array.isArray(v) ? '[' + v.map(canonical).join(',') + ']' : '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}';
+const server = tls.createServer({
+  key: readFileSync(${JSON.stringify(join(root, 'key.pem'))}),
+  cert: readFileSync(${JSON.stringify(join(root, 'cert.pem'))}),
+  ca: readFileSync(${JSON.stringify(join(root, 'cert.pem'))}),
+  requestCert: true,
+  rejectUnauthorized: true,
+  minVersion: 'TLSv1.3',
+}, socket => {
+  let buffer = Buffer.alloc(0);
+  socket.on('error', () => {});
+  socket.on('data', chunk => {
+    buffer = Buffer.concat([buffer, chunk]);
+    while (buffer.length >= 4 && buffer.length >= buffer.readUInt32BE() + 4) {
+      const len = buffer.readUInt32BE();
+      const f = JSON.parse(buffer.subarray(4, len + 4).toString('utf8'));
+      buffer = buffer.subarray(len + 4);
+      let payload = { fixture: true };
+      if (f.method === 'hello') payload = { session_id: f.session_id, selected_binding: 2, selected_metadata: 2, selected_identity: 2, coordinator_incarnation: id };
+      else if (f.method === 'register_ingress') payload = { ingress_id: '1'.repeat(32) };
+      else if (f.method === 'admit') payload = { capsule_id: '2'.repeat(32), turn_id: '3'.repeat(32), generation: '4'.repeat(32), scope_incarnation: '5'.repeat(32), context_epoch: '1' };
+      else if (f.method === 'bind_context') payload = { context_generation: '4'.repeat(32) };
+      else if (f.method === 'renew') payload = { lease_expires_at: new Date(Date.now() + 60000).toISOString() };
+      else if (f.method === 'open_relay') payload = { transport: 'http', url: 'https://localhost/mcp', handle: 'b'.repeat(64) };
+      else if (f.method === 'close') payload = {};
+      const b = Buffer.from(canonical({ control_version: 1, request_id: f.request_id, status: 'ok', payload }));
+      const n = Buffer.alloc(4);
+      n.writeUInt32BE(b.length);
+      socket.write(Buffer.concat([n, b]));
+    }
+  });
+});
+server.listen(Number(cfg.control_address.split(':').pop()), '127.0.0.1', () => {
+  const fd = openSync(cfg.ready_path, 'wx', 0o600);
+  writeFileSync(fd, canonical({ control_version: 1, coordinator_incarnation: id }));
+  fsyncSync(fd);
+  closeSync(fd);
+});
+`;
+    writeFileSync(coordExec, coordSource, { mode: 0o700 });
+    const coordSha256 = createHash('sha256').update(coordSource).digest('hex');
+
+    const workerExec = join(root, 'worker-bin');
+    const workerSource = `#!${process.execPath}
+const fs = require('node:fs');
+fs.readFileSync(0, 'utf8');
+let keyLeak = 'NONE';
+try { keyLeak = fs.readFileSync(${JSON.stringify(join(root, 'journal.key'))}, 'utf8'); } catch (e) { keyLeak = 'BLOCKED:' + e.code; }
+console.log(JSON.stringify({ type: 'thread.started', thread_id: '33333333-3333-4333-8333-333333333333' }));
+console.log(JSON.stringify({ type: 'item.completed', item: { id: 'msg1', type: 'agent_message', text: 'CONTAINED_REPLY|' + keyLeak } }));
+console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 } }));
+`;
+    writeFileSync(workerExec, workerSource, { mode: 0o700 });
+    const workerSha256 = createHash('sha256').update(workerSource).digest('hex');
+
+    const botDir = join(root, 'fixture');
+    mkdirSync(botDir, { mode: 0o700 });
+    const workerRoot = join(root, 'worker-root');
+    mkdirSync(workerRoot, { mode: 0o700 });
+    const hostConfig = { ...boot.hostConfig, origin: apiUrl, relay_url: 'https://localhost/mcp' };
+    const hostPath = join(root, 'source-host-full.json');
+    writeFileSync(hostPath, canonicalControl(hostConfig), { mode: 0o600 });
+    const journalKey = join(root, 'journal.key');
+    writeFileSync(journalKey, Buffer.alloc(32, 9), { mode: 0o600 });
+
+    const descriptor = {
+      version: 2,
+      catalog: {
+        catalog_format: 'permission-release-manifest-v1',
+        catalog_version: 'synthetic-identity-only',
+        catalog_digest: String(boot.hostConfig.release_sha256),
+      },
+      key: { origin: apiUrl, bot_uid: 'bot', space_id: 'space' },
+      recipient_id: 'endpoint',
+      transport: 'http',
+      coordinator: { root, executable: coordExec, sha256: coordSha256, host_config: hostPath },
+      tls: {
+        host: '127.0.0.1', port: boot.tls.port, servername: 'localhost',
+        ca: join(root, 'cert.pem'), cert: join(root, 'cert.pem'), key: join(root, 'key.pem'),
+        peer_sha256: boot.tls.peerCertificateSha256,
+      },
+      journal: { key: journalKey, key_version: '1', provision: true },
+      worker: { root: workerRoot, launcher: workerExec, sha256: workerSha256, instructions: 'SYNTHETIC_INSTRUCTIONS', provider: null },
+    };
+    writeFileSync(join(botDir, 'permission-endpoint.json'), canonicalControl(descriptor), { mode: 0o600 });
+
+    const config: Config = {
+      baseDir: root, dataDir: root, cwd: root, cwdBase: root, botId: 'fixture',
+      apiUrl, botToken: boot.botToken,
+      rateLimit: { maxPerMinute: 100 }, context: { maxContextChars: 6000, historyLimit: 40 },
+      maxResponseChars: 5000, dispatchTimeoutMs: 10000,
+      cards: { disable: false, eventTransport: 'off', reasoningSummary: 'off' },
+      sdk: {},
+    };
+    const db = createAdapter(join(root, 'journal-full.db'));
+    let endpoint: PermissionEndpoint | undefined;
+    try {
+      // Omit dependencies to exercise the real default NativeEndpointDriver + ContainedWorkerDriver composition!
+      endpoint = await managedPermissionFactory(config)!({ config, adapter: db, botId: 'bot' });
+      const res = await endpoint.reserveBeforeAck({ recipientUid: 'bot', message: msg, payloadSha256 });
+      expect(res.disposition).toBe('reserved');
+      if (res.disposition === 'reserved') {
+        await endpoint.handle(msg);
+        res.finish('terminal');
+      }
+      expect(factsOps).toEqual(['recover_fence', 'inspect_delivery', 'prepare_disclosure', 'revalidate_original', 'check_reply_route']);
+      expect(sentMessages).toHaveLength(1);
+      expect(sentMessages[0]).toMatchObject({
+        channel_id: 'alice@bot',
+        channel_type: ChannelType.DM,
+        payload: {
+          type: 1,
+          content: expect.stringMatching(/^CONTAINED_REPLY\|BLOCKED:(EPERM|EACCES|ENOENT)$/),
+          reply: { message_id: '777' },
+        },
+      });
+    } finally {
+      await endpoint?.stop();
+      db.close();
+      nativeServer.closeAllConnections();
+      await new Promise<void>(resolve => nativeServer.close(() => resolve()));
+    }
   });
 });

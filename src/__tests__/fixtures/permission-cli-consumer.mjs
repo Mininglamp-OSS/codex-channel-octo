@@ -11,6 +11,22 @@ const fixture = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const dist = process.argv[3];
 const { PermissionControlClient, canonicalControl } = await import(pathToFileURL(join(dist, 'permissions/control-client.js')));
 const { bindContextManifest } = await import(pathToFileURL(join(dist, 'permissions/context-manifest.js')));
+const { catalogBootPin, verifyCatalogBoot } = await import(pathToFileURL(join(dist, 'permissions/catalog-boot.js')));
+const { checkedTurnRelay } = await import(pathToFileURL(join(dist, 'permissions/endpoint-factory.js')));
+const { preparePrivateWorker } = await import(pathToFileURL(join(dist, 'permissions/worker-launch.js')));
+if (fixture.catalogManifestPath) {
+  const manifestBytes = readFileSync(fixture.catalogManifestPath);
+  const manifestSha256 = createHash('sha256').update(manifestBytes).digest('hex');
+  const verifiedPin = verifyCatalogBoot(
+    { release_path: fixture.catalogManifestPath, release_sha256: manifestSha256 },
+    catalogBootPin({
+      catalog_format: 'permission-catalog-package-v2',
+      catalog_version: fixture.catalogVersion,
+      catalog_digest: manifestSha256,
+    }),
+  );
+  assert.equal(verifiedPin.catalog_digest, manifestSha256);
+}
 const control = await PermissionControlClient.connect(fixture.control);
 const call = control.call.bind(control);
 control.call = async (method, payload) => {
@@ -53,6 +69,54 @@ try {
     const results = child.stdout.trim().split('\n').map(line => JSON.parse(line));
     assert.equal(results.length, 3);
     for (const result of results.slice(1)) { assert(!result.error); assert(JSON.stringify(result).includes('synthetic-result')); }
+  } else if (fixture.relayTls) {
+    const checked = checkedTurnRelay(
+      relay,
+      { executable: fixture.binary, executableSha256: fixture.binarySha256, hostConfig: { relay_url: relay.url } },
+      'http',
+    );
+    const worker = preparePrivateWorker({
+      root: fixture.workerRoot,
+      launcher: fixture.binary,
+      launcherSha256: fixture.binarySha256,
+      relay: { ...checked, caCert: fixture.relayCa },
+      instructions: 'SYNTHETIC_TLS_RELAY_CHECK',
+    });
+    assert(worker.relayCaPath);
+    assert.equal(worker.env.SSL_CERT_FILE, worker.relayCaPath);
+    assert.equal(worker.env.NODE_EXTRA_CA_CERTS, worker.relayCaPath);
+    const https = await import('node:https');
+    const ca = readFileSync(worker.relayCaPath);
+    const url = new URL(relay.url);
+    const post = (reqBody) => new Promise((resolve, reject) => {
+      const data = JSON.stringify(reqBody);
+      const r = https.request({
+        host: '127.0.0.1',
+        port: Number(url.port),
+        servername: 'localhost',
+        path: url.pathname,
+        method: 'POST',
+        ca,
+        minVersion: 'TLSv1.3',
+        agent: false,
+        headers: {
+          Authorization: `Bearer ${relay.handle}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data),
+        },
+      }, res => {
+        let out = '';
+        res.on('data', c => { out += c; });
+        res.on('end', () => resolve(JSON.parse(out)));
+      });
+      r.on('error', reject);
+      r.end(data);
+    });
+    for (const request of requests) {
+      const result = await post(request);
+      assert(!result.error);
+      if (request.id > 1) assert(JSON.stringify(result).includes('synthetic-result'));
+    }
   } else {
     for (const request of requests) {
       const response = await fetch(relay.url, { method: 'POST', headers: { Authorization: `Bearer ${relay.handle}` },

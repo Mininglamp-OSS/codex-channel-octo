@@ -50,7 +50,7 @@ export class ReplayJournal {
     private readonly db: DbAdapter,
     key: Uint8Array,
     keyVersion: string,
-    options: { provision?: boolean; maxRecords?: number; maxBytes?: number } = {},
+    options: { provision?: boolean; maxRecords?: number; maxBytes?: number; exclusive?: boolean } = {},
   ) {
     if (key.byteLength !== 32 || !/^[1-9][0-9]*$/.test(keyVersion) || db.inTransaction) {
       throw new Error('Replay journal configuration unavailable');
@@ -69,6 +69,12 @@ export class ReplayJournal {
     db.exec('PRAGMA synchronous = FULL');
     if ((db.prepare('PRAGMA synchronous').get() as { synchronous: number }).synchronous !== 2) {
       throw new Error('Replay journal durability unavailable');
+    }
+    if (options.exclusive) {
+      db.exec('PRAGMA busy_timeout = 0; PRAGMA locking_mode = EXCLUSIVE');
+      if ((db.prepare('PRAGMA locking_mode').get() as { locking_mode: string }).locking_mode !== 'exclusive') {
+        throw new Error('Replay journal exclusive lock unavailable');
+      }
     }
     const check = db.prepare('PRAGMA quick_check').all() as { quick_check: string }[];
     if (check.length !== 1 || check[0].quick_check !== 'ok') throw new Error('Replay journal integrity unavailable');

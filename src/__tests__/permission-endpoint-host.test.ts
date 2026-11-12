@@ -254,4 +254,84 @@ describe('startBot managed receive -> admission -> real MCP transports -> owned 
     await receive(); expect(ports.refuse).not.toHaveBeenCalled(); expect(ports.publish).not.toHaveBeenCalled();
     expect(db.prepare('SELECT state FROM permission_replay').get()).toEqual({ state: 'uncertain' });
   });
+
+  it('accumulates complete contributor union and verifiedResume across same-generation turns, resetting on epoch or contributor change', async () => {
+    let currentEpoch = '1';
+    let currentGeneration = '4'.repeat(32);
+    let currentTurnId = '3'.repeat(32);
+    let allowAlice = true;
+    const boundManifests: Array<{ context_id: string; context_generation: string; originals: NativeHeader[] }> = [];
+    const seenResumes: Array<string | undefined> = [];
+
+    ports.revalidateOriginal = vi.fn(async orig => {
+      if (orig.headerReference === 'native_alice' && !allowAlice) return 'deny';
+      return 'allow';
+    });
+    ports.control.call = vi.fn(async (method, payload) => {
+      if (method === 'register_ingress') return { ingress_id: '1'.repeat(32) };
+      if (method === 'admit') {
+        return {
+          capsule_id: '2'.repeat(32),
+          turn_id: currentTurnId,
+          generation: currentGeneration,
+          scope_incarnation: 'b'.repeat(32),
+          context_epoch: currentEpoch,
+        };
+      }
+      if (method === 'bind_context') {
+        boundManifests.push(payload.manifest as { context_id: string; context_generation: string; originals: NativeHeader[] });
+        return { context_generation: currentGeneration };
+      }
+      if (method === 'open_relay') return { transport: payload.transport };
+      return {};
+    });
+
+    const msg1: BotMessage = { ...msg, message_id: '501', message_seq: 101, from_uid: 'alice' };
+    const hdr1: NativeHeader = {
+      ...header, header_reference: 'native_alice', message_id: '501', author_uid: 'alice',
+      delivery: { ...header.delivery, sequence: '101' },
+    };
+    const msg2: BotMessage = { ...msg, message_id: '502', message_seq: 102, from_uid: 'bob' };
+    const hdr2: NativeHeader = {
+      ...header, header_reference: 'native_bob', message_id: '502', author_uid: 'bob',
+      delivery: { ...header.delivery, sequence: '102' },
+    };
+    const msg3: BotMessage = { ...msg, message_id: '503', message_seq: 103, from_uid: 'carol' };
+    const hdr3: NativeHeader = {
+      ...header, header_reference: 'native_carol', message_id: '503', author_uid: 'carol',
+      delivery: { ...header.delivery, sequence: '103' },
+    };
+    const headersByMsgId = new Map<string, NativeHeader>([['501', hdr1], ['502', hdr2], ['503', hdr3]]);
+    ports.inspect = vi.fn(async delivery => ({
+      deliveryReference: `receipt_${delivery.message.message_id}`,
+      header: headersByMsgId.get(delivery.message.message_id)!,
+    }));
+    ports.prepareInput = vi.fn(async binding => ({ input: `INPUT_${binding.header.message_id}`, originals: [binding.header] }));
+    ports.runWorker = vi.fn(async binding => {
+      seenResumes.push(binding.verifiedResume?.sessionId);
+      binding.bindSession?.('sess-gen-1', { workdir: join(root, 'work'), codexHome: join(root, 'data') });
+      return `ANSWER_${binding.header.message_id}`;
+    });
+
+    // Turn 1 (Alice): starts fresh generation, binds sess-gen-1
+    expect(await receive(msg1)).toBe('reserved');
+    expect(seenResumes).toEqual([undefined]);
+    expect(boundManifests[0].originals.map(h => h.header_reference)).toEqual(['native_alice']);
+
+    // Turn 2 (Bob, same epoch & incarnation): resumes sess-gen-1 with union [Alice, Bob]
+    currentTurnId = '5'.repeat(32);
+    expect(await receive(msg2)).toBe('reserved');
+    expect(seenResumes).toEqual([undefined, 'sess-gen-1']);
+    expect(boundManifests[1].context_id).toBe(boundManifests[0].context_id);
+    expect(boundManifests[1].originals.map(h => h.header_reference).sort()).toEqual(['native_alice', 'native_bob']);
+
+    // Turn 3 (Carol, Alice now denied): resets generation, clears prior contributors and session
+    allowAlice = false;
+    currentTurnId = '6'.repeat(32);
+    currentGeneration = '7'.repeat(32);
+    expect(await receive(msg3)).toBe('reserved');
+    expect(seenResumes).toEqual([undefined, 'sess-gen-1', undefined]);
+    expect(boundManifests[2].context_id).not.toBe(boundManifests[0].context_id);
+    expect(boundManifests[2].originals.map(h => h.header_reference)).toEqual(['native_carol']);
+  });
 });

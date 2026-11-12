@@ -551,9 +551,13 @@ export async function* queryAgentEvents(
     // fields or infer stopped from a file it could write itself.
     const client = codex ?? new Codex({ ...codexOptions, env: managedProxy ? scope!.environment(baseEnv) : baseEnv });
     yield { kind: 'attempt_start', attempt, reason: attemptCtx.reason, continues: attemptCtx.continues };
-    if (privateWorker && resumeId) throw new Error('Unverified private worker resume refused');
-    const thread = resumeId
-      ? client.resumeThread(resumeId, threadOpts)
+    const verifiedSessionId = privateWorker?.verifiedResume?.sessionId;
+    if (privateWorker && resumeId && resumeId !== verifiedSessionId) {
+      throw new Error('Unverified private worker resume refused');
+    }
+    const effectiveResumeId = privateWorker ? verifiedSessionId : resumeId;
+    const thread = effectiveResumeId
+      ? client.resumeThread(effectiveResumeId, threadOpts)
       : client.startThread(threadOpts);
     opts?.signal?.throwIfAborted();
     opts?.assertPublishable?.();

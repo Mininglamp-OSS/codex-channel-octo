@@ -1,0 +1,89 @@
+{
+  "format": "endpoint-permission-host-handoff-v5",
+  "supersedes": "permission-endpoint-handoff-v4.json",
+  "status": "BLOCKED_EXTERNAL_PRODUCER_WIRE_AND_SERVER_SUPPORTED_CATALOG",
+  "base_sha": "5dfde6cfd56621b0fbcf9ec7f310c7caa5135f34",
+  "live_upstream_main": "2f4d0521bcae9e15c008c29e290427de5813e8d2",
+  "previous_endpoint_head": "afb732b20e63baf8acf06c4726a66e290b98e1b6",
+  "approved_amendment": {
+    "baseline": "XIN-2323/v44",
+    "authority_comment": "9fba118a-2850-4d09-a28f-df6582d83575",
+    "trigger_comment": "15aca7e0-0db1-4b09-84ac-79f3499c22fd",
+    "xin_2830_report": {
+      "comment_id": "edd9ad84-f10b-4e1e-9161-19a598bbb153",
+      "attachment_id": "d21a8c3c-4dd9-46da-bc6d-e988deac14f6",
+      "bytes": 61292,
+      "sha256": "5382c7b511df84bfa5e6eb712cdb2234591e8f15816a50e3b9f1153dfbcf1fc5"
+    },
+    "xin_2830_overriding_addendum": {
+      "comment_id": "28585cc5-4cc3-47e0-b3a5-17f81ac55b75",
+      "attachment_id": "b7fb7212-c464-4800-8cb5-0df1b1223fc3",
+      "bytes": 16530,
+      "sha256": "3331998a30a2e851dfac7d015e01a8c1c0bda90450b07e258e40b397f9662f23"
+    },
+    "unapproved_proposals": ["A1", "A2", "A3"],
+    "scope": "XIN-2830 report and overriding corrective addendum applied; A1/A2/A3 remain unapproved; v8/PRD2.1/v28/v42 retained"
+  },
+  "consumed": {
+    "cli_head": "27b387f1b767a6e0cc200b8e23d074ad3bd28cc1",
+    "cli_manifest": {
+      "path": "docs/permission/contract-manifest-v5.json",
+      "bytes": 4652,
+      "sha256": "22452f096d0f5f76e661855664eb77aa1a3210b9da95a3cb95d1ef282e39a812"
+    },
+    "cli_catalog_package_v2": {
+      "path": "docs/permission/catalog-package-v2/manifest.json",
+      "catalog_version": "octo-capabilities-v1-xin2748-v4",
+      "files": 30,
+      "stored_bytes": 7823327,
+      "manifest_bytes": 4934,
+      "manifest_sha256": "ecc56c2ab0a2c520ab7e5203d2abab06671daf90c28d69f88fe1de8d154109fc",
+      "semantic_digest": "415acc86598208cbf051c9c08cc47e33e0ec9cd8fe7f9444b48b80f11d95ba21"
+    },
+    "cli_slot_witness_v5": {
+      "path": "docs/permission/source-slot-witness-v5.json.gz",
+      "bytes": 12562,
+      "sha256": "0c5da173bd0f53c64562a70a5c5feebc955ad111bbe84ed11f5588c08b4b9c0b"
+    },
+    "unchanged_cli_endpoint_abi": {
+      "path": "docs/permission/endpoint-abi-v1.json",
+      "bytes": 3923,
+      "sha256": "d0b055d6070545c749a08dfb49cabbd7d6fa15758328c111c20d1d881d20c835"
+    },
+    "server_head": "ff4d43c403083fd059ec2e6ef6e0d6d505228d48",
+    "server_manifest": {
+      "path": "pkg/permissionbundle/contracts/contract-manifest-v4.json",
+      "bytes": 5067,
+      "sha256": "39b138a4f689f3695c087ceab0598b4da74a632ec6276ee159b6c5c586c0f230"
+    },
+    "server_handoff": {
+      "path": "pkg/permissionbundle/contracts/handoff-v4.json",
+      "bytes": 8285,
+      "sha256": "c226b46007904c37ef5b46f78b587cd734f4ac4ccf8c739f786e87cfe4573791"
+    }
+  },
+  "implemented_now": [
+    "createIsolatingWorkerLauncher: OS-level kernel containment (macOS Seatbelt /usr/bin/sandbox-exec and Linux bwrap --unshare-ipc --unshare-pid --unshare-uts --die-with-parent) denying file-read*/file-write* to protected host secret paths under same UID while allowing read/write only in per-generation workdir and codexHome",
+    "preparePrivateWorker + checkedTurnRelay: private relay CA staging (0600 relay-ca.pem) and SSL_CERT_FILE/NODE_EXTRA_CA_CERTS injection for HTTPS turn relays, plus optional ca_sha256/peer_sha256 verification",
+    "AgentBridge privateWorker.verifiedResume: permits client.resumeThread(effectiveResumeId) if and only if verifiedResume matches the authenticated ContextProvenance session and generation",
+    "PermissionEndpointHost per-conversation serialization (withSourceLock), ContextProvenance lineage integration, complete contributor union across same-generation turns, and authoritative admit (scope_incarnation, context_epoch) handling (refusing cross-turn session reuse when 3-field admit omits epoch/incarnation)",
+    "createNativeEndpointDriver and createContainedWorkerDriver: concrete endpoint-owned driver implementations composed by default in managedPermissionFactory, with single-attempt original-route publish and <=2s refuse",
+    "ReplayJournal exclusive SQLite locking mode (PRAGMA busy_timeout = 0; PRAGMA locking_mode = EXCLUSIVE) enabled in managedPermissionFactory"
+  ],
+  "residual_external_producer_requirements": {
+    "native_ingress_wire": "WKSocket recvPacket currently delivers only 9 public fields without a delivery_reference or native HeaderV1 (Space/Bot/MessageVersion/StreamIncarnation). Native IM must emit authoritative delivery_reference or signed HeaderV1 on recvPacket, or expose local InspectDeliveredHeaderV1.",
+    "cli_admit_epoch_and_unseen_history": "PermissionHost.admit at 27b387f1b767a6e0cc200b8e23d074ad3bd28cc1 returns 3 fields {capsule_id, turn_id, generation} without scope_incarnation/context_epoch, and bind_context requires every Header in originals to be pre-registered via register_ingress. Same-generation cross-turn session reuse and non-ingress history import require 5-field admit and unseen-history resolution.",
+    "server_supported_catalog_composition": "octo-server ff4d43c403083fd059ec2e6ef6e0d6d505228d48 delivers VerifyCatalogPackage/CatalogRegistry/ServedCatalogs v2 primitives, and cross-verifies CLI 27b387f1 catalog-package-v2 (30 files, 7,823,327 B, semantic 415acc86598208cbf051c9c08cc47e33e0ec9cd8fe7f9444b48b80f11d95ba21), but production server startup still wires nil ServedCatalogs and CLI ReadSupportedRelease still has an empty supportedReleaseSHAs allowlist.",
+    "native_replay_checkpoint_and_sql_fencing": "Native GetReplayCheckpointV1/FenceThroughV1 and fenced single-writer SQL lease remain external native/server producer deliverables."
+  },
+  "verification": {
+    "regression": "136 files / 5436 tests passed; 6 focused permission files (66 tests) + 18 component tests",
+    "checks": "build, lint, production/permission/mention/recovery/continuity types and locked 0.163.0 runtime pass; clean merge-tree against upstream/main 2f4d0521bcae9e15c008c29e290427de5813e8d2",
+    "actual_cli": "27b387f1b767a6e0cc200b8e23d074ad3bd28cc1 actual Go host + HTTP, stdio, and HTTPS TLS (PublicationTLSListener + staged relay-ca.pem) execute/call_op: 219145-byte 256-Header core, real catalog-package-v2 manifest preflight (4934 B, ecc56c2a...), renewal, two synthetic business writes per mode and closed-capsule rejection",
+    "cross_repo_server_cli": "ff4d43c403083fd059ec2e6ef6e0d6d505228d48 ReadCatalogDirectory + VerifyCatalogPackage passes on 27b387f1b767a6e0cc200b8e23d074ad3bd28cc1 docs/permission/catalog-package-v2 (30 files, 7823327 stored bytes) + source-slot-witness-v5.json.gz (semantic digest 415acc86598208cbf051c9c08cc47e33e0ec9cd8fe7f9444b48b80f11d95ba21)",
+    "browser": "fresh Chrome: 66 focused permission tests plus all 3 actual CLI transport/TLS modes and server/CLI package verification; screenshot visually inspected",
+    "evidence": ["docs/evidence/xin-2795-v44-smoke.png", "docs/evidence/xin-2795-v44-browser.json", "docs/evidence/xin-2795-v44-cli.log"]
+  },
+  "production_activation": "FAIL_CLOSED_UNTIL_NATIVE_INGRESS_WIRE_AND_SUPPORTED_CATALOG_ALLOWLIST",
+  "review_gate": "Draft only; independent review/deploy/test/ready/merge/Owner acceptance not released"
+}

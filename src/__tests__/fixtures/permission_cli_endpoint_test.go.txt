@@ -19,7 +19,7 @@ import (
     "github.com/Mininglamp-OSS/octo-cli/internal/permission"
 )
 
-// Copied exclusively into an unmodified task-local archive of CLI 14f9b53d.
+// Copied exclusively into an unmodified task-local archive of the pinned CLI revision.
 // Its existing native/policy fixtures supply synthetic facts, not acceptance.
 func TestXIN2795CurrentEndpointChunkAndRelayABI(t *testing.T) {
     dist, script := os.Getenv("XIN2795_ENDPOINT_DIST"), os.Getenv("XIN2795_ENDPOINT_CONSUMER")
@@ -28,7 +28,30 @@ func TestXIN2795CurrentEndpointChunkAndRelayABI(t *testing.T) {
     binary := filepath.Join(secureTestDir(t), "relay-cli")
     build := exec.Command("go", "build", "-o", binary, "./cmd/octo-cli"); build.Dir = "../.."
     if output, err := build.CombinedOutput(); err != nil { t.Fatal(err, string(output)) }
-    for _, transport := range []string{"http", "stdio"} { t.Run(transport, func(t *testing.T) {
+    if err := os.Chmod(binary, 0o700); err != nil { t.Fatal(err) }
+    binaryBytes, err := os.ReadFile(binary); if err != nil { t.Fatal(err) }
+    binarySha256 := sha256Sum(binaryBytes)
+    catalogManifestPath := ""
+    catalogVersion := ""
+    if candidate, err := filepath.Abs("../../docs/permission/catalog-package-v2/manifest.json"); err == nil {
+        if raw, err := os.ReadFile(candidate); err == nil {
+            staged := filepath.Join(secureTestDir(t), "manifest.json")
+            if err := os.WriteFile(staged, raw, 0o600); err == nil {
+                var parsed struct { CatalogVersion string `json:"catalog_version"` }
+                if json.Unmarshal(raw, &parsed) == nil && parsed.CatalogVersion != "" {
+                    catalogManifestPath = staged
+                    catalogVersion = parsed.CatalogVersion
+                }
+            }
+        }
+    }
+    for _, mode := range []string{"http", "stdio", "https_tls"} { t.Run(mode, func(t *testing.T) {
+        transport := mode
+        relayTls := false
+        if mode == "https_tls" {
+            transport = "http"
+            relayTls = true
+        }
         f := newManagedFixture(t)
         headers:=make([]permission.NativeHeader,256)
         nativeHeaders:=map[string]permission.NativeHeader{}
@@ -53,17 +76,34 @@ func TestXIN2795CurrentEndpointChunkAndRelayABI(t *testing.T) {
         serverCert, clientCert, roots, peerHash := controlCertificates(t)
         cfg := PermissionHostConfig{Version:1, Origin:f.backend.URL, BotUID:"bot", RecipientID:"endpoint-1", EndpointIncarnation:strings.Repeat("5",32), PeerSHA256:peerHash, RelayURL:"http://127.0.0.1", RelayExecutable:binary}
         host, err := NewPermissionHost(cfg,f.coordinator,f.policies,f.reader,f.server); if err != nil { t.Fatal(err) }
-        relay := httptest.NewServer(host); defer relay.Close(); host.config.RelayURL = relay.URL
+        relayCaPem := string(pem.EncodeToMemory(&pem.Block{Type:"CERTIFICATE",Bytes:serverCert.Certificate[1]}))
+        if relayTls {
+            rawRelay, err := net.Listen("tcp", "127.0.0.1:0")
+            if err != nil { t.Fatal(err) }
+            securedRelay := permission.PublicationTLSListener(rawRelay, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{serverCert}})
+            relayServer := &http.Server{Handler: host}
+            go func() { _ = relayServer.Serve(securedRelay) }()
+            defer func() { _ = relayServer.Close(); _ = securedRelay.Close() }()
+            host.config.RelayURL = "https://localhost:" + strconv.Itoa(rawRelay.Addr().(*net.TCPAddr).Port)
+        } else {
+            relay := httptest.NewServer(host); defer relay.Close(); host.config.RelayURL = relay.URL
+        }
         listener, err := tls.Listen("tcp","127.0.0.1:0",&tls.Config{MinVersion:tls.VersionTLS13,Certificates:[]tls.Certificate{serverCert},ClientAuth:tls.RequireAndVerifyClientCert,ClientCAs:roots})
         if err != nil { t.Fatal(err) }; defer listener.Close()
         done := make(chan error,1)
         go func(){conn,err:=listener.Accept();if err!=nil{done<-err;return};done<-host.ServeControl(context.Background(),conn.(*tls.Conn))}()
         defer func(){listener.Close();select{case <-done:case <-time.After(5*time.Second):t.Error("control failed to drain")}}()
         dir:=secureTestDir(t)
+        workerRoot:=secureTestDir(t)
         private,err:=x509.MarshalPKCS8PrivateKey(clientCert.PrivateKey);if err!=nil{t.Fatal(err)}
         chain:=[]byte{};for _,raw:=range clientCert.Certificate{chain=append(chain,pem.EncodeToMemory(&pem.Block{Type:"CERTIFICATE",Bytes:raw})...)}
         control:=map[string]any{"port":listener.Addr().(*net.TCPAddr).Port,"host":"127.0.0.1","servername":"localhost","ca":string(pem.EncodeToMemory(&pem.Block{Type:"CERTIFICATE",Bytes:serverCert.Certificate[1]})),"cert":string(chain),"key":string(pem.EncodeToMemory(&pem.Block{Type:"PRIVATE KEY",Bytes:private})),"endpointIncarnation":cfg.EndpointIncarnation,"coordinatorIncarnation":host.Incarnation(),"recipientId":cfg.RecipientID,"configuredOrigin":cfg.Origin,"peerCertificateSha256":sha256Sum(serverCert.Certificate[0]),"timeoutMs":10000}
-        data,_:=json.Marshal(map[string]any{"control":control,"key":f.bundle.Key,"headers":headers,"transport":transport})
+        payloadMap:=map[string]any{"control":control,"key":f.bundle.Key,"headers":headers,"transport":transport,"relayTls":relayTls,"relayCa":relayCaPem,"binary":binary,"binarySha256":binarySha256,"workerRoot":workerRoot}
+        if catalogManifestPath != "" {
+            payloadMap["catalogManifestPath"] = catalogManifestPath
+            payloadMap["catalogVersion"] = catalogVersion
+        }
+        data,_:=json.Marshal(payloadMap)
         fixture:=filepath.Join(dir,"fixture.json");if err:=os.WriteFile(fixture,data,0o600);err!=nil{t.Fatal(err)}
         ctx,cancel:=context.WithTimeout(context.Background(),45*time.Second);defer cancel()
         command:=exec.CommandContext(ctx,node,script,fixture,dist)

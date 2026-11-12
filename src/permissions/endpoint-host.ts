@@ -4,8 +4,10 @@ import type { ReceivedDelivery, IngressReservation, ReserveBeforeAck } from './i
 import { ReplayJournal, type ReplayIdentity } from './replay-journal.js';
 import { canonicalControl, object, PermissionRefusal, permissionRefusalText, type ControlMethod, type RefusalRecord } from './control-client.js';
 import { bindContextManifest } from './context-manifest.js';
+import { ContextProvenance, type ContextInvocation, type OriginalIdentity } from './context-provenance.js';
 import { TurnLease } from './turn-lease.js';
 import { catalogBootPin, type CatalogBootPin } from './catalog-boot.js';
+import type { VerifiedWorkerResume } from './worker-launch.js';
 
 export interface PermissionKey { origin: string; bot_uid: string; space_id: string }
 export interface NativeHeader {
@@ -36,6 +38,11 @@ export interface EndpointBinding {
   readonly contextId: string;
   readonly generation: string;
   readonly header: Readonly<NativeHeader>;
+  readonly scopeIncarnation?: string;
+  readonly contextEpoch?: string;
+  readonly contributors?: readonly Readonly<NativeHeader>[];
+  readonly verifiedResume?: Readonly<VerifiedWorkerResume>;
+  readonly bindSession?: (sessionId: string, workspace?: { workdir: string; codexHome: string }) => void;
 }
 
 /** Private host composition, never model-supplied metadata or a policy verdict. */
@@ -51,6 +58,8 @@ export interface EndpointHostPorts {
   inspect(delivery: ReceivedDelivery): Promise<NativeIngress>;
   control: { call(method: ControlMethod, payload: Record<string, unknown>): Promise<Record<string, unknown>> };
   candidate(message: BotMessage): Promise<boolean>;
+  /** Optional host-side per-original revalidator consulted before reusing a same-generation session. */
+  revalidateOriginal?(original: Readonly<OriginalIdentity>, header: Readonly<NativeHeader>, signal: AbortSignal): Promise<'allow' | 'deny' | 'unknown'>;
   /** Metadata-first originals + their permitted exact bodies, after admission.
    * This producer owns its disclosure/read boundaries and optional import limits. */
   prepareInput(binding: Readonly<EndpointBinding>, signal: AbortSignal): Promise<{
@@ -78,6 +87,31 @@ export interface PermissionEndpoint {
 function hex(value: unknown): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{32}$/.test(value)) throw new Error('Permission identity unavailable');
   return value;
+}
+
+function epochDecimal(value: unknown): string {
+  if (typeof value !== 'string' || !/^(0|[1-9][0-9]{0,19})$/.test(value) || BigInt(value) > 18_446_744_073_709_551_615n) {
+    throw new Error('Permission epoch unavailable');
+  }
+  return value;
+}
+
+interface ConversationLineage {
+  readonly provenance: ContextProvenance;
+  contextId: string;
+  coordinatorGeneration?: string;
+  readonly headersByOriginalKey: Map<string, Readonly<NativeHeader>>;
+  workdir?: string;
+  codexHome?: string;
+}
+
+function resetLineage(lineage: ConversationLineage): void {
+  lineage.provenance.invalidate();
+  lineage.contextId = randomBytes(16).toString('hex');
+  lineage.coordinatorGeneration = undefined;
+  lineage.headersByOriginalKey.clear();
+  lineage.workdir = undefined;
+  lineage.codexHome = undefined;
 }
 
 function nativeHeader(value: unknown): Readonly<NativeHeader> {
@@ -116,6 +150,8 @@ export class EndpointPermissionHost implements PermissionEndpoint {
   private readonly active = new Set<Promise<void>>();
   private readonly receives = new Set<Promise<IngressReservation>>();
   private readonly controllers = new Set<AbortController>();
+  private readonly sourceQueues = new Map<string, Promise<void>>();
+  private readonly lineages = new Map<string, ConversationLineage>();
   private stopping = false;
   private readonly key: Readonly<PermissionKey>;
   private readonly recipientId: string;
@@ -131,6 +167,35 @@ export class EndpointPermissionHost implements PermissionEndpoint {
       void task.then(() => this.receives.delete(task), () => this.receives.delete(task));
       return task;
     };
+  }
+
+  private withSourceLock<T>(sourceKey: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.sourceQueues.get(sourceKey) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    this.sourceQueues.set(sourceKey, gate);
+    return (async () => {
+      try {
+        await prev;
+        return await fn();
+      } finally {
+        release();
+        if (this.sourceQueues.get(sourceKey) === gate) this.sourceQueues.delete(sourceKey);
+      }
+    })();
+  }
+
+  private getOrCreateLineage(sourceKey: string): ConversationLineage {
+    let lineage = this.lineages.get(sourceKey);
+    if (!lineage) {
+      lineage = {
+        provenance: new ContextProvenance(),
+        contextId: randomBytes(16).toString('hex'),
+        headersByOriginalKey: new Map(),
+      };
+      this.lineages.set(sourceKey, lineage);
+    }
+    return lineage;
   }
 
   private async reserve(delivery: ReceivedDelivery): Promise<IngressReservation> {
@@ -160,7 +225,8 @@ export class EndpointPermissionHost implements PermissionEndpoint {
     const ingress = this.received.get(message);
     this.received.delete(message); // A second callback cannot open a second turn.
     if (this.stopping || !ingress) return Promise.resolve();
-    const task = this.process(message, ingress);
+    const sourceKey = `${ingress.header.source.kind}:${ingress.header.source.id}`;
+    const task = this.withSourceLock(sourceKey, () => this.process(message, ingress, sourceKey));
     this.active.add(task);
     void task.then(() => this.active.delete(task), () => this.active.delete(task));
     return task;
@@ -171,10 +237,12 @@ export class EndpointPermissionHost implements PermissionEndpoint {
     for (const controller of this.controllers) controller.abort();
     await Promise.allSettled([...this.active]);
     await Promise.allSettled([...this.receives]);
+    for (const lineage of this.lineages.values()) resetLineage(lineage);
+    this.lineages.clear();
     await this.ports.stop();
   }
 
-  private async process(message: BotMessage, ingress: Readonly<NativeIngress>): Promise<void> {
+  private async process(message: BotMessage, ingress: Readonly<NativeIngress>, sourceKey: string): Promise<void> {
     const controller = new AbortController();
     const lost = () => controller.abort();
     this.ports.authoritySignal?.addEventListener('abort', lost, { once: true });
@@ -183,9 +251,12 @@ export class EndpointPermissionHost implements PermissionEndpoint {
     const timer = setTimeout(() => controller.abort(), 30 * 60 * 1000);
     let binding: Readonly<EndpointBinding> | undefined;
     let lease: TurnLease | undefined;
+    let invocation: ContextInvocation | undefined;
+    const lineage = this.getOrCreateLineage(sourceKey);
     let handled = false;
     let workerStarted = false;
     let workerFailed = false;
+    let turnCompleted = false;
     const relayTransport = this.ports.relayTransport;
     try {
       if (relayTransport !== 'http' && relayTransport !== 'stdio') throw new Error('Relay transport unavailable');
@@ -197,41 +268,152 @@ export class EndpointPermissionHost implements PermissionEndpoint {
         key: this.key, delivery_reference: ingress.deliveryReference,
         stream: ingress.header.delivery, payload_sha256: ingress.header.payload_sha256,
       }), ['ingress_id']);
-      const contextId = randomBytes(16).toString('hex');
-      const admitted = object(await this.ports.control.call('admit', {
-        ingress_id: hex(registered.ingress_id), proposed_context_id: contextId,
-      }), ['capsule_id', 'turn_id', 'generation']);
-      binding = Object.freeze({ ingressId: hex(registered.ingress_id), capsuleId: hex(admitted.capsule_id), turnId: hex(admitted.turn_id),
-        contextId, generation: hex(admitted.generation), header: ingress.header, ...(this.catalog ? { catalog: this.catalog } : {}) });
+      const rawAdmitted = await this.ports.control.call('admit', {
+        ingress_id: hex(registered.ingress_id), proposed_context_id: lineage.contextId,
+      });
+      const hasAuthoritativeEpoch = typeof rawAdmitted === 'object' && rawAdmitted !== null
+        && ('scope_incarnation' in rawAdmitted || 'context_epoch' in rawAdmitted);
+      const admitted = object(
+        rawAdmitted,
+        hasAuthoritativeEpoch
+          ? ['capsule_id', 'turn_id', 'generation', 'scope_incarnation', 'context_epoch']
+          : ['capsule_id', 'turn_id', 'generation'],
+      );
+      const admittedGeneration = hex(admitted.generation);
+      const admittedTurnId = hex(admitted.turn_id);
+      const admittedCapsuleId = hex(admitted.capsule_id);
+      let scopeIncarnation: string | undefined;
+      let contextEpoch: string | undefined;
+      if (hasAuthoritativeEpoch) {
+        scopeIncarnation = hex(admitted.scope_incarnation);
+        contextEpoch = epochDecimal(admitted.context_epoch);
+        if (lineage.coordinatorGeneration !== undefined && lineage.coordinatorGeneration !== admittedGeneration) {
+          resetLineage(lineage);
+        }
+        const validateOriginal = async (orig: Readonly<OriginalIdentity>): Promise<'allow' | 'deny' | 'unknown'> => {
+          if (!this.ports.revalidateOriginal) return 'allow';
+          const storedHeader = lineage.headersByOriginalKey.get(JSON.stringify(orig));
+          if (!storedHeader) return 'unknown';
+          return this.ports.revalidateOriginal(orig, storedHeader, controller.signal);
+        };
+        invocation = await lineage.provenance.begin({
+          origin: this.key.origin,
+          botUid: this.key.bot_uid,
+          spaceId: this.key.space_id,
+          recipientId: this.recipientId,
+          scopeIncarnation,
+          contextEpoch,
+        }, validateOriginal);
+        if (invocation.contributors().length === 0) {
+          lineage.headersByOriginalKey.clear();
+          lineage.workdir = undefined;
+          lineage.codexHome = undefined;
+          if (lineage.coordinatorGeneration !== undefined) {
+            lineage.contextId = randomBytes(16).toString('hex');
+            lineage.coordinatorGeneration = undefined;
+          }
+        }
+      } else {
+        // Without authoritative scope_incarnation + context_epoch from admit,
+        // never reuse an opaque prior session across turns.
+        resetLineage(lineage);
+      }
+      const contextId = lineage.contextId;
+      binding = Object.freeze({
+        ingressId: hex(registered.ingress_id),
+        capsuleId: admittedCapsuleId,
+        turnId: admittedTurnId,
+        contextId,
+        generation: admittedGeneration,
+        header: ingress.header,
+        ...(scopeIncarnation ? { scopeIncarnation } : {}),
+        ...(contextEpoch ? { contextEpoch } : {}),
+        ...(this.catalog ? { catalog: this.catalog } : {}),
+      });
       lease = new TurnLease(this.ports.control, binding, controller);
       controller.signal.throwIfAborted();
-      // Unknown legacy provenance is never resumed. This path creates a clean
-      // generation; existing ContextProvenance supports later proven reuse.
       const prepared = await this.ports.prepareInput(binding, controller.signal);
       controller.signal.throwIfAborted();
       const originals = new Map<string, Readonly<NativeHeader>>();
+      if (invocation) {
+        for (const priorHeader of lineage.headersByOriginalKey.values()) {
+          originals.set(canonicalControl(priorHeader), priorHeader);
+        }
+      }
       for (const supplied of [ingress.header, ...prepared.originals]) {
         const header = nativeHeader(structuredClone(supplied));
         if (header.recipient_bot_uid !== this.key.bot_uid || header.space_id !== this.key.space_id) {
           throw new Error('Contributor binding unavailable');
         }
+        if (invocation) {
+          const origIdentity: OriginalIdentity = Object.freeze({
+            headerReference: header.header_reference,
+            messageVersion: header.native_message_version,
+            payloadSha256: header.payload_sha256,
+          });
+          invocation.includeVerifiedOriginal(origIdentity);
+          lineage.headersByOriginalKey.set(JSON.stringify(origIdentity), header);
+        }
         const exact = canonicalControl(header);
         originals.set(exact, header);
       }
-      const manifest = { context_id: contextId, context_generation: binding.generation,
-        originals: [...originals.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, header]) => header) };
+      if (invocation && this.ports.revalidateOriginal) {
+        await invocation.recheck(async orig => {
+          const storedHeader = lineage.headersByOriginalKey.get(JSON.stringify(orig));
+          if (!storedHeader) return 'unknown';
+          return this.ports.revalidateOriginal!(orig, storedHeader, controller.signal);
+        });
+      }
+      const sortedOriginals = Object.freeze(
+        [...originals.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([, header]) => header),
+      );
+      const manifest = {
+        context_id: contextId,
+        context_generation: binding.generation,
+        originals: sortedOriginals,
+      };
       // bind_context checks the complete union against current facts/P, after
       // the disclosed input read and before model insertion. It returns no grant.
       await bindContextManifest(this.ports.control, binding.capsuleId, manifest, controller.signal);
       lease.assertCurrent();
+      invocation?.assertCurrent();
+      const verifiedResume: Readonly<VerifiedWorkerResume> | undefined = (
+        invocation?.nativeSessionId && scopeIncarnation && contextEpoch
+      )
+        ? Object.freeze({
+            generation: binding.generation,
+            turnId: binding.turnId,
+            sessionId: invocation.nativeSessionId,
+            scopeIncarnation,
+            contextEpoch,
+            contributorCount: sortedOriginals.length,
+            ...(lineage.workdir && lineage.codexHome ? { workdir: lineage.workdir, codexHome: lineage.codexHome } : {}),
+          })
+        : undefined;
+      binding = Object.freeze({
+        ...binding,
+        contributors: sortedOriginals,
+        ...(verifiedResume ? { verifiedResume } : {}),
+        bindSession: (sessionId: string, workspace?: { workdir: string; codexHome: string }) => {
+          invocation?.bindNativeSession(sessionId);
+          if (workspace) {
+            lineage.workdir = workspace.workdir;
+            lineage.codexHome = workspace.codexHome;
+          }
+        },
+      });
       const relay = await this.ports.control.call('open_relay', { capsule_id: binding.capsuleId,
         recipient_id: this.recipientId, transport: relayTransport, relay_nonce: randomBytes(16).toString('hex') });
       controller.signal.throwIfAborted();
       workerStarted = true;
       const text = await this.ports.runWorker(binding, prepared.input, Object.freeze(relay), controller.signal);
       lease.assertCurrent();
+      invocation?.assertCurrent();
       await this.ports.publish(binding, text, controller.signal);
+      lineage.coordinatorGeneration = binding.generation;
+      turnCompleted = true;
     } catch (error) {
+      resetLineage(lineage);
       // Renewal denial aborts the owned worker first. Preserve that authentic
       // typed verdict rather than turning the resulting AbortError into a retry.
       if (controller.signal.reason instanceof PermissionRefusal) error = controller.signal.reason;
@@ -245,6 +427,11 @@ export class EndpointPermissionHost implements PermissionEndpoint {
         try { await this.ports.refuse(ingress, record, permissionRefusalText(record), AbortSignal.timeout(2000)); } catch { /* suppression; no fallback/generic duplicate */ }
       }
     } finally {
+      if (!turnCompleted) {
+        resetLineage(lineage);
+      } else {
+        invocation?.close();
+      }
       await lease?.stop();
       this.ports.authoritySignal?.removeEventListener('abort', lost);
       clearTimeout(timer); this.controllers.delete(controller);
